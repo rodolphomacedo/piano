@@ -7,10 +7,14 @@ the sound is computed from a model of what a vibrating string actually does. The
 long-term target is the class of instrument that commercial modelled pianos
 occupy; the short-term target is to get there one audible step at a time.
 
-**Status: milestone M1.** A plucked string renders to a WAV file, in tune to
-within about 1.5 cents. See the [roadmap](docs/ROADMAP.md).
+**Status: milestone M2.** A plucked string renders to a WAV file, in tune to
+within about 1.5 cents, and now also plays live through the speakers — either
+one note at a time or from the computer keyboard. See the
+[roadmap](docs/ROADMAP.md).
 
 ## Try it
+
+Render a note to a file:
 
 ```sh
 cargo run --release -p piano-cli -- render --note A4 --seconds 3 --output a4.wav
@@ -26,6 +30,21 @@ piano render [OPTIONS]
       --concert-a <HZ>         Reference pitch for A4                   [default: 440]
   -o, --output <FILE>          Where to write the WAV                   [default: note.wav]
 ```
+
+Play one note live, no file involved:
+
+```sh
+cargo run --release -p piano-cli -- play --note A4 --seconds 3
+```
+
+Play live from the computer keyboard — nothing is written to disk:
+
+```sh
+cargo run --release -p piano-cli -- keyboard
+```
+
+The bottom row (`Z S X D C V G B H N J M ,`) is one octave; the top row
+(`Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P`) continues upward. Esc or Ctrl+C to quit.
 
 ## Why it is built this way
 
@@ -55,6 +74,7 @@ depends on the core, never the reverse.
 | `piano-core` | The DSP. `no_std` + `alloc`, `forbid(unsafe_code)`, zero allocation while processing |
 | `piano-params` | Note names, MIDI numbers, tuning |
 | `piano-render` | Offline rendering and WAV output |
+| `piano-audio` | Realtime output via `cpal`, the lock-free command queue, denormal control |
 | `piano-cli` | The `piano` binary |
 
 ## Documentation
@@ -72,7 +92,7 @@ depends on the core, never the reverse.
 ## Development
 
 ```sh
-cargo test --workspace                                      # 58 tests
+cargo test --workspace                                      # 70 tests
 cargo clippy --workspace --all-targets -- -D warnings       # must be clean
 cargo fmt --all --check
 cargo build -p piano-core --no-default-features             # no_std must keep building

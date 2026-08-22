@@ -1,6 +1,6 @@
 [package]
-name = "piano-cli"
-description = "Command line front end for the piano physical-modelling synthesiser"
+name = "piano-audio"
+description = "Realtime audio output for the piano synthesiser, via cpal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,18 +8,12 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-[[bin]]
-name = "piano"
-path = "src/main.rs"
-
 [dependencies]
 piano-core = { workspace = true, features = ["std"] }
 piano-params = { workspace = true, features = ["std"] }
-piano-render = { workspace = true }
-piano-audio = { workspace = true }
-anyhow = { workspace = true }
-clap = { workspace = true }
-crossterm = { workspace = true }
+cpal = { workspace = true }
+rtrb = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

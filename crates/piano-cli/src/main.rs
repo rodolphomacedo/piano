@@ -6,6 +6,9 @@
 
 #![forbid(unsafe_code)]
 
+mod keyboard;
+mod play;
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -13,6 +16,9 @@ use clap::{Parser, Subcommand};
 use piano_core::SampleRate;
 use piano_params::{PianoKey, Tuning};
 use piano_render::{RenderRequest, render_note, write_wav};
+
+use keyboard::KeyboardArgs;
+use play::PlayArgs;
 
 /// Physical-modelling piano synthesiser.
 #[derive(Debug, Parser)]
@@ -26,6 +32,10 @@ struct Cli {
 enum Command {
     /// Render one note to a WAV file.
     Render(RenderArgs),
+    /// Play one note live, through the speakers, right now.
+    Play(PlayArgs),
+    /// Play notes live by typing on the computer keyboard.
+    Keyboard(KeyboardArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -59,7 +69,25 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Render(args) => render(&args),
+        Command::Play(args) => play::run(&args),
+        Command::Keyboard(args) => keyboard::run(&args),
     }
+}
+
+/// Prints the callback timing distribution for a finished [`AudioSession`],
+/// shared by every subcommand that opens one.
+///
+/// [`AudioSession`]: piano_audio::AudioSession
+pub(crate) fn report_timing(session: &piano_audio::AudioSession) {
+    let report = session.timing_report();
+    println!(
+        "callback timing (microseconds): p50={} p99={} p99.9={} max={} over {} callbacks",
+        report.p50_micros,
+        report.p99_micros,
+        report.p99_9_micros,
+        report.max_micros,
+        report.callback_count,
+    );
 }
 
 fn render(args: &RenderArgs) -> Result<()> {
@@ -93,7 +121,7 @@ fn render(args: &RenderArgs) -> Result<()> {
 
 /// Accepts either a note name or a raw MIDI number, so `--note 69` and
 /// `--note A4` both work.
-fn parse_key(text: &str) -> Result<PianoKey> {
+pub(crate) fn parse_key(text: &str) -> Result<PianoKey> {
     if let Ok(midi) = text.trim().parse::<u8>() {
         return PianoKey::from_midi(midi).with_context(|| format!("invalid MIDI note: {text}"));
     }

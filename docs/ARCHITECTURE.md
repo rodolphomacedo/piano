@@ -22,7 +22,7 @@ piano-core     pure DSP. no_std + alloc. forbid(unsafe_code). No I/O, no threads
                  │        │        │
                  │        │        └── piano-cli   the `piano` binary
                  │        │
-                 │        ├── piano-audio    [M2] realtime output via cpal
+                 │        ├── piano-audio    realtime output via cpal (M2, done)
                  │        └── piano-wasm     [M3] browser bindings + AudioWorklet
 ```
 
@@ -58,12 +58,16 @@ called from an audio callback by accident.
 The thinnest possible shell: parse arguments, call one library function, print
 what happened. If a decision matters, it does not live here.
 
-### `piano-audio` (M2) and `piano-wasm` (M3)
+### `piano-audio` (M2, done) and `piano-wasm` (M3)
 
-Not yet written. `piano-audio` owns the `cpal` stream, the lock-free command ring,
-and the platform-specific denormal control (`PERF-002`) — which is also where the
-first `unsafe` in the project will live, if any does. `piano-wasm` owns the
-`wasm-bindgen` surface and the `AudioWorklet` glue.
+`piano-audio` owns the `cpal` stream, the lock-free command ring (`rtrb`), and
+the platform-specific denormal control (`PERF-002`) — the one place in the
+project with `unsafe`, exactly as ADR-0005 anticipated: two narrowly scoped
+functions (`denormals::enable_flush_to_zero`, one per architecture), each with
+a safety comment, nowhere else. Its `Engine` pre-builds one `PluckedString` per
+key at construction rather than allocating on note-on; see `PERF-012` in
+`docs/PERFORMANCE.md`. `piano-wasm` owns the `wasm-bindgen` surface and the
+`AudioWorklet` glue — not yet written.
 
 ## How a note becomes sound
 

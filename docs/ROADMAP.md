@@ -29,16 +29,26 @@ measured fundamental is within a few cents of 440 Hz.
 
 ---
 
-## M2 — Real-time playback
+## M2 — Real-time playback ✅
 
 Live audio output on macOS through `cpal`, driven by a lock-free command queue.
-This is where the real-time rules stop being theory.
+This is where the real-time rules stopped being theory.
 
-**Includes**: the SPSC ring buffer, the audio-thread contract, hardware denormal
-control (`PERF-002`), and the first latency measurements.
+**Includes**: the SPSC ring buffer (`rtrb`), the audio-thread contract, hardware
+denormal control (`PERF-002`), a callback timing histogram (p50–p99.9), and a
+no-allocation proof test. `piano play --note A4` plays one note through the
+default output device; `piano keyboard` plays live from the computer keyboard,
+nothing written to disk.
 
 **Done when**: `piano play --note A4` makes sound with no allocation, no locking
 and no missed buffers over a ten-minute run.
+
+*Achieved, with one open item*: the audio path is proven allocation-free by a
+custom-allocator test (`piano-audio/src/tests_no_allocation.rs`, `PERF-012`
+closed), and callback timing is measured and reported. Not yet done: a
+ten-minute unattended soak run, and full device-hot-swap recovery (issue #20
+covers panic-free stream error reporting; retuning voices after a live
+sample-rate change is deferred).
 
 ---
 

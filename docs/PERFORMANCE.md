@@ -40,7 +40,7 @@ Following the discipline of not collapsing everything into "fast":
 | ID | Area | Milestone | Status |
 |---|---|---|---|
 | [PERF-001](#perf-001) | Bounds checks in the delay-line hot loop | M7 | Open |
-| [PERF-002](#perf-002) | Denormal handling in decaying tails | M2 | Open |
+| [PERF-002](#perf-002) | Denormal handling in decaying tails | M2 | Mitigated, unmeasured |
 | [PERF-003](#perf-003) | Per-sample dispatch in the voice loop | M5 | Open |
 | [PERF-004](#perf-004) | Linear interpolation in the fractional delay | M4 | Open |
 | [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Open |
@@ -50,7 +50,7 @@ Following the discipline of not collapsing everything into "fast":
 | [PERF-009](#perf-009) | Soundboard convolution | M6 | Open |
 | [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | Open |
 | [PERF-011](#perf-011) | WASM has no SIMD by default | M3 | Open |
-| [PERF-012](#perf-012) | Allocation at note-on | M5 | Open |
+| [PERF-012](#perf-012) | Allocation at note-on | M2 | Closed |
 | [PERF-013](#perf-013) | `f32` precision in long bass decays | M7 | Open |
 
 ---
@@ -98,6 +98,13 @@ the portable core.
 
 *Note*: keep the software flush even after adding the hardware mode. WASM has no
 equivalent control, and the software path is the correctness backstop.
+
+*Status (M2)*: implemented in `piano-audio::denormals::enable_flush_to_zero`,
+called once per audio thread before its first callback (`MXCSR` via raw
+`stmxcsr`/`ldmxcsr` on x86_64, `FPCR` via `mrs`/`msr` on AArch64). This is the
+narrowly-scoped `unsafe` this entry anticipated. **Not yet measured** — no
+before/after cycle count exists, so the entry stays open per this document's
+own rule that a status closes only with a number, never an opinion.
 
 ---
 
@@ -288,9 +295,22 @@ constant.
 rendering and *forbidden* in the realtime engine, where note-on happens on the
 audio thread.
 
-*Mitigation*: the engine pre-allocates a fixed pool of voices at construction,
-each with a delay line sized for the **lowest** note, and note-on only re-tunes an
-existing voice. This makes note-on `O(loop length)` writes with zero allocation.
+*Mitigation, as implemented*: rather than a small pool sized for the lowest note
+and re-tuned per strike, `piano-audio::Engine` pre-allocates **one voice per key**
+(all 88) at construction — each `PluckedString` already built and tuned for
+exactly that key's frequency. `note_on` never constructs a string; it looks up
+the existing voice for the struck key and calls `PluckedString::pluck`, which is
+allocation-free by its own contract. This trades a larger one-time allocation
+(roughly 150–300 KB across 88 delay lines, dominated by the bass) for a simpler
+invariant: there is no "does this fit in the pre-sized buffer" question, because
+every voice was sized for its own note from the start.
+
+*Status (M2)*: **Closed.** `tests_no_allocation.rs` wraps the global allocator in
+a guard active only while `drain_commands` and `process_block` run, drives 4 096
+blocks with notes struck across the full keyboard including repeated re-strikes
+of the same key, and asserts zero allocations in the guarded region. The test
+was verified to actually detect a violation (a deliberately injected allocation
+made it fail before being removed) rather than passing vacuously.
 
 ---
 

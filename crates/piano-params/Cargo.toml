@@ -1,0 +1,20 @@
+[package]
+name = "piano-params"
+description = "Musical note names, MIDI numbers and tuning for the piano synthesiser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["std"]
+std = ["piano-core/std", "thiserror/std"]
+
+[dependencies]
+piano-core = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

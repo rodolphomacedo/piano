@@ -1,0 +1,18 @@
+[package]
+name = "piano-render"
+description = "Offline rendering of piano notes to audio buffers and WAV files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+piano-core = { workspace = true, features = ["std"] }
+piano-params = { workspace = true, features = ["std"] }
+hound = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

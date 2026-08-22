@@ -1,0 +1,28 @@
+[package]
+name = "piano-core"
+description = "Real-time-safe physical-modelling DSP primitives for synthesised piano strings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["std"]
+# Without `std` the crate falls back to `libm` for transcendental functions, so
+# it can target WASM and embedded hosts. `alloc` is always required: delay-line
+# buffers are heap-allocated once, at construction, never while processing.
+std = ["thiserror/std"]
+
+[dependencies]
+libm = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

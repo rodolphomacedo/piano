@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+*.wav
+!docs/assets/*.wav
+.DS_Store
+/pkg
+/coverage
+lcov.info
+perf.data*
+*.profraw

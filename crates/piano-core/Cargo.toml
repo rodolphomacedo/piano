@@ -23,6 +23,26 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+criterion = { workspace = true }
+
+# M7's benchmark harness (docs/PERFORMANCE.md, docs/ROADMAP.md). Each target
+# isolates one component `PERF-005`/`PERF-007`/`PERF-008`/`PERF-009` flagged
+# as "implemented, unmeasured" or "measured only in aggregate" so far.
+[[bench]]
+name = "components"
+harness = false
+
+[[bench]]
+name = "delay_line"
+harness = false
+
+[[bench]]
+name = "cache_order"
+harness = false
+
+[[bench]]
+name = "simd_experiment"
+harness = false
 
 [lints]
 workspace = true

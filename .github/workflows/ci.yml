@@ -24,6 +24,13 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install stable
 
+      # piano-audio depends on cpal, which links against ALSA on Linux via
+      # alsa-sys's pkg-config build script. Not installed by default on the
+      # runner image; without it, every command that touches the workspace
+      # fails at the build step, before any lint or test even runs.
+      - name: Install ALSA development headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Formatting

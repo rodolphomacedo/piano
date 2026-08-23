@@ -87,17 +87,137 @@ frequency-dependent phase delay, and enough of them approximate the stretched
 dispersion curve. Section count scales with register per the table below —
 the bass needs many, the treble barely any.
 
+## Why most notes are more than one string (M6)
+
+A real piano key strikes more than one physical string for most of the
+keyboard: a standard modern instrument is single-strung (monochord) in the
+bass, double-strung (bichord) through the tenor, and triple-strung
+(trichord) for the rest of the treble (A. Reblitz, *Piano Servicing,
+Tuning, and Rebuilding*, 1993 — the layout piano technicians work to;
+qualitatively consistent with Fletcher & Rossing's own bass/tenor/treble
+description, already cited above for inharmonicity). This project uses 12
+single-strung keys, 18 double-strung and 58 triple-strung — a
+representative choice of break points within that convention, not a
+measurement of one specific instrument (exact break points vary by piano
+model and scale design) — implemented as
+`piano_core::unison::unison_count_for_key_index` and looked up per key by
+`piano_audio::voicing::unison_count_for_key`. That raises the *effective*
+number of strings the engine ever processes simultaneously from 88 to
+`12·1 + 18·2 + 58·3 = 222`, close to `PERF-008`'s own illustrative `N =
+240` estimate for "up to three strings on all 88 keys."
+
+`piano_core::unison::UnisonGroup` reuses [`piano_core::PluckedString`]
+rather than forking it: a unison group is 1-3 independent strings, each
+detuned by a small fixed offset (a few cents — see the module for the
+honesty note on the exact figures) and struck together by
+`UnisonGroup::pluck`, exactly like a single hammer really does strike every
+string of one note at once.
+
+## Why a note has a two-stage decay (M6)
+
+G. Weinreich, "Coupled Piano Strings" (JASA 62(6), 1977) is the seminal
+model and measurement of this: near-unison strings are not independent —
+they share one mechanical connection, the bridge, and that shared,
+slightly-yielding contact point is what makes a real piano note's envelope
+bend rather than follow one clean exponential. Two strings tuned a few
+cents apart, coupled through a shared bridge, first beat and dephase
+against each other (a fast "pre-decay"), then — once that differential
+energy has dissipated — settle into a shared mode that decays close to
+what a single string's own natural loss rate would give (a slower
+"aftersound").
+
+This project reproduces that mechanism, not a hand-tuned envelope shape,
+with two coupling tiers implemented as a **convex combination** of each
+string's own signal with its neighbours' (`piano_core::string::
+PluckedString::write_mixed_feedback`'s doc comment explains why a convex
+blend, not a raw sum, is what keeps this stable for any `sustain`):
+
+- **Local** (`piano_core::unison`): a note's own 1-3 strings blend
+  sample-accurately, every sample — cheap, since a unison group already
+  processes all its strings in one call.
+- **Global** (`piano_core::bridge::BridgeBus`, `PERF-008`): cross-*key*
+  coupling, e.g. from the sustain pedal, blends with one block
+  (~2.7 ms at 48 kHz) of latency, because summing all 88 keys' contributions
+  before any one of them can read the total back is not representable in a
+  single per-voice, per-sample call without sacrificing the cache-friendly
+  loop order `PERF-010` already established.
+
+Measured, not asserted: `crates/piano-render/tests/m6_spectral.rs` renders
+a trichord A4 and shows its early decay rate (nepers per 0.1 s block, just
+after the attack transient) is measurably faster than its settled rate
+once beating has died down, and that the settled rate then sits close to
+(within a factor of two of) the same note rendered as a monochord control
+— the qualitative and quantitative signature Weinreich's model predicts.
+This measurement also caught two real implementation bugs during
+development, not by inspection: an earlier *additive* coupling term
+diverged to infinity for near-lossless (high-`sustain`) strings once
+enough voices became simultaneously receptive (fixed by the convex-blend
+redesign above and by `BridgeBus` averaging rather than summing
+contributions), and every unison string sharing one excitation noise seed
+suppressed the very beating the model exists to produce (fixed by
+`piano_core::unison::reseed_for_string`). Both are documented in full in
+the modules that fixed them.
+
+## Why the sustain pedal makes the rest of the instrument ring (M6, `PERF-008`)
+
+Before M6 the sustain pedal only changed *when* a struck voice's own
+damper engaged — it had no effect on any other string, because nothing
+coupled voices together. `piano_core::bridge::BridgeBus` is the fix: every
+voice writes its own bridge-end signal into one shared running average and
+reads back everyone else's, so a string whose damper the pedal has lifted
+(even if it was never struck) picks up a little energy from whatever *is*
+ringing and starts to audibly resonate — a real piano's sustain pedal
+lifts every damper on the instrument, not just the one under a held key.
+`piano_audio::engine::Engine::set_sustain_pedal` is what actually lifts
+those idle dampers; `piano_core::unison::UnisonGroup::is_receptive`
+distinguishes a genuinely-damped, safely-skippable voice
+(`PERF-006`) from a silent-but-undamped one that must still be processed
+so it can wake up.
+
+The bridge deliberately does not model per-pair coupling (`O(N²)`,
+infeasible at this string count — see `PERF-008` in
+`docs/PERFORMANCE.md`) or per-string admittance (this project has no
+per-instrument measurement to derive one from): every voice shares the
+same coupling gain and the same bus, an engineering simplification stated
+plainly rather than presented as more faithful than it is.
+
+## Why every note is coloured by a soundboard (M6, `PERF-009`)
+
+A real piano's strings barely radiate sound on their own — their thin
+cross-section couples poorly to air. Almost everything a listener hears
+comes from the soundboard, the large wooden plate the bridge drives.
+`piano_core::soundboard::Soundboard` models that as a bank of
+[`MODE_COUNT`](../crates/piano-core/src/soundboard.rs) damped resonant
+filters (modal synthesis — B. Bank et al., already cited in
+`docs/PRIOR-ART.md` for exactly this architecture) rather than convolving
+against a measured impulse response. That second option is not a choice
+this project can make regardless of engineering merit: an impulse response
+is, by definition, recorded from a real instrument, and this repository's
+own rule (see the root `CLAUDE.md`) is that no recorded or sampled audio
+asset may be added, ever, for any reason. Modal synthesis needs no such
+recording — each mode is a frequency, a decay time and a gain, all
+literature-informed order-of-magnitude values (see the module's own
+honesty note on where they come from and what they are not), not fit to
+any instrument's measured response.
+
+The soundboard's output is **mixed in**, not substituted for the direct
+signal (`piano_audio::engine::Engine::process_chunk`'s
+`SOUNDBOARD_MIX_GAIN`): replacing the direct signal entirely would be more
+faithful to how a real piano is *only* ever heard through its soundboard,
+but would also change the level and shape of the fundamental partial in
+every already-measured tuning and inharmonicity test this project has
+(M1's cents figure, M4's partial-sharpening and brightness measurements)
+— an honest trade stated here rather than silently made.
+
 ## What the current model still does not do
 
-Stated plainly, because these are the gaps that later milestones close:
+Stated plainly, because these are the gaps a later milestone would close:
 
 | Missing | Consequence | Milestone |
 |---|---|---|
-| **Multiple strings per note** | No beating, no aftersound. Real notes have 2–3 slightly detuned strings whose interference produces the characteristic two-stage decay. | M6 |
-| **Sympathetic resonance** | Sustain pedal does nothing. | M6 |
-| **Soundboard** | The string signal is heard raw; a real piano is heard through a radiating wooden plate. | M6 |
 | **Longitudinal modes** | No metallic "phantom partials" of the low bass. | Backlog |
 | **Simultaneous hammer/string coupling** | The hammer model (above) does not yet feed the string's own motion back into the contact force during the strike. | Backlog |
+| **Per-string bridge admittance** | Every voice couples to the shared bridge bus at the same fixed gain; a real bridge's admittance varies with frequency and string position. | Backlog |
 
 ## Numbers worth having
 

@@ -62,6 +62,36 @@ what happened. If a decision matters, it does not live here.
 
 ### `piano-audio`, `piano-midi` and `piano-wasm` (M2 and M3, done)
 
+`piano-audio` owns the shared bridge bus and the soundboard's own
+lifecycle (M6): `Engine` constructs one `piano_core::BridgeBus` and one
+`piano_core::Soundboard` at `Engine::new`, alongside its 88 voices. Both
+types are pure DSP mechanism and live in `piano-core` — they allocate
+nothing while processing, are `no_std` + `alloc` like everything else
+there, and could equally be driven from `piano-render`'s offline path (see
+`piano-render`'s `render_unison_note`, which drives a `UnisonGroup`
+directly with no bridge or soundboard, since a single rendered note has
+nothing else to couple to) — but *deciding when a block starts, how many
+voices there are, and how they are chunked* is `Engine`'s job, not
+`piano-core`'s: a shared bus and a soundboard are new *cross-voice*
+responsibilities, and only the engine layer knows about "every voice,"
+the same reasoning that already put per-key voicing tables in `piano-audio`
+rather than `piano-core`. `Engine::process_block` chunks its output into
+`BRIDGE_BLOCK_SAMPLES`-sized pieces (matching the audio thread's realistic
+block size, `PERF-010`/`PERF-011`'s own 128-sample convention) and calls
+`BridgeBus::begin_block` once per chunk, so the bus never sees a block
+longer than it was sized for; each voice's `UnisonGroup::process_with_
+bridge` reads and writes the bus once per sample within that chunk, and
+once the chunk's direct signal is fully mixed, `Soundboard::process` runs
+once per sample as a post-mix stage, mixed additively into the direct
+signal rather than replacing it (`docs/PHYSICS.md` explains why).
+`piano_core::unison::UnisonGroup` itself — the 1-3 strings one key's own
+hammer strikes — replaces the bare `PluckedString` each `Engine::Voice`
+used to hold directly; it reuses `PluckedString` rather than forking it,
+and couples its own strings to each other sample-accurately and locally,
+a separate, tighter coupling from the bridge bus's cross-key one — see
+`piano_core::unison`'s and `piano_core::bridge`'s own module docs for the
+full reasoning on why those are two different mechanisms rather than one.
+
 `piano-audio` owns the `cpal` stream, the lock-free command ring (`rtrb`), and
 the platform-specific denormal control (`PERF-002`) — the one place in the
 project with `unsafe`, exactly as ADR-0005 anticipated: two narrowly scoped
@@ -148,9 +178,9 @@ nobody has to reverse-engineer the intent:
 | Dispersion (inharmonicity) | An allpass cascade inside the loop, after the loss filter | M4 |
 | Hammer excitation | Replaces the noise burst; couples to the loop at a strike position | M4 |
 | Better fractional delay | Swaps `read_interpolated` for allpass or Lagrange | M4 |
-| Multiple strings per note | A voice owns 2–3 `PluckedString`s with detuned frequencies | M6 |
-| Sympathetic resonance | A shared bridge bus every voice reads and writes — **not** all-to-all coupling (`PERF-008`) | M6 |
-| Soundboard | A single post-mix stage, after all voices are summed | M6 |
+| Multiple strings per note | A voice owns 2–3 `PluckedString`s with detuned frequencies — landed as `piano_core::unison::UnisonGroup` | M6 ✅ |
+| Sympathetic resonance | A shared bridge bus every voice reads and writes — **not** all-to-all coupling (`PERF-008`) — landed as `piano_core::bridge::BridgeBus`, owned by `Engine` | M6 ✅ |
+| Soundboard | A single post-mix stage, after all voices are summed — landed as `piano_core::soundboard::Soundboard`, mixed additively rather than replacing the direct signal | M6 ✅ |
 | Block processing | `process_block_add` already has the signature; `Engine::process_block` already loops voice-outer, block-inner — landed by M2/M4, confirmed still true in M5. Isolating and closing the cache-behaviour measurement itself is M7's job (`PERF-010`) | M5 |
 
 ## Testing strategy

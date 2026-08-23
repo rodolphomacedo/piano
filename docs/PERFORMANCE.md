@@ -46,8 +46,8 @@ Following the discipline of not collapsing everything into "fast":
 | [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Implemented, unmeasured |
 | [PERF-006](#perf-006) | Polyphony and voice management | M5 | Mitigated (energy gating); stealing not needed |
 | [PERF-007](#perf-007) | Hammer–string contact solver | M4 | Implemented, unmeasured |
-| [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Open |
-| [PERF-009](#perf-009) | Soundboard convolution | M6 | Open |
+| [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Implemented, measured in aggregate |
+| [PERF-009](#perf-009) | Soundboard convolution | M6 | Implemented (modal synthesis), measured in aggregate |
 | [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | Mitigated, unmeasured in isolation |
 | [PERF-011](#perf-011) | WASM has no SIMD by default | M3 | Mitigated, unmeasured |
 | [PERF-012](#perf-012) | Allocation at note-on | M2 | Closed |
@@ -140,6 +140,14 @@ is consistent with dispatch cost being negligible, but it is a whole-engine
 measurement, not one that isolates dispatch overhead from arithmetic or
 cache cost — decomposing it is left to M7, which this document already
 schedules for exactly that kind of work.
+
+*Update (M6)*: the same test now measures **697.2 µs/block**, still on
+the reference machine, because "88 voices" now means up to 222 strings
+(`docs/PHYSICS.md`'s unison counts), not 88 — see `PERF-008` for the full
+number and what it does and does not isolate. Dispatch is still per-voice
+(now per-`UnisonGroup`, still a concrete type, never `Box<dyn Trait>`), so
+this entry's own concern stays addressed; the growth is expected extra
+arithmetic, not a dispatch regression.
 
 ---
 
@@ -269,6 +277,23 @@ This entry stays open rather than closing, since no cycle-level measurement
 isolates the gate's own saved cost (as opposed to the whole-engine number
 `PERF-003` records) and a hard voice cap was not built.
 
+*Update (M6)*: this entry's own reasoning about the gate's limits was
+exactly right — "a hard voice cap only becomes a real question if a
+future milestone allows more than one voice per key" is precisely what
+happened. Effective polyphony is now up to 222 strings (`docs/PHYSICS.md`),
+not 88, and sympathetic resonance (`PERF-008`) narrows the gate further:
+`Engine::process_chunk` can only skip a voice that is *both* silent and
+fully damped (`!UnisonGroup::is_receptive`) — a silent voice the pedal has
+left undamped must still be processed so it can wake up from the shared
+bridge. While the pedal is down, every voice becomes receptive, so the
+gate's savings shrink to near zero for as long as the pedal is held; this
+is by design (the pedal is meant to make the whole instrument audible) but
+is worth naming as a real, if expected, cost regression in exactly the
+scenario `PERF-008` was built for. Still open, same reason as before: no
+isolated measurement of the gate's own saved cost exists, now further
+complicated by measuring "saved cost" while pedal state changes what the
+gate can save.
+
 ---
 
 ### PERF-007
@@ -330,6 +355,33 @@ defensible, because the bridge really is the shared mechanical connection.
 *This entry exists now, before any coupling code, precisely so that nobody writes
 the `N²` version first.*
 
+*Status (M6)*: **Implemented, measured in aggregate.**
+`piano_core::bridge::BridgeBus` is the shared bus this entry asked for: a
+running average (not sum — see the module's own honesty note on a real
+divergence bug an earlier, unnormalised-sum version had, caught by
+`piano-audio`'s pedal-hold test diverging to infinity, not by inspection)
+every voice writes into and reads back once per sample, `O(N)`. Wired into
+`piano_audio::engine::Engine::process_block`, which chunks its output into
+128-sample pieces (`BRIDGE_BLOCK_SAMPLES`) so the bus never sees a block
+longer than it was sized for. `PERF-006`'s energy gating had to change to
+match: a voice can now be silent yet still need processing, if the pedal
+(or a held key) has lifted its damper — see
+`UnisonGroup::is_receptive` and `Engine::process_chunk`'s skip condition.
+A real number exists, but only an aggregate one, the same honest caveat
+`PERF-003` already carries: `piano-audio`'s `callback_time_at_full_88_
+voice_polyphony_clears_the_deadline` (run manually, `--release`, on the
+documented reference machine, a 2.3 GHz Intel Core i5-8259U) now measures
+**697.2 µs per 128-sample block** at full polyphony — every one of 88
+keys struck, now with their real M6 unison-string counts (up to 222
+strings total, see `docs/PHYSICS.md`), plus the bridge bus and the
+soundboard both active — about 26 % of the 2.67 ms deadline, comfortably
+inside it and up from M5's 221.9 µs/8 % now that roughly 2.5x as many
+strings are being processed per block. This number does not isolate the
+bridge's own cost from the unison strings' or the soundboard's — doing
+that is left to M7, this document's own dedicated performance-engineering
+milestone, the same deferral `PERF-003`/`PERF-010` already made for
+isolating dispatch and cache cost from raw arithmetic.
+
 ---
 
 ### PERF-009
@@ -352,6 +404,31 @@ A measured soundboard impulse response is 1–2 seconds — 50 000 to 100 000 ta
 *Also note*: whichever is chosen, this is the component most likely to justify
 running on a second thread with a lock-free handoff — with the latency
 consequences that implies.
+
+*Status (M6)*: **Implemented (modal synthesis), measured in aggregate.**
+The first two convolution options above were never candidates in
+practice, regardless of their engineering merit: both require possessing a
+measured impulse response — a recording of a real soundboard — and this
+project's own `CLAUDE.md` prohibits adding any recorded or sampled audio
+asset to the repository, unconditionally. `piano_core::soundboard::
+Soundboard` implements the third option: a fixed bank of
+[`MODE_COUNT`](../crates/piano-core/src/soundboard.rs) = 8 two-pole
+digital resonators (J. O. Smith III, *Physical Audio Signal Processing*),
+fewer than a "faithful" soundboard model's dozens of resolvable low-order
+modes alone — explicitly the cheaper, more parametric trade this entry
+itself named as acceptable. Frequencies, decay times and gains are
+literature-informed order-of-magnitude values (K. Wogram 1980; N. Suzuki,
+JASA 80, 1986), not fit to any real instrument's measured response — see
+the module's own honesty note. Wired into `Engine::process_chunk` as a
+post-mix stage mixed additively into the direct signal (`SOUNDBOARD_MIX_
+GAIN`), not a replacement — `docs/PHYSICS.md` explains why. Same aggregate
+697.2 µs/block number `PERF-008` records applies here too (the soundboard
+runs inside the same measured chunk); its own isolated per-sample cost has
+not been measured separately, but 8 resonators × a handful of multiply-
+adds each, run once per sample regardless of voice count (a post-mix
+stage, not a per-voice one), is a small, bounded addition relative to the
+up-to-222-string voice cost the same block also pays for — an argument,
+not a number, so this stays open for M7 to close with one.
 
 ---
 
@@ -382,6 +459,15 @@ dispatch or raw arithmetic cost. Still scheduled for M7, as this document's
 own register already said before M5 touched it: a cache-miss-isolating
 measurement (e.g. comparing this loop order against the naive
 sample-outer, voice-inner one) is what would actually close it.
+
+*Update (M6)*: the loop order survives M6 unchanged in spirit — `Engine::
+process_block` now chunks into `BRIDGE_BLOCK_SAMPLES`-sized pieces for
+`PERF-008`'s bridge bus, but within each chunk it is still voice-outer
+(now `UnisonGroup`-outer), chunk-inner, so a voice's whole working set
+(now up to 3 delay lines instead of 1) still stays hot across the chunk it
+is processed for. The working set per voice is larger than M5's (up to 3x
+for a trichord key), which makes this entry's original cache-pressure
+concern more relevant, not less — still left to M7 to actually measure.
 
 ---
 
@@ -448,6 +534,19 @@ made it fail before being removed) rather than passing vacuously.
 same guarded region rather than left to trust that by inspection alone.
 Per-key voicing (`piano-audio::voicing`) only ever runs at `Engine::new`,
 before the guard is active, same as the rest of voice construction.
+
+*Update (M6)*: stays closed, verified again rather than assumed —
+`tests_no_allocation.rs` was not itself changed, but it already exercises
+`Engine::new` (via its `engine()` test helper) building the full 88-key
+pool, now 88 `UnisonGroup`s of up to 3 delay lines each rather than 88
+lone `PluckedString`s, and still passes. The one-time construction
+allocation this entry already accepted as the trade grows with it: up to
+222 delay lines now instead of 88 (`docs/PHYSICS.md`'s unison counts), so
+the "roughly 150–300 KB" figure above is now closer to **300–600 KB**
+(an estimate scaled by the same ~2.5x string-count growth `PERF-003`
+measured, not a fresh measurement of its own) — still a one-time,
+control-thread allocation, never on the audio thread, so this entry's
+core guarantee is unaffected by the larger number.
 
 ---
 

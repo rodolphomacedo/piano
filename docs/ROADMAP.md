@@ -215,7 +215,7 @@ this sentence.
 
 ---
 
-## M6 — Instrument realism
+## M6 — Instrument realism ✅
 
 The things that separate "a piano model" from "an instrument": unison string
 groups and their beating, sympathetic resonance through a shared bridge bus
@@ -223,6 +223,90 @@ groups and their beating, sympathetic resonance through a shared bridge bus
 
 **Done when**: holding the sustain pedal and playing a note makes the rest of the
 instrument ring, and a note has the two-stage decay real pianos have.
+
+*Achieved, with open items.* All three pieces named above landed, each
+reusing rather than forking the existing model per the milestone's own
+scope:
+
+- **Unison strings.** `piano_core::unison::UnisonGroup` gives each key 1,
+  2 or 3 `PluckedString`s (never a new DSP primitive) — 12 single-strung
+  bass keys, 18 double-strung tenor keys, 58 triple-strung treble keys
+  (`piano_core::unison`'s module docs cite A. Reblitz's *Piano Servicing,
+  Tuning, and Rebuilding* for the standard modern-piano layout this
+  boundary choice represents; exact break points vary by instrument, so
+  this is this project's own representative choice within that
+  convention, stated as such). That raises the engine's effective string
+  count from 88 to **222** (`12·1 + 18·2 + 58·3`), close to `PERF-008`'s
+  own illustrative `N = 240` estimate — `docs/PERFORMANCE.md`'s
+  `PERF-003`/`PERF-006`/`PERF-010`/`PERF-012` entries are all updated with
+  what that costs (a new **697.2 µs/128-sample block** measurement on the
+  documented reference machine, up from M5's 221.9 µs, still comfortably
+  inside the 2.67 ms deadline at about 26 %).
+- **Sympathetic resonance (`PERF-008`).** `piano_core::bridge::BridgeBus`
+  is the shared, `O(N)` bus the entry demanded rather than the infeasible
+  `O(N²)` mesh: every voice writes its own bridge-end signal into one
+  running **average** (not sum — an earlier, unnormalised-sum version
+  diverged to infinity within a few blocks of holding the pedal down,
+  caught by a test disagreeing with expectation, not by inspection — see
+  the module's own honesty note) and reads back everyone else's, one
+  block of latency (~2.7 ms at 48 kHz). `piano_audio::engine::Engine::
+  set_sustain_pedal` lifts every idle voice's damper while the pedal is
+  down, not just a held key's, so a struck note's energy genuinely
+  reaches other, unstruck strings and they audibly ring — the pedal
+  behaviour this milestone's own "done when" line names.
+- **Soundboard (`PERF-009`).** `piano_core::soundboard::Soundboard`, a
+  bank of 8 two-pole modal resonators (frequency, decay time, gain, all
+  literature-informed, not measured from a specific instrument), mixed
+  additively into `Engine`'s post-mix output. **Modal synthesis, not
+  convolution against a measured impulse response, was the only option
+  this project could take**: the other two options `PERF-009` originally
+  listed both require possessing a recorded impulse response from a real
+  soundboard, and this repository's own `CLAUDE.md` prohibits adding any
+  recorded or sampled audio asset, unconditionally, regardless of how the
+  performance register's own phrasing reads. **No audio recording,
+  sampled impulse response, or other captured-audio asset was added
+  anywhere in building this milestone.**
+- **Two-stage decay.** Measured, not hand-tuned on top:
+  `crates/piano-render/tests/m6_spectral.rs` renders a trichord A4 and
+  shows its early decay rate (just after the attack transient) is
+  measurably faster than its settled rate, and that the settled rate then
+  sits close to a monochord control's own natural decay — the qualitative
+  and quantitative signature G. Weinreich's "Coupled Piano Strings" (JASA
+  62(6), 1977) predicts for near-unison strings coupled through a shared
+  bridge. This genuinely emerged from the coupled-string model rather
+  than being asserted or faked: two real implementation bugs were found
+  and fixed by this measurement disagreeing with expectation during
+  development — an additive (rather than convex) local-coupling term that
+  diverged for near-lossless strings, and every unison string within a
+  group sharing one excitation noise seed, which suppressed the beating
+  this whole mechanism exists to produce. Both are documented in full in
+  `piano_core::string`'s and `piano_core::unison`'s module docs.
+
+**Not yet done**: no human has held the sustain pedal and played a note,
+or listened for the beating/two-stage decay, on real hardware — every
+claim above is a passing automated test or a measured number, not a
+listening confirmation, the same open item M3/M4/M5 each left for
+whoever next has access to real audio hardware. The coupling gains
+(`LOCAL_COUPLING_GAIN`, `GLOBAL_COUPLING_GAIN`) and the soundboard's mode
+table are honestly labelled as literature-order-of-magnitude, reasoned
+choices, not fit to any measured instrument — a future milestone could
+calibrate them against a real recording (an *offline*, non-shipped
+calibration tool, the same "Ideas beyond M8" pattern already described
+below for Bayesian parameter estimation), but none of that landed here.
+`piano play`, `piano keyboard` and `piano midi` all go through
+`piano_audio::Engine`, so they already carry every M6 piece described
+above with no further wiring needed. `piano render` — the offline WAV
+export, via `piano_render::render_note` — was deliberately **not**
+changed to use unison strings, the bridge bus or the soundboard: that
+function is exactly what M1's and M4's already-measured tuning and
+inharmonicity tests are calibrated against, and risking a regression in
+an already-closed measurement for the sake of also covering M6 there was
+judged not worth it. `piano_render::render_unison_note` is the M6-aware
+sibling the new spectral test uses instead, not yet wired into the CLI.
+`piano-wasm`'s single-voice browser demo was also left untouched — M3
+asked for a button and a slider, not polyphony, so it has no second voice
+for sympathetic resonance to reach anyway. Whoever confirms the listening
+test should also delete this sentence.
 
 ---
 

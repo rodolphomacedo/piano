@@ -7,7 +7,7 @@ the sound is computed from a model of what a vibrating string actually does. The
 long-term target is the class of instrument that commercial modelled pianos
 occupy; the short-term target is to get there one audible step at a time.
 
-**Status: milestone M5.** A struck string (a proper digital waveguide with
+**Status: milestone M6.** A struck string (a proper digital waveguide with
 dispersion and a nonlinear felt-hammer excitation, M4) renders to a WAV
 file, in tune to within about 1.5 cents, plays live through the speakers —
 polyphonically, a full 88-key voice pool, from the computer keyboard or a
@@ -17,7 +17,14 @@ chords, releases notes early (note-off), and honours the sustain pedal
 (CC64); every voice's damping, sustain and inharmonicity has its own
 per-register baseline rather than one setting for the whole keyboard, and
 every parameter is still a live, adjustable control, not a build-time
-constant. See the [roadmap](docs/ROADMAP.md).
+constant. As of M6, most notes are struck by more than one physical
+string — 1 in the bass, 2 in the tenor, 3 in the treble, the standard
+piano layout — and those unison strings beat and settle into a measured
+two-stage decay (see `crates/piano-render/tests/m6_spectral.rs`); holding
+the sustain pedal now lets the rest of the instrument ring sympathetically
+through a shared bridge bus (`PERF-008`), and every voice is coloured by a
+small modal-synthesis soundboard (`PERF-009`) rather than heard as a raw
+string. See the [roadmap](docs/ROADMAP.md).
 
 ## Try it
 
@@ -75,6 +82,14 @@ live and both distinct from CC64, the sustain (hold) *pedal* — holding it
 keeps every note ringing past its own note-off, same as a real piano's
 right pedal. Play several notes together for a chord. Esc or Ctrl+C in the
 terminal to quit — the instrument itself has no on/off switch to send back.
+
+As of M6, holding the sustain pedal (CC64, or `[`/`]`-adjacent keys are
+unaffected — the pedal is a separate control from damping/sustain) and
+playing a note makes the rest of the instrument audibly ring along with
+it, through the shared bridge bus (`PERF-008`); most notes also now have
+their own beating, from the 2-3 real physical strings each key is struck
+by. See `docs/pt-BR/M6-como-usar.md` for a literal step-by-step of what to
+listen for (Portuguese; an English pass may follow).
 
 Play in a browser tab — no install, no toolchain beyond `rustup` and a
 one-time `wasm-bindgen-cli` install:
@@ -142,7 +157,7 @@ depends on the core, never the reverse.
 ## Development
 
 ```sh
-cargo test --workspace                                      # 132 tests
+cargo test --workspace                                      # 161 tests (1 further ignored, wall-clock only)
 cargo clippy --workspace --all-targets -- -D warnings       # must be clean
 cargo fmt --all --check
 cargo build -p piano-core --no-default-features             # no_std must keep building

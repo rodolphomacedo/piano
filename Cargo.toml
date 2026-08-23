@@ -26,6 +26,7 @@ thiserror = { version = "2", default-features = false }
 clap = { version = "4", features = ["derive"] }
 criterion = "0.5"
 proptest = "1"
+rustfft = "6"
 cpal = "0.15"
 rtrb = "0.4"
 crossterm = "0.28"

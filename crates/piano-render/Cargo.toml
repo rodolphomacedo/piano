@@ -14,5 +14,8 @@ piano-params = { workspace = true, features = ["std"] }
 hound = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 
+[dev-dependencies]
+rustfft = { workspace = true }
+
 [lints]
 workspace = true

@@ -30,4 +30,24 @@ pub(crate) enum Command {
         /// New sustain, `0.0` to `1.0`.
         sustain: f32,
     },
+    /// Releases one key early — MIDI note-off or, on a terminal that
+    /// reports it, a computer-keyboard key-up. See
+    /// [`piano_core::string::PluckedString::release`]. If the sustain
+    /// pedal ([`Command::SustainPedal`]) is currently down, the voice is
+    /// held rather than released immediately, same as a real piano.
+    NoteOff {
+        /// MIDI note number of the key released.
+        midi: u8,
+    },
+    /// Sets the CC64 sustain-*pedal* hold state. This is **not** the same
+    /// control as [`Command::SetSustain`] — that adjusts
+    /// [`piano_core::string::PluckedString`]'s broadband decay-rate
+    /// parameter, a voicing knob. This is the physical hold pedal: while
+    /// `down`, a [`Command::NoteOff`] does not release its voice; the
+    /// moment the pedal comes back up, everything it was holding is
+    /// released for real.
+    SustainPedal {
+        /// `true` while the pedal is held down.
+        down: bool,
+    },
 }

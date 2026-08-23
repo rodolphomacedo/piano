@@ -13,12 +13,12 @@
 //! thread on every note-on, which is exactly the bug the no-allocation test
 //! in `tests/no_allocation.rs` exists to catch.
 
-use piano_core::string::StringConfig;
 use piano_core::{PluckedString, SampleRate};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 use rtrb::Consumer;
 
 use crate::commands::Command;
+use crate::voicing;
 
 /// Every key on a standard 88-key piano gets its own permanent voice.
 const KEY_COUNT: usize = (HIGHEST_PIANO_KEY - LOWEST_PIANO_KEY + 1) as usize;
@@ -32,12 +32,21 @@ const MAX_COMMANDS_PER_CALLBACK: usize = 64;
 /// [`PluckedString::new`]) — a real but rare degradation, not a bug.
 struct Voice {
     string: Option<PluckedString>,
+    /// Set by [`Engine::note_off`] when this key's `NoteOff` arrives while
+    /// the sustain pedal is down: the voice keeps ringing, but is released
+    /// for real the moment the pedal comes back up
+    /// ([`Engine::release_pedal_held_voices`]). Cleared by a fresh
+    /// [`Engine::note_on`] on the same key, since a re-strike is held by
+    /// the finger again, not by the pedal.
+    pending_pedal_release: bool,
 }
 
 /// Owns one voice per key, all tuned for the sample rate given at
 /// construction.
 pub(crate) struct Engine {
     voices: [Voice; KEY_COUNT],
+    /// CC64 hold state. See [`Command::SustainPedal`].
+    pedal_down: bool,
 }
 
 impl Engine {
@@ -48,6 +57,7 @@ impl Engine {
     pub(crate) fn new(sample_rate: SampleRate, tuning: Tuning) -> Self {
         Self {
             voices: core::array::from_fn(|index| voice_for_key(index, sample_rate, tuning)),
+            pedal_down: false,
         }
     }
 
@@ -85,6 +95,8 @@ impl Engine {
             Command::AllNotesOff => self.silence_all(),
             Command::SetDamping { damping } => self.set_damping(damping),
             Command::SetSustain { sustain } => self.set_sustain(sustain),
+            Command::NoteOff { midi } => self.note_off(midi),
+            Command::SustainPedal { down } => self.set_sustain_pedal(down),
         }
     }
 
@@ -94,16 +106,69 @@ impl Engine {
     /// throughout the audio path, since the audio thread cannot report an
     /// error to anyone.
     fn note_on(&mut self, midi: u8, velocity: f32) {
-        let Ok(key) = PianoKey::from_midi(midi) else {
+        let Some(voice) = self.voice_for_midi(midi) else {
             return;
         };
-        let Some(voice) = self.voices.get_mut(usize::from(key.key_index())) else {
-            return;
-        };
+        // Struck again by the finger, not held by the pedal any more —
+        // even if this key's previous ringing was pedal-held when it was
+        // re-struck.
+        voice.pending_pedal_release = false;
         let Some(string) = voice.string.as_mut() else {
             return;
         };
         string.pluck(velocity);
+    }
+
+    /// Releases `midi`'s voice — a MIDI note-off or a computer-keyboard
+    /// key-up. While the sustain pedal is down, the voice is marked
+    /// [`Voice::pending_pedal_release`] instead of released immediately;
+    /// [`Engine::release_pedal_held_voices`] finishes the job once the
+    /// pedal comes back up.
+    fn note_off(&mut self, midi: u8) {
+        let pedal_down = self.pedal_down;
+        let Some(voice) = self.voice_for_midi(midi) else {
+            return;
+        };
+        if pedal_down {
+            voice.pending_pedal_release = true;
+            return;
+        }
+        if let Some(string) = voice.string.as_mut() {
+            string.release();
+        }
+    }
+
+    /// Sets the CC64 hold state. Pressing the pedal changes nothing by
+    /// itself; releasing it releases every voice
+    /// [`Voice::pending_pedal_release`] marked while it was down.
+    fn set_sustain_pedal(&mut self, down: bool) {
+        let was_down = self.pedal_down;
+        self.pedal_down = down;
+        if was_down && !down {
+            self.release_pedal_held_voices();
+        }
+    }
+
+    /// Releases every voice the pedal was holding. Bounded by
+    /// [`KEY_COUNT`] — a compile-time maximum, not an unbounded scan —
+    /// same as [`Engine::drain_commands`]'s own bounded loop.
+    fn release_pedal_held_voices(&mut self) {
+        for voice in &mut self.voices {
+            if !voice.pending_pedal_release {
+                continue;
+            }
+            voice.pending_pedal_release = false;
+            if let Some(string) = voice.string.as_mut() {
+                string.release();
+            }
+        }
+    }
+
+    /// Looks up the voice for a MIDI note number, if it names a real piano
+    /// key. Shared by every per-key command handler.
+    fn voice_for_midi(&mut self, midi: u8) -> Option<&mut Voice> {
+        let key = PianoKey::from_midi(midi).ok()?;
+        self.voices.get_mut(usize::from(key.key_index()))
     }
 
     /// Zero-velocity pluck silences a voice using the same allocation-free
@@ -111,6 +176,7 @@ impl Engine {
     /// filter and DC blocker, and sets the envelope to zero.
     fn silence_all(&mut self) {
         for voice in &mut self.voices {
+            voice.pending_pedal_release = false;
             if let Some(string) = voice.string.as_mut() {
                 string.pluck(0.0);
             }
@@ -141,211 +207,27 @@ impl Engine {
     }
 }
 
+/// Builds `key_index`'s permanent voice, its baseline damping, sustain and
+/// inharmonicity computed per key by [`voicing::config_for_key`] rather
+/// than left at one global default across all 88 keys — see the module
+/// docs of [`crate::voicing`].
 fn voice_for_key(key_index: usize, sample_rate: SampleRate, tuning: Tuning) -> Voice {
     let midi = LOWEST_PIANO_KEY.saturating_add(key_index as u8);
     let Ok(key) = PianoKey::from_midi(midi) else {
-        return Voice { string: None };
+        return Voice {
+            string: None,
+            pending_pedal_release: false,
+        };
     };
-    let config = StringConfig::new(key.frequency(tuning));
+    let config = voicing::config_for_key(key, tuning);
     Voice {
         string: PluckedString::new(config, sample_rate).ok(),
+        pending_pedal_release: false,
     }
 }
 
+// Split into `engine_tests.rs` to keep this file under the project's
+// 500-line limit (`CONTRIBUTING.md`) — still compiles as `engine::tests`.
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
-    use super::*;
-
-    fn engine() -> Engine {
-        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
-        Engine::new(rate, Tuning::default())
-    }
-
-    fn ring_buffer() -> (rtrb::Producer<Command>, Consumer<Command>) {
-        ring_buffer_with_capacity(16)
-    }
-
-    fn ring_buffer_with_capacity(capacity: usize) -> (rtrb::Producer<Command>, Consumer<Command>) {
-        rtrb::RingBuffer::new(capacity)
-    }
-
-    #[test]
-    fn a_note_on_command_produces_sound() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer();
-        producer
-            .push(Command::NoteOn {
-                midi: 69,
-                velocity: 1.0,
-            })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-
-        let mut buffer = [0.0f32; 512];
-        engine.process_block(&mut buffer);
-        assert!(buffer.iter().any(|sample| sample.abs() > 1e-3));
-    }
-
-    #[test]
-    fn an_out_of_range_note_is_ignored_without_panicking() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer();
-        producer
-            .push(Command::NoteOn {
-                midi: 200,
-                velocity: 1.0,
-            })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-
-        let mut buffer = [0.0f32; 64];
-        engine.process_block(&mut buffer);
-        assert!(buffer.iter().all(|sample| *sample == 0.0));
-    }
-
-    #[test]
-    fn all_notes_off_silences_every_voice() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer();
-        producer
-            .push(Command::NoteOn {
-                midi: 69,
-                velocity: 1.0,
-            })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-        producer.push(Command::AllNotesOff).expect("queue has room");
-        engine.drain_commands(&mut consumer);
-
-        let mut buffer = [0.0f32; 64];
-        engine.process_block(&mut buffer);
-        assert!(buffer.iter().all(|sample| *sample == 0.0));
-    }
-
-    #[test]
-    fn striking_every_key_at_once_never_panics() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer_with_capacity(KEY_COUNT);
-        for midi in LOWEST_PIANO_KEY..=HIGHEST_PIANO_KEY {
-            producer
-                .push(Command::NoteOn {
-                    midi,
-                    velocity: 1.0,
-                })
-                .expect("queue has room");
-        }
-        engine.drain_commands(&mut consumer);
-
-        let mut buffer = [0.0f32; 64];
-        engine.process_block(&mut buffer);
-        assert!(buffer.iter().any(|sample| sample.is_finite()));
-    }
-
-    #[test]
-    fn re_striking_the_same_key_never_panics() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer_with_capacity(64);
-        for _ in 0..64 {
-            producer
-                .push(Command::NoteOn {
-                    midi: 69,
-                    velocity: 0.9,
-                })
-                .expect("queue has room");
-        }
-        engine.drain_commands(&mut consumer);
-        let mut buffer = [0.0f32; 64];
-        engine.process_block(&mut buffer);
-    }
-
-    #[test]
-    fn flooding_the_queue_beyond_the_drain_cap_never_panics() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer();
-        for _ in 0..(MAX_COMMANDS_PER_CALLBACK + 8) {
-            let _ = producer.push(Command::NoteOn {
-                midi: 69,
-                velocity: 0.5,
-            });
-        }
-        engine.drain_commands(&mut consumer);
-        let mut buffer = [0.0f32; 32];
-        engine.process_block(&mut buffer);
-    }
-
-    #[test]
-    fn set_damping_reaches_an_already_ringing_voice() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer();
-        producer
-            .push(Command::NoteOn {
-                midi: 69,
-                velocity: 1.0,
-            })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-
-        let mut before = [0.0f32; 128];
-        engine.process_block(&mut before);
-
-        producer
-            .push(Command::SetDamping { damping: 0.99 })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-
-        let mut after = [0.0f32; 128];
-        engine.process_block(&mut after);
-        assert_ne!(
-            before.to_vec(),
-            after.to_vec(),
-            "SetDamping had no audible effect on a ringing voice"
-        );
-    }
-
-    #[test]
-    fn set_sustain_never_panics_on_a_silent_engine() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer();
-        producer
-            .push(Command::SetSustain { sustain: 0.2 })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-        let mut buffer = [0.0f32; 32];
-        engine.process_block(&mut buffer);
-        assert!(buffer.iter().all(|sample| *sample == 0.0));
-    }
-
-    #[test]
-    fn set_damping_out_of_range_never_panics() {
-        let mut engine = engine();
-        let (mut producer, mut consumer) = ring_buffer();
-        producer
-            .push(Command::SetDamping { damping: f32::NAN })
-            .expect("queue has room");
-        producer
-            .push(Command::SetDamping { damping: 50.0 })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-        let mut buffer = [0.0f32; 32];
-        engine.process_block(&mut buffer);
-    }
-
-    #[test]
-    fn a_note_the_engine_cannot_tune_is_ignored_without_panicking() {
-        let rate = SampleRate::new(8_000.0).expect("8 kHz is valid");
-        let mut engine = Engine::new(rate, Tuning::default());
-        let (mut producer, mut consumer) = ring_buffer();
-        let key = PianoKey::from_midi(HIGHEST_PIANO_KEY).expect("C8 is on the keyboard");
-        producer
-            .push(Command::NoteOn {
-                midi: key.midi_number(),
-                velocity: 1.0,
-            })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-        let mut buffer = [0.0f32; 16];
-        engine.process_block(&mut buffer);
-    }
-}
+#[path = "engine_tests.rs"]
+mod tests;

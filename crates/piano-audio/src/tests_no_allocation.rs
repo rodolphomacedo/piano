@@ -95,6 +95,15 @@ fn draining_commands_and_processing_blocks_never_allocates() {
                     sustain: 0.9 + 0.001 * (block % 90) as f32,
                 });
             }
+            if block % 151 == 0 {
+                let midi = LOWEST_PIANO_KEY + ((block / 151) % key_span) as u8;
+                let _ = producer.push(Command::NoteOff { midi });
+            }
+            if block % 401 == 0 {
+                let _ = producer.push(Command::SustainPedal {
+                    down: block % 802 == 0,
+                });
+            }
             engine.drain_commands(&mut consumer);
             let mut buffer = [0.0f32; 128];
             engine.process_block(&mut buffer);

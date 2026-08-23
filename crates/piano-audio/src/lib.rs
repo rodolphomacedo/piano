@@ -24,6 +24,7 @@ mod stream;
 #[cfg(test)]
 mod tests_no_allocation;
 mod timing;
+mod voicing;
 
 use std::sync::Arc;
 
@@ -86,6 +87,27 @@ impl AudioSession {
     /// [`AudioSession::note_on`].
     pub fn all_notes_off(&mut self) -> bool {
         self.producer.push(Command::AllNotesOff).is_ok()
+    }
+
+    /// Queues releasing one key early — a MIDI note-off, or a
+    /// computer-keyboard key-up on a terminal that reports one. While the
+    /// sustain pedal ([`AudioSession::set_sustain_pedal`]) is held down,
+    /// the voice is held rather than released immediately, same as a real
+    /// piano. Same drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn note_off(&mut self, midi: u8) -> bool {
+        self.producer.push(Command::NoteOff { midi }).is_ok()
+    }
+
+    /// Queues a new CC64 sustain-*pedal* hold state.
+    ///
+    /// **Not** the same control as [`AudioSession::set_sustain`] — that
+    /// adjusts [`piano_core::PluckedString`]'s broadband decay-rate voicing
+    /// parameter. This is the physical hold pedal: while `down`,
+    /// [`AudioSession::note_off`] does not release its voice; the moment
+    /// the pedal comes back up, everything it was holding is released for
+    /// real. Same drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_sustain_pedal(&mut self, down: bool) -> bool {
+        self.producer.push(Command::SustainPedal { down }).is_ok()
     }
 
     /// Queues a new damping (high-frequency loss) for every voice, applied

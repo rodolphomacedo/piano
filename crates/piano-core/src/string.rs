@@ -182,7 +182,18 @@ impl PluckedString {
             period,
             loop_delay,
             sustain: math::clamp_or_low(config.sustain, 0.0, 1.0),
-            damper_engaged: false,
+            // A freshly built string is idle: the felt damper rests on it,
+            // same as any un-struck key on a real piano. `pluck` is what
+            // lifts it (M4, unchanged); M6 adds `lift_damper` so a
+            // sustain-pedal press can lift it too, without a strike, so the
+            // string becomes receptive to sympathetic energy from the
+            // shared bridge bus (`PERF-008`, `crate::bridge`). Before M6
+            // this field started `false`, which cost nothing because
+            // nothing could inject energy into an un-struck string; M6's
+            // bridge coupling means that default now matters, since a
+            // wrongly-lifted idle string would be able to pick up
+            // sympathetic energy it never should while the pedal is up.
+            damper_engaged: true,
             envelope: 0.0,
             sample_rate: sample_rate.hertz(),
         })
@@ -285,21 +296,123 @@ impl PluckedString {
         self.damper_engaged = true;
     }
 
+    /// Lifts the damper without a fresh strike.
+    ///
+    /// [`PluckedString::pluck`] already lifts the damper for a struck
+    /// note; this is for the other way a real piano's damper leaves the
+    /// string — the sustain pedal, which lifts every damper regardless of
+    /// which keys are held. Unlike `pluck`, this does not clear the delay
+    /// line, reset the envelope or draw a new excitation: an idle string
+    /// whose damper the pedal lifts has not been struck, it has only
+    /// become free to keep ringing (if already ringing) or to pick up
+    /// energy from a coupled group's shared bridge signal (see
+    /// `crate::unison`) — sympathetic resonance, `PERF-008`.
+    /// Idempotent, same as [`PluckedString::release`].
+    #[inline]
+    pub fn lift_damper(&mut self) {
+        self.damper_engaged = false;
+    }
+
+    /// Whether the felt damper currently rests on the string.
+    ///
+    /// `true` means the string cannot radiate or receive sympathetic
+    /// energy right now — used by [`crate::unison::UnisonGroup::is_receptive`]
+    /// so a caller can tell a genuinely-damped voice (safe to skip
+    /// entirely, `PERF-006`) from a silent-but-undamped one (must still be
+    /// processed so it can wake up from the bridge bus, `PERF-008`).
+    #[inline]
+    #[must_use]
+    pub fn damper_engaged(&self) -> bool {
+        self.damper_engaged
+    }
+
     /// Produces one output sample and advances the string by one sample.
+    ///
+    /// Equivalent to [`PluckedString::read_bridge_tap`],
+    /// [`PluckedString::disperse`] and [`PluckedString::write_mixed_feedback`]
+    /// in sequence, with no coupling mixed in — the single-string path
+    /// M1-M5 already used, unaffected by M6's split.
     #[inline]
     pub fn process(&mut self) -> f32 {
-        let travelled = self.delay.read_allpass(self.loop_delay);
-        let filtered = self.loop_filter.process(travelled);
-        let dispersed = self.dispersion.process(filtered);
+        let tap = self.read_bridge_tap();
+        let dispersed = self.disperse(tap);
+        self.write_mixed_feedback(tap, dispersed)
+    }
+
+    /// Reads this sample's bridge-end travelling-wave value, without yet
+    /// filtering it or writing the loop's feedback.
+    ///
+    /// Split out of [`PluckedString::process`] so a group of strings that
+    /// share a bridge (`crate::unison`, `crate::bridge`, M6) can read every
+    /// string's contribution to this sample *before* any of them mixes or
+    /// writes back — the shared bridge signal has to be complete before
+    /// anyone reads from it.
+    #[inline]
+    #[must_use]
+    pub fn read_bridge_tap(&mut self) -> f32 {
+        self.delay.read_allpass(self.loop_delay)
+    }
+
+    /// Runs the loop filter and dispersion cascade on `tap`, returning this
+    /// string's own filtered signal — what a coupled group mixes with other
+    /// strings' before finally writing back
+    /// ([`PluckedString::write_mixed_feedback`]).
+    ///
+    /// Stateful, like [`PluckedString::read_bridge_tap`]: call this at most
+    /// once per sample, after that call, before
+    /// [`PluckedString::write_mixed_feedback`].
+    #[inline]
+    #[must_use]
+    pub fn disperse(&mut self, tap: f32) -> f32 {
+        let filtered = self.loop_filter.process(tap);
+        self.dispersion.process(filtered)
+    }
+
+    /// Completes the sample [`PluckedString::read_bridge_tap`] and
+    /// [`PluckedString::disperse`] started: applies this string's own
+    /// round-trip loss to `mixed` and writes it back, returning the
+    /// DC-blocked output sample read from `tap`.
+    ///
+    /// `mixed` is normally exactly [`PluckedString::disperse`]'s own
+    /// result (as [`PluckedString::process`] passes), optionally blended
+    /// with other strings' dispersed signal first by a **convex**
+    /// combination — `crate::unison::UnisonGroup` is what builds that
+    /// blend, gated so a damped string (`damper_engaged`) is never blended
+    /// with anything, only ever writing back its own signal, since a real
+    /// felt damper blocks vibration regardless of where energy is trying
+    /// to come from.
+    ///
+    /// Convex, not additive, is a load-bearing choice: an earlier version
+    /// of this method took an *additive* `external_input` term scaled by
+    /// `loop_gain` alongside the string's own signal. That is only stable
+    /// while `loop_gain` is comfortably below 1 — a group of `N` coupled,
+    /// *near-lossless* strings (`sustain` close to 1, the common case for
+    /// a freshly-struck note) has a "common mode" (every string moving
+    /// together) whose effective gain is `loop_gain·(1 + coupling·(N-1))`,
+    /// which exceeds 1, and so grows without bound, for any positive
+    /// additive coupling once `loop_gain` is close enough to 1 — caught by
+    /// `unison::tests::output_stays_bounded_for_a_full_second_with_local_
+    /// coupling` diverging during development, not by inspection. A convex
+    /// combination cannot have this failure mode: its result is always
+    /// between the smallest and largest of its inputs, for *any* mixing
+    /// weight and *any* `loop_gain`, so `write_mixed_feedback`'s own
+    /// `loop_gain < 1` contraction is the only thing responsible for decay,
+    /// exactly as it is for an uncoupled string. This is the digital
+    /// equivalent of a passive scattering junction, whose mixing never
+    /// creates energy and whose losses are applied strictly after
+    /// scattering (J. O. Smith III, *Physical Audio Signal Processing*,
+    /// "Scattering at an Impedance Discontinuity").
+    #[inline]
+    pub fn write_mixed_feedback(&mut self, tap: f32, mixed: f32) -> f32 {
         let loop_gain = if self.damper_engaged {
             self.sustain * RELEASE_LOSS_MULTIPLIER
         } else {
             self.sustain
         };
-        let reflected = dispersed * loop_gain;
+        let reflected = mixed * loop_gain;
         self.delay.write(math::flush_denormal(reflected));
 
-        let output = self.dc_blocker.process(travelled);
+        let output = self.dc_blocker.process(tap);
         self.track_envelope(output);
         output
     }

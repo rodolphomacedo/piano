@@ -22,17 +22,23 @@
 
 extern crate alloc;
 
+pub mod bridge;
 pub mod delay;
 pub mod dispersion;
 pub mod filter;
 pub mod hammer;
 pub mod math;
 pub mod noise;
+pub mod soundboard;
 pub mod string;
+pub mod unison;
 
 mod error;
 mod units;
 
+pub use bridge::BridgeBus;
 pub use error::ParamError;
+pub use soundboard::Soundboard;
 pub use string::PluckedString;
+pub use unison::UnisonGroup;
 pub use units::{Hz, SampleRate};

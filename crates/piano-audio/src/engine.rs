@@ -1,19 +1,44 @@
-//! The realtime voice engine: one [`PluckedString`] pre-allocated for every
+//! The realtime voice engine: one [`UnisonGroup`] pre-allocated for every
 //! key on the keyboard, driven by commands drained from the audio thread's
 //! [`Consumer`].
 //!
 //! Every method here runs on the audio thread. `Engine::new` is the only
-//! allocating call — it builds all 88 voices up front, on the control
-//! thread, before the stream ever starts. Everything after it is
-//! allocation-free, lock-free and panic-free: `note_on` never constructs a
-//! new [`PluckedString`], only retunes-in-place by calling the already
-//! allocation-free [`PluckedString::pluck`] on a voice that has existed
-//! since construction. An earlier version of this engine built a fresh
-//! voice per strike from a small dynamic pool — that allocated on the audio
-//! thread on every note-on, which is exactly the bug the no-allocation test
-//! in `tests/no_allocation.rs` exists to catch.
+//! allocating call — it builds all 88 voices, the shared bridge bus and the
+//! soundboard up front, on the control thread, before the stream ever
+//! starts. Everything after it is allocation-free, lock-free and
+//! panic-free: `note_on` never constructs a new [`UnisonGroup`], only
+//! retunes-in-place by calling the already allocation-free
+//! [`UnisonGroup::pluck`] on a voice that has existed since construction.
+//! An earlier version of this engine built a fresh voice per strike from a
+//! small dynamic pool — that allocated on the audio thread on every
+//! note-on, which is exactly the bug the no-allocation test in
+//! `tests/no_allocation.rs` exists to catch.
+//!
+//! # M6: unison strings, the shared bridge bus, and the soundboard
+//!
+//! Three pieces landed together because they interact:
+//!
+//! - Each voice is now a [`UnisonGroup`] of 1-3 strings
+//!   (`piano_audio::voicing::unison_count_for_key`), not a lone
+//!   [`piano_core::PluckedString`] — real piano notes beat and have a
+//!   two-stage decay because they *are* more than one string
+//!   (`docs/ROADMAP.md`, M6).
+//! - [`BridgeBus`] carries cross-key sympathetic resonance (`PERF-008`):
+//!   [`Engine::process_block`] chunks its output into `bridge.capacity()`
+//!   pieces and every voice reads/writes the bus once per sample within
+//!   each chunk — see `piano_core::bridge` for why this is one block of
+//!   latency rather than sample-accurate.
+//! - [`Soundboard`] is a post-mix modal-synthesis stage (`PERF-009`): once
+//!   a chunk's direct signal is fully mixed, it drives the soundboard and
+//!   the radiated result is added back in.
+//!
+//! Sympathetic resonance also changes which voices energy gating
+//! (`PERF-006`) can safely skip: a voice can be silent yet still need
+//! processing, if the sustain pedal (or a held key) has its damper
+//! lifted — see [`UnisonGroup::is_receptive`] and
+//! [`Engine::process_chunk`]'s skip condition.
 
-use piano_core::{PluckedString, SampleRate};
+use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 use rtrb::Consumer;
 
@@ -27,11 +52,40 @@ const KEY_COUNT: usize = (HIGHEST_PIANO_KEY - LOWEST_PIANO_KEY + 1) as usize;
 /// even if the producer floods the ring faster than the audio thread reads it.
 const MAX_COMMANDS_PER_CALLBACK: usize = 64;
 
+/// How many samples of one block [`Engine`]'s [`BridgeBus`] accumulates
+/// before every voice reads it back — see `piano_core::bridge`'s module
+/// docs for why a block-delayed bus, not a sample-accurate one. 128 matches
+/// the block size this project has used as its realistic audio-callback
+/// quantum since M2/M3 (`docs/PERFORMANCE.md`, `PERF-010`, `PERF-011`), so
+/// the cross-key coupling latency this introduces is about 2.7 ms at 48 kHz
+/// — see the module docs on why that is negligible for this effect.
+const BRIDGE_BLOCK_SAMPLES: usize = 128;
+
+/// How strongly the soundboard's radiated signal is mixed back into the
+/// direct one at [`Engine::process_chunk`]'s post-mix stage.
+///
+/// A parallel mix, not a replacement — `docs/PHYSICS.md` explains the
+/// choice: replacing the direct signal entirely would be more faithful to
+/// how a real piano is *only* heard through its soundboard, but would also
+/// change the level and shape of the fundamental partial in every already-
+/// measured tuning/inharmonicity test this project has (M1, M4). This
+/// value was chosen by ear, not measured or fit, so the soundboard's
+/// resonant colour is clearly present without dominating — an honest,
+/// reasoned choice in the same spirit as `voicing`'s `BASS_DAMPING`.
+const SOUNDBOARD_MIX_GAIN: f32 = 0.5;
+
 /// One key's permanent voice. `None` only when `sample_rate` could not
 /// represent that key's frequency at construction (see
-/// [`PluckedString::new`]) — a real but rare degradation, not a bug.
+/// [`UnisonGroup::new`]) — a real but rare degradation, not a bug.
 struct Voice {
-    string: Option<PluckedString>,
+    strings: Option<UnisonGroup>,
+    /// `true` from [`Engine::note_on`] until the matching
+    /// [`Engine::note_off`], regardless of pedal state. Distinct from
+    /// `pending_pedal_release`: this tracks whether a *finger* is
+    /// currently holding the key, which is what decides whether the
+    /// sustain pedal needs to lift or re-engage this voice's damper for
+    /// sympathetic-resonance purposes ([`Engine::set_sustain_pedal`]).
+    held: bool,
     /// Set by [`Engine::note_off`] when this key's `NoteOff` arrives while
     /// the sustain pedal is down: the voice keeps ringing, but is released
     /// for real the moment the pedal comes back up
@@ -41,23 +95,31 @@ struct Voice {
     pending_pedal_release: bool,
 }
 
-/// Owns one voice per key, all tuned for the sample rate given at
-/// construction.
+/// Owns one voice per key, the shared bridge bus and the soundboard, all
+/// tuned for the sample rate given at construction.
 pub(crate) struct Engine {
     voices: [Voice; KEY_COUNT],
     /// CC64 hold state. See [`Command::SustainPedal`].
     pedal_down: bool,
+    /// Cross-key sympathetic resonance (`PERF-008`). See the module docs.
+    bridge: BridgeBus,
+    /// Post-mix modal-synthesis soundboard (`PERF-009`). See the module
+    /// docs.
+    soundboard: Soundboard,
 }
 
 impl Engine {
-    /// Builds every voice for `sample_rate` and `tuning`. The only
-    /// allocating call in this type; always called on the control thread,
-    /// before the audio stream starts.
+    /// Builds every voice for `sample_rate` and `tuning`, plus the shared
+    /// bridge bus and soundboard. The only allocating call in this type;
+    /// always called on the control thread, before the audio stream
+    /// starts.
     #[must_use]
     pub(crate) fn new(sample_rate: SampleRate, tuning: Tuning) -> Self {
         Self {
             voices: core::array::from_fn(|index| voice_for_key(index, sample_rate, tuning)),
             pedal_down: false,
+            bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
+            soundboard: Soundboard::new(sample_rate),
         }
     }
 
@@ -72,20 +134,43 @@ impl Engine {
         }
     }
 
-    /// Renders `output.len()` mixed samples from every ringing voice, adding
-    /// into `output` after zeroing it. Voices that have not been struck, or
-    /// have decayed to silence, are skipped rather than processed for
-    /// nothing.
+    /// Renders `output.len()` mixed, soundboard-coloured samples, adding
+    /// into `output` after zeroing it. Chunked into
+    /// [`BRIDGE_BLOCK_SAMPLES`]-sized pieces so [`BridgeBus`] always sees a
+    /// block no longer than it was sized for — a bounded loop over a
+    /// caller-supplied length, not a recursive or unbounded one.
     pub(crate) fn process_block(&mut self, output: &mut [f32]) {
         output.fill(0.0);
+        for chunk in output.chunks_mut(BRIDGE_BLOCK_SAMPLES) {
+            self.process_chunk(chunk);
+        }
+    }
+
+    /// Processes one bridge-bus block: every voice mixes into `chunk`
+    /// (skipped only when genuinely inert, see below), then the
+    /// soundboard's radiated contribution is mixed back in.
+    ///
+    /// A voice is skipped only when it is *both* silent and fully damped
+    /// (`!is_receptive`) — energy gating's original condition
+    /// (`is_silent`, `PERF-006`) alone would also skip a silent voice
+    /// whose damper the pedal has lifted, which must still be processed so
+    /// it can pick up sympathetic energy from [`Engine::bridge`] and wake
+    /// up; a fully damped voice genuinely cannot, so skipping it is exact.
+    fn process_chunk(&mut self, chunk: &mut [f32]) {
+        self.bridge.begin_block();
         for voice in &mut self.voices {
-            let Some(string) = voice.string.as_mut() else {
+            let Some(strings) = voice.strings.as_mut() else {
                 continue;
             };
-            if string.is_silent() {
+            if strings.is_silent() && !strings.is_receptive() {
                 continue;
             }
-            string.process_block_add(output);
+            for (index, sample) in chunk.iter_mut().enumerate() {
+                *sample += strings.process_with_bridge(&mut self.bridge, index);
+            }
+        }
+        for sample in chunk.iter_mut() {
+            *sample += SOUNDBOARD_MIX_GAIN * self.soundboard.process(*sample);
         }
     }
 
@@ -109,57 +194,86 @@ impl Engine {
         let Some(voice) = self.voice_for_midi(midi) else {
             return;
         };
+        voice.held = true;
         // Struck again by the finger, not held by the pedal any more —
         // even if this key's previous ringing was pedal-held when it was
         // re-struck.
         voice.pending_pedal_release = false;
-        let Some(string) = voice.string.as_mut() else {
+        let Some(strings) = voice.strings.as_mut() else {
             return;
         };
-        string.pluck(velocity);
+        strings.pluck(velocity);
     }
 
     /// Releases `midi`'s voice — a MIDI note-off or a computer-keyboard
     /// key-up. While the sustain pedal is down, the voice is marked
     /// [`Voice::pending_pedal_release`] instead of released immediately;
     /// [`Engine::release_pedal_held_voices`] finishes the job once the
-    /// pedal comes back up.
+    /// pedal comes back up. `held` clears unconditionally, regardless of
+    /// pedal state — it tracks the finger, not the sound.
     fn note_off(&mut self, midi: u8) {
         let pedal_down = self.pedal_down;
         let Some(voice) = self.voice_for_midi(midi) else {
             return;
         };
+        voice.held = false;
         if pedal_down {
             voice.pending_pedal_release = true;
             return;
         }
-        if let Some(string) = voice.string.as_mut() {
-            string.release();
+        if let Some(strings) = voice.strings.as_mut() {
+            strings.release();
         }
     }
 
-    /// Sets the CC64 hold state. Pressing the pedal changes nothing by
-    /// itself; releasing it releases every voice
-    /// [`Voice::pending_pedal_release`] marked while it was down.
+    /// Sets the CC64 hold state. Pressing the pedal also lifts the damper
+    /// on every currently-idle voice, so it becomes receptive to
+    /// sympathetic resonance (`PERF-008`, M6) exactly like a real piano's
+    /// pedal lifting every damper regardless of which keys are held;
+    /// releasing it releases every non-held voice, both the ones
+    /// `pending_pedal_release` marked and the ones that were merely made
+    /// receptive.
     fn set_sustain_pedal(&mut self, down: bool) {
         let was_down = self.pedal_down;
         self.pedal_down = down;
+        if !was_down && down {
+            self.lift_dampers_for_sympathetic_resonance();
+        }
         if was_down && !down {
             self.release_pedal_held_voices();
         }
     }
 
-    /// Releases every voice the pedal was holding. Bounded by
-    /// [`KEY_COUNT`] — a compile-time maximum, not an unbounded scan —
-    /// same as [`Engine::drain_commands`]'s own bounded loop.
+    /// Lifts the damper on every voice not currently held by a finger —
+    /// see [`Engine::set_sustain_pedal`]. Held voices need no change:
+    /// [`UnisonGroup::pluck`] already lifted their damper.
+    fn lift_dampers_for_sympathetic_resonance(&mut self) {
+        for voice in &mut self.voices {
+            if voice.held {
+                continue;
+            }
+            if let Some(strings) = voice.strings.as_mut() {
+                strings.lift_damper();
+            }
+        }
+    }
+
+    /// Re-engages the damper on every voice not currently held by a
+    /// finger, once the pedal comes back up — covers both voices with a
+    /// pending release and idle voices [`Engine::lift_dampers_for_
+    /// sympathetic_resonance`] made receptive; [`UnisonGroup::release`] is
+    /// idempotent, so calling it on an already-silent, already-damped
+    /// voice is harmless. Bounded by [`KEY_COUNT`] — a compile-time
+    /// maximum, not an unbounded scan — same as
+    /// [`Engine::drain_commands`]'s own bounded loop.
     fn release_pedal_held_voices(&mut self) {
         for voice in &mut self.voices {
-            if !voice.pending_pedal_release {
+            if voice.held {
                 continue;
             }
             voice.pending_pedal_release = false;
-            if let Some(string) = voice.string.as_mut() {
-                string.release();
+            if let Some(strings) = voice.strings.as_mut() {
+                strings.release();
             }
         }
     }
@@ -172,26 +286,29 @@ impl Engine {
     }
 
     /// Zero-velocity pluck silences a voice using the same allocation-free
-    /// path as a normal strike: it clears the delay line, resets the loss
-    /// filter and DC blocker, and sets the envelope to zero.
+    /// path as a normal strike, then immediately re-engages the damper —
+    /// "all notes off" should leave every voice damped, not sympathetically
+    /// receptive, regardless of pedal state.
     fn silence_all(&mut self) {
         for voice in &mut self.voices {
+            voice.held = false;
             voice.pending_pedal_release = false;
-            if let Some(string) = voice.string.as_mut() {
-                string.pluck(0.0);
+            if let Some(strings) = voice.strings.as_mut() {
+                strings.pluck(0.0);
+                strings.release();
             }
         }
     }
 
     /// Applies a new damping to every voice, live — including voices
     /// currently ringing, per
-    /// [`PluckedString::set_damping`](piano_core::PluckedString::set_damping).
+    /// [`UnisonGroup::set_damping`](piano_core::UnisonGroup::set_damping).
     /// A global "brightness" knob, not per-key: a hardware controller has
     /// one physical knob, not eighty-eight.
     fn set_damping(&mut self, damping: f32) {
         for voice in &mut self.voices {
-            if let Some(string) = voice.string.as_mut() {
-                string.set_damping(damping);
+            if let Some(strings) = voice.strings.as_mut() {
+                strings.set_damping(damping);
             }
         }
     }
@@ -200,28 +317,32 @@ impl Engine {
     /// reasoning as [`Engine::set_damping`].
     fn set_sustain(&mut self, sustain: f32) {
         for voice in &mut self.voices {
-            if let Some(string) = voice.string.as_mut() {
-                string.set_sustain(sustain);
+            if let Some(strings) = voice.strings.as_mut() {
+                strings.set_sustain(sustain);
             }
         }
     }
 }
 
-/// Builds `key_index`'s permanent voice, its baseline damping, sustain and
-/// inharmonicity computed per key by [`voicing::config_for_key`] rather
-/// than left at one global default across all 88 keys — see the module
-/// docs of [`crate::voicing`].
+/// Builds `key_index`'s permanent voice: a [`UnisonGroup`] whose string
+/// count and baseline damping/sustain/inharmonicity are computed per key
+/// by [`voicing::unison_count_for_key`] and [`voicing::config_for_key`]
+/// rather than left at one global default across all 88 keys — see the
+/// module docs of [`crate::voicing`].
 fn voice_for_key(key_index: usize, sample_rate: SampleRate, tuning: Tuning) -> Voice {
     let midi = LOWEST_PIANO_KEY.saturating_add(key_index as u8);
     let Ok(key) = PianoKey::from_midi(midi) else {
         return Voice {
-            string: None,
+            strings: None,
+            held: false,
             pending_pedal_release: false,
         };
     };
     let config = voicing::config_for_key(key, tuning);
+    let unison_count = voicing::unison_count_for_key(key);
     Voice {
-        string: PluckedString::new(config, sample_rate).ok(),
+        strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),
+        held: false,
         pending_pedal_release: false,
     }
 }

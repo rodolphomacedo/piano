@@ -64,6 +64,20 @@ pub(crate) struct KeyVoicing {
     pub(crate) inharmonicity: f32,
 }
 
+/// How many physical strings `key` is struck by (M6, `docs/ROADMAP.md`).
+///
+/// Delegates the register boundaries and per-register counts to
+/// [`piano_core::unison::unison_count_for_key_index`] — see that
+/// function's module docs (`piano_core::unison`) for the citation and the
+/// honesty note on where the specific boundaries come from. This wrapper
+/// exists only to convert this crate's [`PianoKey`] into the plain
+/// zero-based index that function expects, the same shape every other
+/// function in this module already uses `key.key_index()` for.
+#[must_use]
+pub(crate) fn unison_count_for_key(key: PianoKey) -> usize {
+    piano_core::unison::unison_count_for_key_index(key.key_index())
+}
+
 /// Computes `key`'s baseline voicing under `tuning`.
 pub(crate) fn voicing_for_key(key: PianoKey, tuning: Tuning) -> KeyVoicing {
     let frequency = key.frequency(tuning).hertz();
@@ -235,6 +249,14 @@ mod tests {
             config.inharmonicity,
             voicing_for_key(treble, tuning).inharmonicity
         );
+    }
+
+    #[test]
+    fn bass_keys_are_single_strung_and_treble_keys_are_triple_strung() {
+        let bass = PianoKey::from_midi(LOWEST_PIANO_KEY).expect("A0 is on the keyboard");
+        let treble = PianoKey::from_midi(HIGHEST_PIANO_KEY).expect("C8 is on the keyboard");
+        assert_eq!(unison_count_for_key(bass), 1);
+        assert_eq!(unison_count_for_key(treble), 3);
     }
 
     #[test]

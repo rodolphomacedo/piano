@@ -230,7 +230,18 @@ fn note_off_while_the_pedal_is_down_does_not_release_until_pedal_up() {
         .expect("queue has room");
     engine.drain_commands(&mut consumer);
 
-    let mut held = vec![0.0f32; 48_000];
+    // A held (pedal-down) note must still be clearly audible well past
+    // when an actually-released one would have reached silence (tens of
+    // milliseconds — `note_off_releases_a_ringing_voice_quickly` checks
+    // that). This no longer checks a full second in: M6's unison strings
+    // give a genuinely faster *natural* initial decay than a lone
+    // near-lossless string had (the beating "pre-decay" stage real piano
+    // notes have, `docs/ROADMAP.md`), so by one second in a pedal-held
+    // note can have already decayed close to this test's audibility
+    // threshold on its own, which is real physics, not the pending
+    // release this test exists to catch. 0.2 s stays far inside the
+    // window where "held" and "released" are unambiguously different.
+    let mut held = vec![0.0f32; 9_600];
     engine.process_block(&mut held);
     let held_tail = held
         .get(held.len() - 128..)

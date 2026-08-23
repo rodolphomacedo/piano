@@ -12,10 +12,11 @@
 //! drains that queue from whichever thread owns the listener; under queue
 //! pressure an event is dropped rather than the driver thread blocking.
 //!
-//! The current instrument (`piano-core`) has no release envelope: a struck
-//! string rings until it decays on its own, with no way to damp it early.
-//! [`MidiEvent::NoteOff`] is decoded so a future release model has
-//! somewhere to plug in, but nothing acts on it yet.
+//! [`MidiEvent::NoteOff`] and CC64 (the sustain pedal, decoded as an
+//! ordinary [`MidiEvent::ControlChange`] — no dedicated variant needed)
+//! are both decoded here; the CLI is what turns them into
+//! `piano_audio::AudioSession::note_off`/`set_sustain_pedal` calls (M5),
+//! since acting on them is `piano-audio`'s job, not this crate's.
 
 use midir::{MidiInput, MidiInputPort};
 use rtrb::{Consumer, Producer, RingBuffer};

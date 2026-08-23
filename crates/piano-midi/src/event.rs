@@ -15,10 +15,9 @@ pub enum MidiEvent {
         /// Strike strength, `0.0` to `1.0`.
         velocity: f32,
     },
-    /// A key was released. The current instrument has no release envelope
-    /// (see the crate-level docs), so this is decoded but not acted on yet
-    /// — a real piano note keeps ringing after the key comes up, same as
-    /// `piano keyboard` today.
+    /// A key was released. Turned into `piano_audio::AudioSession::note_off`
+    /// by the CLI (M5), which engages the string's damper unless the
+    /// sustain pedal is currently held.
     NoteOff {
         /// MIDI note number, `0..=127`.
         note: u8,

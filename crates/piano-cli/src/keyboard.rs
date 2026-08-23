@@ -4,11 +4,15 @@
 //! from this thread to the audio thread through the lock-free queue in
 //! `piano-audio` — the everyday use case ADR-0005 exists for.
 
-use std::io;
+use std::io::{self, stdout};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
+use crossterm::execute;
 use crossterm::terminal;
 use piano_audio::AudioSession;
 use piano_core::string::{DEFAULT_DAMPING, DEFAULT_SUSTAIN};
@@ -95,9 +99,22 @@ pub(crate) fn run(args: &KeyboardArgs) -> Result<()> {
         .with_context(|| format!("invalid concert A: {}", args.concert_a))?;
     let mut session = AudioSession::start(tuning).context("could not start audio playback")?;
 
-    print_instructions(base_key.midi_number());
     let raw_mode = RawModeGuard::enable().context("could not enable terminal raw mode")?;
-    let outcome = play_until_quit(&mut session, base_key.midi_number());
+    // Most terminals (including macOS's Terminal.app) only ever deliver key
+    // *press* events in raw mode; genuine key-up requires the terminal to
+    // implement the Kitty keyboard protocol (kitty, WezTerm, and a growing
+    // but still-minority list of others). Query rather than assume, and be
+    // honest in the instructions about which case this run landed in —
+    // never claim a release feature the terminal cannot actually deliver.
+    let key_release_supported = terminal::supports_keyboard_enhancement().unwrap_or(false);
+    let enhancement_guard = key_release_supported
+        .then(KeyboardEnhancementGuard::enable)
+        .transpose()
+        .context("could not enable terminal key-release reporting")?;
+
+    print_instructions(base_key.midi_number(), key_release_supported);
+    let outcome = play_until_quit(&mut session, base_key.midi_number(), key_release_supported);
+    drop(enhancement_guard);
     drop(raw_mode);
     outcome?;
 
@@ -122,7 +139,11 @@ impl Voicing {
     }
 }
 
-fn play_until_quit(session: &mut AudioSession, base_note: u8) -> Result<()> {
+fn play_until_quit(
+    session: &mut AudioSession,
+    base_note: u8,
+    key_release_supported: bool,
+) -> Result<()> {
     let mut voicing = Voicing::defaults();
     loop {
         if !event::poll(POLL_INTERVAL)? {
@@ -132,6 +153,9 @@ fn play_until_quit(session: &mut AudioSession, base_note: u8) -> Result<()> {
             continue;
         };
         if key.kind == KeyEventKind::Release {
+            if key_release_supported {
+                release_key(session, base_note, key.code);
+            }
             continue;
         }
         if should_quit(&key) {
@@ -141,6 +165,19 @@ fn play_until_quit(session: &mut AudioSession, base_note: u8) -> Result<()> {
             handle_key(session, &mut voicing, base_note, letter);
         }
     }
+}
+
+/// Releases the note a key-up maps to. Only ever called when
+/// `key_release_supported` was confirmed true, since most terminals never
+/// deliver a `Release` kind at all — see [`run`].
+fn release_key(session: &mut AudioSession, base_note: u8, code: KeyCode) {
+    let KeyCode::Char(letter) = code else {
+        return;
+    };
+    let Some(offset) = semitone_offset(letter) else {
+        return;
+    };
+    session.note_off(base_note.saturating_add(offset));
 }
 
 fn handle_key(session: &mut AudioSession, voicing: &mut Voicing, base_note: u8, letter: char) {
@@ -184,13 +221,45 @@ fn semitone_offset(letter: char) -> Option<u8> {
         .find_map(|&(key, offset)| (key == lower).then_some(offset))
 }
 
-fn print_instructions(base_midi: u8) {
+fn print_instructions(base_midi: u8, key_release_supported: bool) {
     println!("piano keyboard — live playback, nothing is written to disk.");
     println!("bottom row  z s x d c v g b h n j m ,   -> one octave from MIDI {base_midi}");
     println!("top row     q 2 w 3 e r 5 t 6 y 7 u i 9 o 0 p -> continues upward");
     println!("[ ]  -> damping down / up (brighter <-> duller)");
     println!("- =  -> sustain down / up (shorter <-> longer ring)");
+    if key_release_supported {
+        println!("this terminal reports key-up: releasing a note key damps it early.");
+    } else {
+        println!(
+            "this terminal does not report key-up (most don't outside kitty/WezTerm-style \
+             terminals) — notes always ring out on their own; use `piano midi` for real \
+             note-off and a sustain pedal."
+        );
+    }
     println!("Esc or Ctrl+C to quit.\n");
+}
+
+/// Enables the terminal's progressive keyboard enhancement protocol so
+/// `event::read` reports key-*release*, not only key-press — see [`run`].
+/// Pushed and popped the same bracketed way [`RawModeGuard`] handles raw
+/// mode, so an early return still leaves the terminal in its original
+/// state.
+struct KeyboardEnhancementGuard;
+
+impl KeyboardEnhancementGuard {
+    fn enable() -> io::Result<Self> {
+        execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+        )?;
+        Ok(Self)
+    }
+}
+
+impl Drop for KeyboardEnhancementGuard {
+    fn drop(&mut self) {
+        let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
+    }
 }
 
 /// Ensures raw mode is always disabled on the way out, including on error —

@@ -33,7 +33,22 @@ const DAMPING_CC: u8 = 74;
 /// Control-change controller number mapped to the sustain knob. CC1 is the
 /// modulation wheel, present on nearly every controller, standing in for a
 /// dedicated "sustain amount" control that General MIDI does not define.
+///
+/// **Not** the sustain *pedal* ([`SUSTAIN_PEDAL_CC`]) — this is
+/// `piano_core::PluckedString`'s decay-rate voicing parameter, an unrelated
+/// concept that happens to share the word "sustain".
 const SUSTAIN_CC: u8 = 1;
+
+/// Control-change controller number of the sustain (hold) pedal — General
+/// MIDI's standard CC64, `>=64` is "down", `<64` is "up" (MIDI 1.0
+/// Detailed Specification, controller number assignments). Distinct from
+/// [`SUSTAIN_CC`]: this is the physical pedal, not a voicing knob.
+const SUSTAIN_PEDAL_CC: u8 = 64;
+
+/// The 7-bit MIDI value at which CC64 counts as "pedal down", in the same
+/// `[0, 1]`-normalised units `piano-midi` decodes every controller value
+/// into: `64 / 127`.
+const SUSTAIN_PEDAL_DOWN_THRESHOLD: f32 = 64.0 / 127.0;
 
 /// Arguments for `piano midi`.
 #[derive(Debug, clap::Args)]
@@ -128,15 +143,21 @@ fn apply(session: &mut AudioSession, event: MidiEvent) {
         MidiEvent::NoteOn { note, velocity } => {
             session.note_on(note, velocity);
         }
+        MidiEvent::NoteOff { note } => {
+            session.note_off(note);
+        }
         MidiEvent::ControlChange { controller, value } if controller == DAMPING_CC => {
             session.set_damping(1.0 - value);
         }
         MidiEvent::ControlChange { controller, value } if controller == SUSTAIN_CC => {
             session.set_sustain(value);
         }
-        // No release envelope yet — see the piano-midi crate docs. Every
-        // other control change is not one this instrument understands.
-        MidiEvent::NoteOff { .. } | MidiEvent::ControlChange { .. } => {}
+        MidiEvent::ControlChange { controller, value } if controller == SUSTAIN_PEDAL_CC => {
+            session.set_sustain_pedal(value >= SUSTAIN_PEDAL_DOWN_THRESHOLD);
+        }
+        // Every other control change is not one this instrument
+        // understands.
+        MidiEvent::ControlChange { .. } => {}
     }
 }
 
@@ -146,6 +167,11 @@ fn print_instructions(port_name: &str) {
     println!(
         "CC{DAMPING_CC} (brightness) -> damping, inverted   CC{SUSTAIN_CC} (mod wheel) -> sustain"
     );
+    println!(
+        "CC{SUSTAIN_PEDAL_CC} (sustain/hold pedal) -> holds every released note until the pedal comes back up"
+    );
+    println!("note-off releases a key early — release the damper instead of ringing on;");
+    println!("play a chord and every held note sounds together.");
     println!("Esc or Ctrl+C (in this terminal) to quit.\n");
 }
 

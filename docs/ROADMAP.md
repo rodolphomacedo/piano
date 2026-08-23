@@ -88,7 +88,7 @@ that should also delete this sentence.
 
 ---
 
-## M4 — Real piano physics
+## M4 — Real piano physics ✅
 
 The milestone that turns a plucked string into a struck one. The largest
 single jump in sound quality in the whole roadmap.
@@ -100,6 +100,36 @@ delay (`PERF-004`), and a nonlinear felt hammer model (`PERF-007`).
 **Done when**: a struck note is audibly a piano rather than a guitar, its partials
 are measurably sharp in the way a real piano's are, and hitting harder makes it
 brighter rather than merely louder.
+
+*Achieved, with one open item*: all four pieces landed in `piano-core` —
+`DelayLine::read_allpass` (first-order allpass fractional delay, `PERF-004`),
+`piano_core::dispersion::DispersionCascade` (a register-scaled allpass cascade
+implementing Fletcher's stiff-string inharmonicity formula, `PERF-005`,
+exposed live via `StringConfig::inharmonicity`/`PluckedString::set_inharmonicity`
+the same way `damping`/`sustain` already were), `filter::LoopFilter` (a
+one-pole-one-zero loss filter so upper partials measurably decay faster than
+the fundamental, replacing the single-pole design), and
+`piano_core::hammer::simulate_contact` (a bounded nonlinear
+Hertzian-contact hammer model, `PERF-007`, shaping the excitation from the
+existing `velocity` parameter rather than merely scaling it). Both objective
+"done when" criteria have real measured numbers, not assertions
+(`crates/piano-render/tests/m4_spectral.rs`, run as part of
+`cargo test --workspace`): rendering A4 shows partials 1 through 7 sharpening
+with increasing partial number (roughly -2, +0.7, -0.2, +0.7, +1.3, +3.6,
++6.1 cents of deviation from an exact harmonic series), the qualitative
+signature a pure Karplus-Strong loop cannot produce; and a hard strike
+(velocity 0.95) measures a spectral centroid of about 910 Hz against a soft
+strike's (velocity 0.15) 850 Hz for the same note, with neither render
+loudness-normalised, confirming brightness comes from shape, not level.
+**Not yet done**: the third criterion, "audibly a piano rather than a
+guitar", is a human-hearing judgement no test suite can make. Sample renders
+at A2, A4, A6, and a soft/hard A4 pair for a direct brightness comparison,
+were written to `/tmp/piano-m4-samples/` for a person to listen to — nobody
+had done so as of this milestone landing. Whoever confirms that should also
+delete this sentence. Also open: every `PERF-004`/`PERF-005`/`PERF-007` entry
+in `docs/PERFORMANCE.md` is "Implemented, unmeasured" rather than "Closed" —
+no cycle counts exist yet for the new per-sample cost this milestone added,
+per that document's own rule that a status closes only with a number.
 
 ---
 

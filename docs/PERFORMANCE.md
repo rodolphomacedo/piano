@@ -42,10 +42,10 @@ Following the discipline of not collapsing everything into "fast":
 | [PERF-001](#perf-001) | Bounds checks in the delay-line hot loop | M7 | Open |
 | [PERF-002](#perf-002) | Denormal handling in decaying tails | M2 | Mitigated, unmeasured |
 | [PERF-003](#perf-003) | Per-sample dispatch in the voice loop | M5 | Open |
-| [PERF-004](#perf-004) | Linear interpolation in the fractional delay | M4 | Open |
-| [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Open |
+| [PERF-004](#perf-004) | Linear interpolation in the fractional delay | M4 | Implemented, unmeasured |
+| [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Implemented, unmeasured |
 | [PERF-006](#perf-006) | Polyphony and voice management | M5 | Open |
-| [PERF-007](#perf-007) | Hammer–string contact solver | M4 | Open |
+| [PERF-007](#perf-007) | Hammer–string contact solver | M4 | Implemented, unmeasured |
 | [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Open |
 | [PERF-009](#perf-009) | Soundboard convolution | M6 | Open |
 | [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | Open |
@@ -146,6 +146,23 @@ but transient-sensitive when the delay changes) or third-order Lagrange (well
 behaved under modulation, ~4 extra operations). Choose by listening test, not by
 op count.
 
+*Status (M4)*: **Implemented, unmeasured.** `DelayLine::read_allpass`
+replaces `read_interpolated` in the hot path (`PluckedString::process`),
+using the standard first-order allpass fractional delay (Jaffe & Smith 1983;
+Smith, *Physical Audio Signal Processing*, "First-Order Allpass
+Interpolation"): unity magnitude at every frequency, so it no longer colours
+brightness by pitch or fractional delay the way linear interpolation did.
+One known caveat, found by this milestone's own `proptest` coverage rather
+than by inspection: the allpass coefficient `η = (1-d)/(1+d)` approaches the
+unit circle as the fractional delay `d` approaches 0, which makes the filter
+resonant/transient-sensitive right at (or very near) a whole-sample delay —
+`delay::tests::allpass_reading_any_delay_is_total` stays finite there
+(verified), but a real string whose tuned `loop_delay` happens to land
+exactly on an integer would ring more than intended for a moment after a
+strike. No cycle count exists for the interpolator itself, and no listening
+test has confirmed the resonance caveat is inaudible in practice — both
+would close this entry.
+
 ---
 
 ### PERF-005
@@ -171,6 +188,30 @@ entire budget.
   filter structure with different coefficients — a natural 4-wide SIMD group.
 - **Consider a single higher-order allpass** instead of a cascade, if the
   coefficient design is stable.
+
+*Status (M4)*: **Implemented, unmeasured.** `piano_core::dispersion` adds a
+cascade of up to `MAX_SECTIONS = 8` first-order allpass sections in the loop,
+after the loss filter, with section count scaled by register from the
+measured table in `docs/PHYSICS.md` (8 at A0, 2 at A4, 0-1 at C8) and a
+single per-cascade coefficient derived from the live `inharmonicity`
+parameter (`StringConfig::inharmonicity`, `PluckedString::set_inharmonicity`
+— same live-control pattern as `damping`/`sustain`). The coefficient's
+scaling constant was calibrated empirically against a real FFT measurement
+(`crates/piano-render/tests/m4_spectral.rs`) rather than fit to Fletcher's
+curve in closed form — fitting a cascade exactly is itself a numerical
+optimisation problem Jaffe & Smith's own paper solves iteratively, which is
+out of scope here; see the module doc comment in `dispersion.rs` for the
+honest statement of that simplification. Measured result for A4 at the
+default `B`: partials 1 through 7 sharpen with increasing partial number
+(deviations from an exact harmonic series of roughly -2, +0.7, -0.2, +0.7,
++1.3, +3.6, +6.1 cents for partials 1-7 respectively) — the qualitative
+signature the physics predicts, confirmed by measurement rather than
+asserted. Not yet measured: cycles per section per sample (PERF-005's own
+"largest CPU consumer" concern), and partial 8 for A4 was excluded from the
+test's assertions because its energy sits close to this register's noise
+floor and the peak-finder occasionally locks onto a spurious neighbouring
+bin — a test-resolution limitation noted in the test file, not a claim about
+the model itself.
 
 ---
 
@@ -210,6 +251,30 @@ maximum** and a defined behaviour when it is reached.
 hard capped), or a precomputed force curve indexed by compression. Contact lasts
 1–4 ms, so this is a bounded spike rather than a steady load — but the spike must
 be bounded by construction, not by hope.
+
+*Status (M4)*: **Implemented, unmeasured.** `piano_core::hammer::simulate_contact`
+runs a bounded explicit (semi-implicit Euler) integration of the hammer's
+side of the Hertzian contact (Chaigne & Askenfelt 1994, `F = K·x^p`,
+`p = 2.5`), capped at `MAX_CONTACT_SAMPLES = 512` steps (a compile-time
+bound, never a `while !converged`) — called once per
+`PluckedString::pluck`, the same bounded-spike location the existing noise
+burst already used, not from the per-sample loop. This is a deliberate
+simplification of the full hammer/string solve this entry originally
+described: rather than a simultaneous implicit solve with the string's own
+motion feeding back into the contact force, the string is treated as
+immobile during the ~1–4 ms contact window, and the resulting
+velocity-shaped force envelope scales the existing excitation noise rather
+than replacing it — documented in full in `hammer.rs`'s module doc comment,
+including why that is an honest reduction in scope rather than a hidden one.
+Measured result: at 48 kHz, a soft strike (velocity 0.15) produces a
+spectral centroid of about 850 Hz and a hard strike (velocity 0.95) about
+910 Hz for the same A4 note, neither loudness-normalised — confirming
+velocity changes the excitation's spectral *shape*, not just its level
+(`crates/piano-render/tests/m4_spectral.rs`,
+`hitting_harder_makes_a_note_brighter_not_merely_louder`). Not yet measured:
+cycles per contact simulation, and whether a true coupled hammer/string
+solve (the fixed-point-iteration approach this entry originally described)
+would sound meaningfully different — both would close this entry.
 
 ---
 

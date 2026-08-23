@@ -54,29 +54,50 @@ treble. It is implemented in `PluckedString::new`, and the test
 `loop_delay_is_close_to_the_period` guards it. Measured output for A4 lands within
 about 1.5 cents of 440 Hz.
 
-## Why the excitation is noise (for now)
+## Why the excitation is a shaped noise burst, not flat noise (M4)
 
-Karplus–Strong fills the delay line with noise. Physically this is a very crude
-model of a pluck: it says "give the string a random initial displacement". It is
-wrong in an interesting way — noise contains every partial equally, and the loop
-then filters it into a harmonic series. It sounds like a plucked string because it
-*is* a plucked string, badly excited.
+Karplus–Strong fills the delay line with flat noise. Physically this is a very
+crude model of a pluck: it says "give the string a random initial
+displacement". A piano is not plucked, it is struck by a felt hammer, and the
+hammer is what makes a piano sound like a piano.
 
-A piano is not plucked, it is struck by a felt hammer, and the hammer is what makes
-a piano sound like a piano. That is milestone M4.
+`piano_core::hammer::simulate_contact` models the hammer's side of a
+Hertzian-contact nonlinear spring (Chaigne & Askenfelt 1994,
+`F = K·x^p`, `p ≈ 2–3`): harder strikes compress the felt more, which makes
+the effective spring stiffer, which makes contact both shorter *and* higher
+in peak force — exactly the two effects that make a hard-struck note brighter
+rather than merely louder. The string's own motion is not solved
+simultaneously (that full coupled problem is `PERF-007`'s harder,
+not-yet-built form); this shapes the existing excitation noise's envelope
+rather than replacing it, which keeps every partial excited (still noise
+under the hood) while making the envelope's *shape* — and so the excitation's
+spectral balance — a function of strike velocity.
 
-## What the current model does not do
+## Why upper partials sit sharp (M4)
+
+A real string is stiff, not an idealised flexible one, so its restoring force
+includes a bending-stiffness term the wave equation for an ideal string does
+not. The consequence, first derived by Fletcher (1964): partial `n` sits at
+`f_n ≈ n·f_1·sqrt(1 + B·n²)` rather than exactly `n·f_1`, where `B` is the
+string's inharmonicity coefficient. `piano_core::dispersion::DispersionCascade`
+reproduces this with a cascade of first-order allpass sections inside the
+loop, after the loss filter (Jaffe & Smith 1983's extension to
+Karplus-Strong): each section is flat in magnitude but adds a
+frequency-dependent phase delay, and enough of them approximate the stretched
+dispersion curve. Section count scales with register per the table below —
+the bass needs many, the treble barely any.
+
+## What the current model still does not do
 
 Stated plainly, because these are the gaps that later milestones close:
 
 | Missing | Consequence | Milestone |
 |---|---|---|
-| **Stiffness / inharmonicity** | Partials sit at exact integer multiples. Real piano partials are progressively sharp; this is a large part of why a piano sounds unlike a guitar. | M4 |
-| **Hammer excitation** | Noise burst instead of a felt strike. No velocity-dependent brightness — a real hammer gets harder the faster it hits. | M4 |
 | **Multiple strings per note** | No beating, no aftersound. Real notes have 2–3 slightly detuned strings whose interference produces the characteristic two-stage decay. | M6 |
 | **Sympathetic resonance** | Sustain pedal does nothing. | M6 |
 | **Soundboard** | The string signal is heard raw; a real piano is heard through a radiating wooden plate. | M6 |
 | **Longitudinal modes** | No metallic "phantom partials" of the low bass. | Backlog |
+| **Simultaneous hammer/string coupling** | The hammer model (above) does not yet feed the string's own motion back into the contact force during the strike. | Backlog |
 
 ## Numbers worth having
 

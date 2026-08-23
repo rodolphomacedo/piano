@@ -109,7 +109,7 @@ depends on the core, never the reverse.
 ## Development
 
 ```sh
-cargo test --workspace                                      # 89 tests
+cargo test --workspace                                      # 90 tests
 cargo clippy --workspace --all-targets -- -D warnings       # must be clean
 cargo fmt --all --check
 cargo build -p piano-core --no-default-features             # no_std must keep building

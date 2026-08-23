@@ -25,6 +25,13 @@ pub enum MidiError {
     PortName(#[from] midir::PortInfoError),
 
     /// The port was found and named, but the connection itself failed.
+    ///
+    /// Formatted to a `String` at the boundary rather than wrapping
+    /// [`midir::ConnectError`] directly: that type carries the whole
+    /// `MidiInput` back to the caller (so a failed connection can be
+    /// retried with the same backend), and on at least one platform that
+    /// embeds a handle that is not `Sync` — which would make `MidiError`
+    /// itself not `Sync` and break every `anyhow::Context` call site.
     #[error("could not connect to the MIDI input port: {0}")]
-    Connect(#[from] midir::ConnectError<midir::MidiInput>),
+    Connect(String),
 }

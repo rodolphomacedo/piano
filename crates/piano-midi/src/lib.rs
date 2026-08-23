@@ -59,7 +59,9 @@ impl MidiListener {
         let input = MidiInput::new("piano-midi")?;
         let (port, port_name) = select_port(&input, name_filter)?;
         let (producer, consumer) = RingBuffer::new(EVENT_QUEUE_CAPACITY);
-        let connection = input.connect(&port, "piano-midi-input", on_midi_message, producer)?;
+        let connection = input
+            .connect(&port, "piano-midi-input", on_midi_message, producer)
+            .map_err(|error| MidiError::Connect(error.to_string()))?;
         Ok(Self {
             connection,
             consumer,
@@ -159,5 +161,18 @@ mod tests {
         assert!(matches_filter("Yamaha P-125", Some("yamaha")));
         assert!(matches_filter("Yamaha P-125", Some("P-125")));
         assert!(!matches_filter("Yamaha P-125", Some("Roland")));
+    }
+
+    // MidiError must stay Send + Sync on every platform, not just the one
+    // this happens to run on: `anyhow::Context` requires it, and a variant
+    // that embeds a platform backend handle (as midir's `ConnectError` does,
+    // to hand the backend back to the caller) can be `Sync` on one backend
+    // and not another. This caught exactly that on Linux/ALSA after passing
+    // clean on macOS/CoreMIDI.
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn midi_error_is_send_and_sync_on_every_platform() {
+        assert_send_sync::<MidiError>();
     }
 }

@@ -7,7 +7,7 @@ the sound is computed from a model of what a vibrating string actually does. The
 long-term target is the class of instrument that commercial modelled pianos
 occupy; the short-term target is to get there one audible step at a time.
 
-**Status: milestone M7.** A struck string (a proper digital waveguide with
+**Status: milestone M8, the last on the roadmap.** A struck string (a proper digital waveguide with
 dispersion and a nonlinear felt-hammer excitation, M4) renders to a WAV
 file, in tune to within about 1.5 cents, plays live through the speakers —
 polyphonically, a full 88-key voice pool, from the computer keyboard or a
@@ -28,8 +28,63 @@ M7 added no audible feature: it is a dedicated performance-engineering
 pass — a `criterion` benchmark harness per DSP component, a genuine
 repeated-sampling p99.9 callback-timing histogram, and real measured
 numbers (not opinions) closing or advancing every open entry in
-[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)'s bottleneck register. See the
-[roadmap](docs/ROADMAP.md).
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)'s bottleneck register. M8, like
+M7, adds no audible feature either: it is release and packaging — a
+`workflow_dispatch` GitHub Actions build for macOS Intel, macOS Apple
+Silicon and Linux (`.github/workflows/release-build.yml`), every crate
+verified publish-ready against the real crates.io registry via
+`cargo publish --dry-run`, and a documented (not yet built — see
+[`docs/PLUGIN-PATH.md`](docs/PLUGIN-PATH.md)) path to a CLAP plugin. See the
+[roadmap](docs/ROADMAP.md) for the full milestone history and M8's own honest
+account of what is and is not published yet.
+
+## Install
+
+There are two honest states here, and this section says which one is real
+today rather than describing a future that has not happened yet.
+
+**Today: build from source.** No crate in this workspace is published to
+crates.io yet — that is a deliberate choice left for this project's owner to
+make, not an oversight (see `docs/ROADMAP.md`'s M8 entry for exactly why).
+Assuming nothing but [`rustup`](https://rustup.rs):
+
+```sh
+git clone https://github.com/rodolphomacedo/piano.git
+cd piano
+cargo run --release -p piano-cli -- keyboard
+```
+
+That builds every crate the CLI depends on and starts playing from your
+computer keyboard — no separate install step, no admin privileges beyond
+what `cargo` itself needs. The `render`/`play`/`midi` subcommands below all
+work the same way, substituting the subcommand after `--`.
+
+**A prebuilt binary, no compiler needed.** Each milestone's-worth of source
+can also be built once and downloaded, rather than compiled locally: this
+repository's `.github/workflows/release-build.yml` (a manual, human-triggered
+GitHub Actions workflow, not something that runs automatically) builds
+`piano-cli` for macOS Intel, macOS Apple Silicon and Linux and uploads each
+as a **workflow artifact** — visible and downloadable from this repository's
+[Actions tab](https://github.com/rodolphomacedo/piano/actions/workflows/release-build.yml)
+to anyone who can see the repo, for 14 days after the run, with no publish
+step and no public Release involved. Whether a build exists at any given
+moment depends on whether someone has triggered that workflow recently — if
+the Actions tab shows no recent successful run, building from source above
+is the only path today.
+
+**After a human decides to publish (not yet true): `cargo install`.** Every
+crate has already been checked with `cargo publish --dry-run` against the
+real crates.io registry (`docs/ROADMAP.md`'s M8 entry has the full,
+crate-by-crate result) and is publish-ready. Once the project's owner
+actually runs `cargo publish` — a deliberate, irreversible action this
+milestone intentionally did not take on their behalf — installing becomes:
+
+```sh
+cargo install piano-cli   # not live yet — see above
+```
+
+This line is written in advance so the day it becomes true, nothing else
+in this README needs to change.
 
 ## Try it
 
@@ -157,6 +212,7 @@ depends on the core, never the reverse.
 | [Real-time rules](docs/REALTIME-AUDIO-RULES.md) | What the audio thread may and may not do |
 | [Performance](docs/PERFORMANCE.md) | The bottleneck register — known costs, before they bite |
 | [Prior art](docs/PRIOR-ART.md) | The literature, and the licence rules we work under |
+| [Plugin path](docs/PLUGIN-PATH.md) | Whether a CLAP/VST3/AU wrapper is worth building, and why not yet |
 | [Decisions](docs/adr/) | Architecture decision records |
 
 ## Development

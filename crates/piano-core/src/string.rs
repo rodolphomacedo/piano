@@ -32,11 +32,48 @@ use crate::{
 /// the pitch is meaningless.
 const MIN_LOOP_DELAY: f32 = 2.0;
 
-/// How fast the envelope follower forgets, per sample.
+/// How fast the envelope follower forgets, per sample, for a held note.
 const ENVELOPE_DECAY: f32 = 0.999_5;
 
+/// How fast the envelope follower forgets once the damper is engaged
+/// ([`PluckedString::release`]).
+///
+/// [`ENVELOPE_DECAY`] alone would make [`PluckedString::is_silent`] — and
+/// so the engine's energy-gated voice skipping, `PERF-006` — take about
+/// 18 000 samples (~380 ms at 48 kHz) to notice a released note has died,
+/// no matter how fast [`RELEASE_LOSS_MULTIPLIER`] makes the *signal*
+/// itself decay: once the true signal magnitude collapses below the
+/// follower's own forgetting curve, the follower can only fall as fast as
+/// its own release-rate constant, not as fast as reality. A released
+/// string needs its own, much faster, constant so `is_silent` reflects the
+/// released signal's real (order-of-10-round-trip) decay instead of a
+/// held note's much slower one.
+const RELEASED_ENVELOPE_DECAY: f32 = 0.995;
+
 /// Below this envelope level a voice is inaudible and can be reclaimed.
-const SILENCE_THRESHOLD: f32 = 1e-4;
+pub const SILENCE_THRESHOLD: f32 = 1e-4;
+
+/// Extra broadband loop-gain loss applied on every round trip once
+/// [`PluckedString::release`] has engaged the damper, on top of whatever
+/// `sustain` is currently set to.
+///
+/// A felt damper does not merely stop new energy going in — pressed against
+/// the string, it adds a large, sudden friction loss to every reflection,
+/// which is why a released piano note reaches silence far sooner than the
+/// seconds (or tens of seconds, in the bass) a held note rings for (Chaigne
+/// & Askenfelt 1994 model piano string loss the same way: as a
+/// per-round-trip energy loss coefficient, sharply increased once the
+/// damper makes contact). Multiplying `sustain` rather than replacing it
+/// with a fixed value guarantees a released string always decays *at least
+/// as fast* as whatever it was doing before, for any starting `sustain` —
+/// including one a live `set_sustain` call had already set unusually low,
+/// where a fixed replacement value could accidentally slow the string down
+/// instead. At the default `sustain` (0.996) this reaches
+/// [`SILENCE_THRESHOLD`] from full amplitude in about 10 round trips —
+/// roughly 20 ms at A4, longer in the bass simply because a low string's
+/// round trip itself takes longer, the same register-dependent spread a
+/// real damped piano note shows.
+const RELEASE_LOSS_MULTIPLIER: f32 = 0.4;
 
 /// Damping [`StringConfig::new`] uses when the caller does not choose one.
 pub const DEFAULT_DAMPING: f32 = 0.5;
@@ -96,6 +133,13 @@ pub struct PluckedString {
     period: f32,
     loop_delay: f32,
     sustain: f32,
+    /// Set by [`PluckedString::release`], cleared by the next
+    /// [`PluckedString::pluck`]. Named for the physical damper rather than
+    /// anything to do with [`PluckedString::set_sustain`] — that is a
+    /// decay-*rate* voicing parameter a player never directly triggers;
+    /// this is a hammer/damper *event*, on or off, the same shape as a
+    /// piano key's own mechanism.
+    damper_engaged: bool,
     envelope: f32,
     /// Kept only for [`hammer::simulate_contact`]'s integration step at the
     /// next [`PluckedString::pluck`]; the audio-thread `process` loop never
@@ -138,6 +182,7 @@ impl PluckedString {
             period,
             loop_delay,
             sustain: math::clamp_or_low(config.sustain, 0.0, 1.0),
+            damper_engaged: false,
             envelope: 0.0,
             sample_rate: sample_rate.hertz(),
         })
@@ -207,6 +252,10 @@ impl PluckedString {
         self.dispersion.reset();
         self.dc_blocker.reset();
         self.envelope = velocity;
+        // A hammer strike lifts the damper off the string, same as a real
+        // piano key: any release the previous ringing of this voice had
+        // engaged no longer applies to the new note.
+        self.damper_engaged = false;
 
         let (contact_force, contact_samples) = hammer::simulate_contact(velocity, self.sample_rate);
         let burst_length = self.loop_delay as usize + 1;
@@ -221,13 +270,33 @@ impl PluckedString {
         }
     }
 
+    /// Engages the damper: from this call on, every round trip loses extra
+    /// energy on top of `sustain` (see [`RELEASE_LOSS_MULTIPLIER`]), so a
+    /// released note reaches silence in a fraction of the time a held one
+    /// would take — a key coming up, or the sustain pedal releasing a note
+    /// it was holding.
+    ///
+    /// Total and idempotent: calling this on a string that has already been
+    /// released, or one that was never plucked and is already silent, only
+    /// ever tightens the loop gain further, never loosens it, so it can be
+    /// called freely without checking the string's current state first.
+    #[inline]
+    pub fn release(&mut self) {
+        self.damper_engaged = true;
+    }
+
     /// Produces one output sample and advances the string by one sample.
     #[inline]
     pub fn process(&mut self) -> f32 {
         let travelled = self.delay.read_allpass(self.loop_delay);
         let filtered = self.loop_filter.process(travelled);
         let dispersed = self.dispersion.process(filtered);
-        let reflected = dispersed * self.sustain;
+        let loop_gain = if self.damper_engaged {
+            self.sustain * RELEASE_LOSS_MULTIPLIER
+        } else {
+            self.sustain
+        };
+        let reflected = dispersed * loop_gain;
         self.delay.write(math::flush_denormal(reflected));
 
         let output = self.dc_blocker.process(travelled);
@@ -286,7 +355,12 @@ impl PluckedString {
     #[inline]
     fn track_envelope(&mut self, output: f32) {
         let magnitude = math::abs(output);
-        let decayed = self.envelope * ENVELOPE_DECAY;
+        let decay_rate = if self.damper_engaged {
+            RELEASED_ENVELOPE_DECAY
+        } else {
+            ENVELOPE_DECAY
+        };
+        let decayed = self.envelope * decay_rate;
         self.envelope = math::flush_denormal(if magnitude > decayed {
             magnitude
         } else {
@@ -295,294 +369,8 @@ impl PluckedString {
     }
 }
 
+// Split into `string_tests.rs` to keep this file under the project's
+// 500-line limit (`CONTRIBUTING.md`) — still compiles as `string::tests`.
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::float_cmp, clippy::unwrap_used, clippy::expect_used)]
-
-    use proptest::prelude::*;
-
-    use super::*;
-
-    fn string_at(frequency: f32) -> PluckedString {
-        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
-        let config = StringConfig::new(Hz::new(frequency).expect("frequency is valid"));
-        PluckedString::new(config, rate).expect("frequency is representable at 48 kHz")
-    }
-
-    #[test]
-    fn rejects_frequencies_above_the_representable_range() {
-        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
-        let config = StringConfig::new(Hz::new(30_000.0).expect("frequency is valid"));
-        assert!(matches!(
-            PluckedString::new(config, rate),
-            Err(ParamError::FrequencyOutOfRange { .. })
-        ));
-    }
-
-    #[test]
-    fn total_loop_length_matches_the_period() {
-        // `loop_delay()` alone is no longer expected to sit close to the
-        // period the way it did before M4: the loop filter's zero and the
-        // dispersion cascade now both claim several samples of phase delay
-        // at DC (by design — that claimed delay is exactly what makes upper
-        // partials sit sharp). The invariant that still must hold is the
-        // *total* loop length across delay line, loss filter, dispersion
-        // cascade and feedback path summing back to the period, the same
-        // reasoning `set_damping_keeps_the_total_loop_length_anchored_to_the_period`
-        // checks after a live retune.
-        let string = string_at(440.0);
-        let period = 48_000.0 / 440.0;
-        let total_delay = string.loop_delay()
-            + string.loop_filter.phase_delay_at_dc()
-            + string.dispersion.phase_delay_at_dc()
-            + 1.0;
-        assert!(
-            (total_delay - period).abs() < 1e-3,
-            "total delay {total_delay} drifted from period {period}"
-        );
-    }
-
-    #[test]
-    fn is_silent_before_being_plucked() {
-        let mut string = string_at(220.0);
-        for _ in 0..1_000 {
-            assert_eq!(string.process(), 0.0);
-        }
-        assert!(string.is_silent());
-    }
-
-    #[test]
-    fn plucking_produces_signal() {
-        let mut string = string_at(220.0);
-        string.pluck(1.0);
-        let peak = (0..4_800)
-            .map(|_| math::abs(string.process()))
-            .fold(0.0f32, f32::max);
-        assert!(peak > 0.05, "peak {peak} is inaudible");
-    }
-
-    #[test]
-    fn output_stays_bounded_for_a_full_second() {
-        let mut string = string_at(27.5);
-        string.pluck(1.0);
-        for index in 0..48_000 {
-            let sample = string.process();
-            assert!(sample.is_finite(), "sample {index} was not finite");
-            assert!(sample.abs() < 4.0, "sample {index} = {sample} escaped");
-        }
-    }
-
-    #[test]
-    fn energy_decays_after_the_attack() {
-        let mut string = string_at(440.0);
-        string.pluck(1.0);
-        for _ in 0..4_800 {
-            string.process();
-        }
-        let early = string.envelope();
-        for _ in 0..48_000 {
-            string.process();
-        }
-        assert!(string.envelope() < early, "envelope grew from {early}");
-    }
-
-    #[test]
-    fn a_plucked_string_eventually_goes_quiet() {
-        let mut string = string_at(440.0);
-        string.pluck(1.0);
-        for _ in 0..48_000 * 30 {
-            string.process();
-        }
-        assert!(string.is_silent(), "envelope {}", string.envelope());
-    }
-
-    #[test]
-    fn the_same_seed_renders_the_same_note() {
-        let mut left = string_at(440.0);
-        let mut right = string_at(440.0);
-        left.pluck(0.8);
-        right.pluck(0.8);
-        for _ in 0..2_400 {
-            assert_eq!(left.process(), right.process());
-        }
-    }
-
-    #[test]
-    fn set_damping_keeps_the_total_loop_length_anchored_to_the_period() {
-        // set_damping's whole point: loop_delay plus the loss filter's own
-        // phase delay plus the feedback path's one-sample delay must sum
-        // back to the period, so the fundamental frequency does not drift
-        // when damping changes — only loop_delay's *share* of that total
-        // moves.
-        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
-        let frequency = Hz::new(440.0).expect("440 Hz is valid");
-        let period = 48_000.0 / 440.0;
-        // 0.9 is a bright-to-dull swing any real voicing knob would use.
-        // 0.999 is deliberately excluded: at that pole the filter's own
-        // phase delay (999 samples) exceeds the whole period of a 440 Hz
-        // string, so loop_delay floors at MIN_LOOP_DELAY instead of
-        // preserving pitch — a real, documented degradation at extreme
-        // settings, covered separately by
-        // `live_damping_changes_never_break_the_string` (which asserts the
-        // floor and finiteness hold for every damping, including that one).
-        for damping in [0.0, 0.3, 0.6, 0.9] {
-            let mut string =
-                PluckedString::new(StringConfig::new(frequency), rate).expect("440 Hz is tunable");
-            string.set_damping(damping);
-            let total_delay = string.loop_delay()
-                + string.loop_filter.phase_delay_at_dc()
-                + string.dispersion.phase_delay_at_dc()
-                + 1.0;
-            assert!(
-                (total_delay - period).abs() < 1e-3,
-                "damping {damping}: total delay {total_delay} drifted from period {period}"
-            );
-        }
-    }
-
-    #[test]
-    fn set_damping_never_produces_a_non_finite_or_unbounded_signal() {
-        let mut string = string_at(440.0);
-        string.pluck(1.0);
-        string.set_damping(1.0);
-        for index in 0..48_000 {
-            let sample = string.process();
-            assert!(sample.is_finite(), "sample {index} was not finite");
-            assert!(sample.abs() < 4.0, "sample {index} = {sample} escaped");
-        }
-    }
-
-    #[test]
-    fn set_damping_is_audible_immediately_on_an_already_ringing_string() {
-        let mut string = string_at(220.0);
-        string.pluck(1.0);
-        for _ in 0..2_000 {
-            string.process();
-        }
-        let before = (0..200).map(|_| string.process()).collect::<Vec<_>>();
-
-        let mut identical_twin = string_at(220.0);
-        identical_twin.pluck(1.0);
-        for _ in 0..2_000 {
-            identical_twin.process();
-        }
-        identical_twin.set_damping(0.99);
-        let after = (0..200)
-            .map(|_| identical_twin.process())
-            .collect::<Vec<_>>();
-
-        assert_ne!(before, after, "changing damping had no audible effect");
-    }
-
-    #[test]
-    fn set_inharmonicity_retunes_the_loop_the_same_way_damping_does() {
-        let mut string = string_at(440.0);
-        let before = string.loop_delay();
-        string.set_inharmonicity(0.02);
-        assert_ne!(string.loop_delay(), before);
-        let total_delay = string.loop_delay()
-            + string.loop_filter.phase_delay_at_dc()
-            + string.dispersion.phase_delay_at_dc()
-            + 1.0;
-        let period = 48_000.0 / 440.0;
-        assert!(
-            (total_delay - period).abs() < 1e-3,
-            "total delay {total_delay} drifted from period {period}"
-        );
-    }
-
-    #[test]
-    fn set_inharmonicity_never_produces_a_non_finite_or_unbounded_signal() {
-        let mut string = string_at(220.0);
-        string.pluck(1.0);
-        string.set_inharmonicity(0.05);
-        for index in 0..48_000 {
-            let sample = string.process();
-            assert!(sample.is_finite(), "sample {index} was not finite");
-            assert!(sample.abs() < 4.0, "sample {index} = {sample} escaped");
-        }
-    }
-
-    #[test]
-    fn set_sustain_does_not_change_loop_delay() {
-        let mut string = string_at(440.0);
-        let before = string.loop_delay();
-        string.set_sustain(0.5);
-        assert_eq!(string.loop_delay(), before);
-    }
-
-    #[test]
-    fn set_seed_changes_the_next_pluck_without_affecting_the_current_one() {
-        let mut left = string_at(440.0);
-        let mut right = string_at(440.0);
-        left.pluck(0.8);
-        right.pluck(0.8);
-        for _ in 0..64 {
-            assert_eq!(left.process(), right.process());
-        }
-        right.set_seed(0xDEAD_BEEF);
-        left.pluck(0.8);
-        right.pluck(0.8);
-        let mut differed = false;
-        for _ in 0..64 {
-            if left.process() != right.process() {
-                differed = true;
-            }
-        }
-        assert!(differed, "reseeding did not change the next pluck");
-    }
-
-    proptest! {
-        /// Whatever damping is requested, live retuning never produces a
-        /// loop shorter than the minimum representable delay, and the
-        /// string never blows up.
-        #[test]
-        fn live_damping_changes_never_break_the_string(damping in proptest::num::f32::ANY) {
-            let mut string = string_at(220.0);
-            string.pluck(1.0);
-            string.set_damping(damping);
-            prop_assert!(string.loop_delay() >= MIN_LOOP_DELAY);
-            for _ in 0..1_000 {
-                let sample = string.process();
-                prop_assert!(sample.is_finite());
-            }
-        }
-
-        /// Same guarantee as `live_damping_changes_never_break_the_string`,
-        /// for the dispersion cascade's own live control.
-        #[test]
-        fn live_inharmonicity_changes_never_break_the_string(inharmonicity in proptest::num::f32::ANY) {
-            let mut string = string_at(220.0);
-            string.pluck(1.0);
-            string.set_inharmonicity(inharmonicity);
-            prop_assert!(string.loop_delay() >= MIN_LOOP_DELAY);
-            for _ in 0..1_000 {
-                let sample = string.process();
-                prop_assert!(sample.is_finite());
-            }
-        }
-
-        /// Whatever velocity a strike uses, the excitation stays finite and
-        /// bounded — including NaN, +-infinity, zero and the extremes of
-        /// the clamped range.
-        #[test]
-        fn plucking_at_any_velocity_never_breaks_the_string(velocity in proptest::num::f32::ANY) {
-            let mut string = string_at(220.0);
-            string.pluck(velocity);
-            for _ in 0..2_000 {
-                let sample = string.process();
-                prop_assert!(sample.is_finite());
-                prop_assert!(sample.abs() < 4.0, "sample {sample} escaped");
-            }
-        }
-    }
-
-    #[test]
-    fn block_processing_adds_into_the_buffer() {
-        let mut string = string_at(440.0);
-        string.pluck(1.0);
-        let mut buffer = [1.0f32; 64];
-        string.process_block_add(&mut buffer);
-        assert!(buffer.iter().any(|sample| (sample - 1.0).abs() > 1e-6));
-    }
-}
+#[path = "string_tests.rs"]
+mod tests;

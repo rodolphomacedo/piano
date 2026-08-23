@@ -88,6 +88,22 @@ impl AudioSession {
         self.producer.push(Command::AllNotesOff).is_ok()
     }
 
+    /// Queues a new damping (high-frequency loss) for every voice, applied
+    /// live to voices already ringing as well as future strikes. `damping`
+    /// is clamped into `[0, 1]` on the audio thread. Same drop-not-block
+    /// behaviour as [`AudioSession::note_on`].
+    pub fn set_damping(&mut self, damping: f32) -> bool {
+        self.producer.push(Command::SetDamping { damping }).is_ok()
+    }
+
+    /// Queues a new sustain (broadband loop gain) for every voice, applied
+    /// live to voices already ringing as well as future strikes. `sustain`
+    /// is clamped into `[0, 1]` on the audio thread. Same drop-not-block
+    /// behaviour as [`AudioSession::note_on`].
+    pub fn set_sustain(&mut self, sustain: f32) -> bool {
+        self.producer.push(Command::SetSustain { sustain }).is_ok()
+    }
+
     /// The sample rate the engine is tuned for: the output device's own
     /// rate, not necessarily 48 kHz.
     #[inline]

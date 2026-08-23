@@ -31,6 +31,16 @@ pub(crate) struct PlayArgs {
     /// Frequency of concert A, in hertz.
     #[arg(long, default_value_t = 440.0)]
     concert_a: f32,
+
+    /// High-frequency loss, 0.0 to 1.0. Higher is duller. Defaults to the
+    /// instrument's built-in voicing when omitted.
+    #[arg(long)]
+    damping: Option<f32>,
+
+    /// Broadband loop gain, 0.0 to 1.0. Higher sustains longer. Defaults to
+    /// the instrument's built-in voicing when omitted.
+    #[arg(long)]
+    sustain: Option<f32>,
 }
 
 /// Runs `piano play`.
@@ -45,6 +55,14 @@ pub(crate) fn run(args: &PlayArgs) -> Result<()> {
         .with_context(|| format!("invalid concert A: {}", args.concert_a))?;
 
     let mut session = AudioSession::start(tuning).context("could not start audio playback")?;
+    // Voicing commands are queued before the strike, and the queue is FIFO,
+    // so the note is struck with the requested voicing already in effect.
+    if let Some(damping) = args.damping {
+        session.set_damping(damping);
+    }
+    if let Some(sustain) = args.sustain {
+        session.set_sustain(sustain);
+    }
     session.note_on(key.midi_number(), args.velocity);
     println!(
         "playing {} ({:.2} Hz) at {} Hz for {:.1}s",

@@ -18,4 +18,16 @@ pub(crate) enum Command {
     },
     /// Silence every ringing voice immediately.
     AllNotesOff,
+    /// Sets the high-frequency loss on every voice, ringing or not. See
+    /// [`piano_core::string::PluckedString::set_damping`].
+    SetDamping {
+        /// New damping, `0.0` to `1.0`.
+        damping: f32,
+    },
+    /// Sets the broadband loop gain on every voice, ringing or not. See
+    /// [`piano_core::string::PluckedString::set_sustain`].
+    SetSustain {
+        /// New sustain, `0.0` to `1.0`.
+        sustain: f32,
+    },
 }

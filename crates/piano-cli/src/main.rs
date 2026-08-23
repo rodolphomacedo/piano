@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod keyboard;
+mod midi;
 mod play;
 
 use std::path::PathBuf;
@@ -18,6 +19,7 @@ use piano_params::{PianoKey, Tuning};
 use piano_render::{RenderRequest, render_note, write_wav};
 
 use keyboard::KeyboardArgs;
+use midi::MidiArgs;
 use play::PlayArgs;
 
 /// Physical-modelling piano synthesiser.
@@ -36,6 +38,9 @@ enum Command {
     Play(PlayArgs),
     /// Play notes live by typing on the computer keyboard.
     Keyboard(KeyboardArgs),
+    /// Play notes live from a MIDI controller (a digital piano plugged in
+    /// over USB or a MIDI cable).
+    Midi(MidiArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -71,6 +76,7 @@ fn main() -> Result<()> {
         Command::Render(args) => render(&args),
         Command::Play(args) => play::run(&args),
         Command::Keyboard(args) => keyboard::run(&args),
+        Command::Midi(args) => midi::run(&args),
     }
 }
 

@@ -23,6 +23,7 @@ piano-core     pure DSP. no_std + alloc. forbid(unsafe_code). No I/O, no threads
                  │        │        └── piano-cli   the `piano` binary
                  │        │
                  │        ├── piano-audio    realtime output via cpal (M2, done)
+                 │        ├── piano-midi     MIDI input via midir (M2, done)
                  │        └── piano-wasm     [M3] browser bindings + AudioWorklet
 ```
 
@@ -58,7 +59,7 @@ called from an audio callback by accident.
 The thinnest possible shell: parse arguments, call one library function, print
 what happened. If a decision matters, it does not live here.
 
-### `piano-audio` (M2, done) and `piano-wasm` (M3)
+### `piano-audio` (M2, done), `piano-midi` (M2, done) and `piano-wasm` (M3)
 
 `piano-audio` owns the `cpal` stream, the lock-free command ring (`rtrb`), and
 the platform-specific denormal control (`PERF-002`) — the one place in the
@@ -66,8 +67,20 @@ project with `unsafe`, exactly as ADR-0005 anticipated: two narrowly scoped
 functions (`denormals::enable_flush_to_zero`, one per architecture), each with
 a safety comment, nowhere else. Its `Engine` pre-builds one `PluckedString` per
 key at construction rather than allocating on note-on; see `PERF-012` in
-`docs/PERFORMANCE.md`. `piano-wasm` owns the `wasm-bindgen` surface and the
-`AudioWorklet` glue — not yet written.
+`docs/PERFORMANCE.md`. Every voice parameter — damping, sustain, the
+excitation seed — has a live setter reachable through the same command queue,
+so a controller, a CLI flag or (later) a Bayesian parameter estimator all
+reach the engine through one path, not three.
+
+`piano-midi` owns the `midir` connection and decodes raw MIDI bytes into
+`MidiEvent`s on its own SPSC queue (ADR-0005's pattern again, because a MIDI
+driver's callback thread is exactly as unsuited to blocking as an audio
+callback). It never calls into `piano-audio` directly; the CLI is what drains
+both queues and turns MIDI events into `AudioSession` calls, keeping the two
+crates decoupled the same way `piano-render` and `piano-audio` already are.
+
+`piano-wasm` owns the `wasm-bindgen` surface and the `AudioWorklet` glue —
+not yet written.
 
 ## How a note becomes sound
 

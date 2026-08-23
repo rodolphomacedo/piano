@@ -17,6 +17,7 @@ piano-core = { path = "crates/piano-core", version = "0.1.0", default-features =
 piano-params = { path = "crates/piano-params", version = "0.1.0", default-features = false }
 piano-render = { path = "crates/piano-render", version = "0.1.0" }
 piano-audio = { path = "crates/piano-audio", version = "0.1.0" }
+piano-midi = { path = "crates/piano-midi", version = "0.1.0" }
 libm = "0.2"
 hound = "3.5"
 anyhow = "1"
@@ -27,6 +28,7 @@ proptest = "1"
 cpal = "0.15"
 rtrb = "0.4"
 crossterm = "0.28"
+midir = "0.11"
 
 # Lints are declared once here and inherited by every crate via
 # `[lints] workspace = true`: a single place to tighten the quality gate, and

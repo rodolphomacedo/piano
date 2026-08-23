@@ -1,0 +1,17 @@
+[package]
+name = "piano-midi"
+description = "MIDI input for the piano synthesiser: hardware controllers in, decoded events out"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+midir = { workspace = true }
+rtrb = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

@@ -41,6 +41,15 @@ impl OnePoleLowpass {
         self.state
     }
 
+    /// Updates the pole coefficient in place, for live control from outside
+    /// the audio thread. Same clamp and stability guarantee as
+    /// [`OnePoleLowpass::new`]; does not touch `state`, so the change is
+    /// audible starting with the very next sample rather than resetting the
+    /// filter's memory.
+    pub fn set_pole(&mut self, pole: f32) {
+        self.pole = math::clamp_or_low(pole, 0.0, MAX_POLE);
+    }
+
     /// The delay the filter itself adds to the loop, in samples, at low
     /// frequencies.
     ///
@@ -151,6 +160,25 @@ mod tests {
         filter.process(1.0);
         filter.reset();
         assert_eq!(filter.process(0.0), 0.0);
+    }
+
+    #[test]
+    fn set_pole_changes_the_coefficient_without_resetting_state() {
+        let mut filter = OnePoleLowpass::new(0.9);
+        filter.process(1.0);
+        let state_before = filter.process(1.0);
+        filter.set_pole(0.1);
+        assert!((filter.phase_delay_at_dc() - 0.1 / 0.9).abs() < 1e-6);
+        assert!((filter.process(1.0) - state_before).abs() < 1.0);
+    }
+
+    #[test]
+    fn set_pole_clamps_out_of_range_values() {
+        let mut filter = OnePoleLowpass::new(0.5);
+        filter.set_pole(5.0);
+        assert!((filter.phase_delay_at_dc() - MAX_POLE / (1.0 - MAX_POLE)).abs() < 1e-3);
+        filter.set_pole(-1.0);
+        assert_eq!(filter.phase_delay_at_dc(), 0.0);
     }
 
     proptest! {

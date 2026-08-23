@@ -17,6 +17,7 @@ piano-core = { workspace = true, features = ["std"] }
 piano-params = { workspace = true, features = ["std"] }
 piano-render = { workspace = true }
 piano-audio = { workspace = true }
+piano-midi = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }

@@ -85,6 +85,16 @@ fn draining_commands_and_processing_blocks_never_allocates() {
             if block % 733 == 0 {
                 let _ = producer.push(Command::AllNotesOff);
             }
+            if block % 211 == 0 {
+                let _ = producer.push(Command::SetDamping {
+                    damping: 0.4 + 0.01 * (block % 50) as f32,
+                });
+            }
+            if block % 317 == 0 {
+                let _ = producer.push(Command::SetSustain {
+                    sustain: 0.9 + 0.001 * (block % 90) as f32,
+                });
+            }
             engine.drain_commands(&mut consumer);
             let mut buffer = [0.0f32; 128];
             engine.process_block(&mut buffer);

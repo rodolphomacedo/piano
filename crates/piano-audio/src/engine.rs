@@ -83,6 +83,8 @@ impl Engine {
         match command {
             Command::NoteOn { midi, velocity } => self.note_on(midi, velocity),
             Command::AllNotesOff => self.silence_all(),
+            Command::SetDamping { damping } => self.set_damping(damping),
+            Command::SetSustain { sustain } => self.set_sustain(sustain),
         }
     }
 
@@ -111,6 +113,29 @@ impl Engine {
         for voice in &mut self.voices {
             if let Some(string) = voice.string.as_mut() {
                 string.pluck(0.0);
+            }
+        }
+    }
+
+    /// Applies a new damping to every voice, live — including voices
+    /// currently ringing, per
+    /// [`PluckedString::set_damping`](piano_core::PluckedString::set_damping).
+    /// A global "brightness" knob, not per-key: a hardware controller has
+    /// one physical knob, not eighty-eight.
+    fn set_damping(&mut self, damping: f32) {
+        for voice in &mut self.voices {
+            if let Some(string) = voice.string.as_mut() {
+                string.set_damping(damping);
+            }
+        }
+    }
+
+    /// Applies a new sustain to every voice, live. Same "one global knob"
+    /// reasoning as [`Engine::set_damping`].
+    fn set_sustain(&mut self, sustain: f32) {
+        for voice in &mut self.voices {
+            if let Some(string) = voice.string.as_mut() {
+                string.set_sustain(sustain);
             }
         }
     }
@@ -245,6 +270,63 @@ mod tests {
                 velocity: 0.5,
             });
         }
+        engine.drain_commands(&mut consumer);
+        let mut buffer = [0.0f32; 32];
+        engine.process_block(&mut buffer);
+    }
+
+    #[test]
+    fn set_damping_reaches_an_already_ringing_voice() {
+        let mut engine = engine();
+        let (mut producer, mut consumer) = ring_buffer();
+        producer
+            .push(Command::NoteOn {
+                midi: 69,
+                velocity: 1.0,
+            })
+            .expect("queue has room");
+        engine.drain_commands(&mut consumer);
+
+        let mut before = [0.0f32; 128];
+        engine.process_block(&mut before);
+
+        producer
+            .push(Command::SetDamping { damping: 0.99 })
+            .expect("queue has room");
+        engine.drain_commands(&mut consumer);
+
+        let mut after = [0.0f32; 128];
+        engine.process_block(&mut after);
+        assert_ne!(
+            before.to_vec(),
+            after.to_vec(),
+            "SetDamping had no audible effect on a ringing voice"
+        );
+    }
+
+    #[test]
+    fn set_sustain_never_panics_on_a_silent_engine() {
+        let mut engine = engine();
+        let (mut producer, mut consumer) = ring_buffer();
+        producer
+            .push(Command::SetSustain { sustain: 0.2 })
+            .expect("queue has room");
+        engine.drain_commands(&mut consumer);
+        let mut buffer = [0.0f32; 32];
+        engine.process_block(&mut buffer);
+        assert!(buffer.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn set_damping_out_of_range_never_panics() {
+        let mut engine = engine();
+        let (mut producer, mut consumer) = ring_buffer();
+        producer
+            .push(Command::SetDamping { damping: f32::NAN })
+            .expect("queue has room");
+        producer
+            .push(Command::SetDamping { damping: 50.0 })
+            .expect("queue has room");
         engine.drain_commands(&mut consumer);
         let mut buffer = [0.0f32; 32];
         engine.process_block(&mut buffer);

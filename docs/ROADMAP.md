@@ -37,8 +37,13 @@ This is where the real-time rules stopped being theory.
 **Includes**: the SPSC ring buffer (`rtrb`), the audio-thread contract, hardware
 denormal control (`PERF-002`), a callback timing histogram (p50–p99.9), and a
 no-allocation proof test. `piano play --note A4` plays one note through the
-default output device; `piano keyboard` plays live from the computer keyboard,
-nothing written to disk.
+default output device; `piano keyboard` plays live from the computer keyboard;
+`piano midi` plays live from a hardware MIDI controller via `midir`, nothing
+written to disk in any case. Damping, sustain and the excitation seed are live
+setters reachable from any of the three (`--damping`/`--sustain` flags,
+`[`/`]`/`-`/`=` on the keyboard, CC74/CC1 over MIDI), not build-time constants
+— the instrument is fully parametrised, ready for both manual voicing and a
+future automated one (see "Ideas beyond M8" below).
 
 **Done when**: `piano play --note A4` makes sound with no allocation, no locking
 and no missed buffers over a ten-minute run.
@@ -82,8 +87,11 @@ brighter rather than merely louder.
 
 ## M5 — The whole keyboard
 
-88 keys, real polyphony, MIDI input, and the voice management that makes it
-survivable.
+88 keys, real polyphony, and the voice management that makes it survivable.
+Basic MIDI note input already landed in M2 (`piano midi`, one permanent voice
+per key means no stealing is needed yet); what M5 still owes is the sustain
+pedal and a release/damping model — the current instrument has no way to stop
+a note early, MIDI or otherwise.
 
 **Includes**: a pre-allocated voice pool (`PERF-012`), energy-gated voice skipping
 and voice stealing (`PERF-006`), block-based processing (`PERF-003`, `PERF-010`),
@@ -133,3 +141,29 @@ crates; a documented plugin path if it is worth taking.
 Items that are real but not scheduled. The `PERF` register in
 `docs/PERFORMANCE.md` is the authoritative list; anything there without a
 milestone lives here.
+
+---
+
+## Ideas beyond M8
+
+Not scheduled, not sized, and not started — recorded so the reasoning behind
+them is not lost between conversations.
+
+**Bayesian parameter estimation from a recorded instrument.** Every parameter
+this model exposes (damping, sustain, dispersion once M4 lands, hammer
+hardness) is a live, adjustable control as of M2 — the prerequisite for
+fitting them automatically rather than only by ear. The idea: record a real
+instrument's note, extract features (partial decay rates, inharmonicity
+coefficients, attack shape), and use Bayesian inference (Stan, or a
+Rust-native sampler such as `nuts-rs`/`bridgestan` bindings to avoid a
+non-Rust runtime dependency) to fit the physical model's parameters against
+that recording — a calibration problem, not a real-time one, so none of the
+audio-thread rules apply to it. Plausible in principle for a Karplus-Strong
+model's handful of scalar parameters; substantially harder once M4's full
+waveguide and M6's coupled strings add dozens of interacting ones. The
+recordings this needs are training data for an *offline* fitting tool, never
+compiled into the instrument itself, so they cannot live in this repository —
+its "no samples, ever" rule (see the project's `CLAUDE.md`) is about what
+ships, not about what a separate calibration tool may read from disk. This
+belongs in its own repository that depends on `piano-core` for the model to
+fit, not the other way around.

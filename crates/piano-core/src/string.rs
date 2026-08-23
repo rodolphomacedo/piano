@@ -31,6 +31,12 @@ const ENVELOPE_DECAY: f32 = 0.999_5;
 /// Below this envelope level a voice is inaudible and can be reclaimed.
 const SILENCE_THRESHOLD: f32 = 1e-4;
 
+/// Damping [`StringConfig::new`] uses when the caller does not choose one.
+pub const DEFAULT_DAMPING: f32 = 0.5;
+
+/// Sustain [`StringConfig::new`] uses when the caller does not choose one.
+pub const DEFAULT_SUSTAIN: f32 = 0.996;
+
 /// Tunable properties of a plucked string.
 #[derive(Debug, Clone, Copy)]
 pub struct StringConfig {
@@ -50,8 +56,8 @@ impl StringConfig {
     pub fn new(frequency: Hz) -> Self {
         Self {
             frequency,
-            damping: 0.5,
-            sustain: 0.996,
+            damping: DEFAULT_DAMPING,
+            sustain: DEFAULT_SUSTAIN,
             seed: 0x2545_F491,
         }
     }
@@ -68,6 +74,12 @@ pub struct PluckedString {
     loop_filter: OnePoleLowpass,
     dc_blocker: DcBlocker,
     rng: Xorshift32,
+    /// Samples per cycle at this string's fixed frequency. `frequency`
+    /// itself is not live-adjustable — that would need the delay line to
+    /// grow — but `period` is kept so [`PluckedString::set_damping`] can
+    /// retune `loop_delay` after the loss filter's phase delay changes,
+    /// without needing the caller to pass the frequency back in.
+    period: f32,
     loop_delay: f32,
     sustain: f32,
     envelope: f32,
@@ -101,10 +113,49 @@ impl PluckedString {
             loop_filter,
             dc_blocker: DcBlocker::default(),
             rng: Xorshift32::new(config.seed),
+            period,
             loop_delay,
             sustain: math::clamp_or_low(config.sustain, 0.0, 1.0),
             envelope: 0.0,
         })
+    }
+
+    /// Adjusts the high-frequency loss for every future round trip.
+    ///
+    /// `damping` is clamped into `[0, 1]`, same as [`StringConfig::damping`].
+    /// Because the loss filter's phase delay is part of what tunes the loop
+    /// (see the module docs), changing it also retunes `loop_delay` to keep
+    /// pitch accurate — capped at the minimum representable loop delay
+    /// rather than going negative, in the unreachable-in-practice case
+    /// where the new damping would need more phase delay than the string's
+    /// period has to spare.
+    /// The delay line's capacity was sized for the *original* damping at
+    /// construction and never shrinks, so this never reads out of bounds.
+    pub fn set_damping(&mut self, damping: f32) {
+        self.loop_filter
+            .set_pole(math::clamp_or_low(damping, 0.0, 1.0));
+        let retuned = self.period - self.loop_filter.phase_delay_at_dc() - 1.0;
+        self.loop_delay = if retuned < MIN_LOOP_DELAY {
+            MIN_LOOP_DELAY
+        } else {
+            retuned
+        };
+    }
+
+    /// Adjusts the broadband loop gain for every future round trip.
+    ///
+    /// `sustain` is clamped into `[0, 1]`, same as [`StringConfig::sustain`].
+    /// Unlike damping, sustain does not affect tuning, so this never touches
+    /// `loop_delay`.
+    pub fn set_sustain(&mut self, sustain: f32) {
+        self.sustain = math::clamp_or_low(sustain, 0.0, 1.0);
+    }
+
+    /// Reseeds the excitation noise used by the *next* [`PluckedString::pluck`].
+    /// A string already ringing is unaffected, since its noise burst was
+    /// already drawn.
+    pub fn set_seed(&mut self, seed: u32) {
+        self.rng = Xorshift32::new(seed);
     }
 
     /// Excites the string with a noise burst of the given velocity.
@@ -184,6 +235,8 @@ impl PluckedString {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::float_cmp, clippy::unwrap_used, clippy::expect_used)]
+
+    use proptest::prelude::*;
 
     use super::*;
 
@@ -276,6 +329,116 @@ mod tests {
         right.pluck(0.8);
         for _ in 0..2_400 {
             assert_eq!(left.process(), right.process());
+        }
+    }
+
+    #[test]
+    fn set_damping_keeps_the_total_loop_length_anchored_to_the_period() {
+        // set_damping's whole point: loop_delay plus the loss filter's own
+        // phase delay plus the feedback path's one-sample delay must sum
+        // back to the period, so the fundamental frequency does not drift
+        // when damping changes — only loop_delay's *share* of that total
+        // moves.
+        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
+        let frequency = Hz::new(440.0).expect("440 Hz is valid");
+        let period = 48_000.0 / 440.0;
+        // 0.9 is a bright-to-dull swing any real voicing knob would use.
+        // 0.999 is deliberately excluded: at that pole the filter's own
+        // phase delay (999 samples) exceeds the whole period of a 440 Hz
+        // string, so loop_delay floors at MIN_LOOP_DELAY instead of
+        // preserving pitch — a real, documented degradation at extreme
+        // settings, covered separately by
+        // `live_damping_changes_never_break_the_string` (which asserts the
+        // floor and finiteness hold for every damping, including that one).
+        for damping in [0.0, 0.3, 0.6, 0.9] {
+            let mut string =
+                PluckedString::new(StringConfig::new(frequency), rate).expect("440 Hz is tunable");
+            string.set_damping(damping);
+            let total_delay = string.loop_delay() + string.loop_filter.phase_delay_at_dc() + 1.0;
+            assert!(
+                (total_delay - period).abs() < 1e-3,
+                "damping {damping}: total delay {total_delay} drifted from period {period}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_damping_never_produces_a_non_finite_or_unbounded_signal() {
+        let mut string = string_at(440.0);
+        string.pluck(1.0);
+        string.set_damping(1.0);
+        for index in 0..48_000 {
+            let sample = string.process();
+            assert!(sample.is_finite(), "sample {index} was not finite");
+            assert!(sample.abs() < 4.0, "sample {index} = {sample} escaped");
+        }
+    }
+
+    #[test]
+    fn set_damping_is_audible_immediately_on_an_already_ringing_string() {
+        let mut string = string_at(220.0);
+        string.pluck(1.0);
+        for _ in 0..2_000 {
+            string.process();
+        }
+        let before = (0..200).map(|_| string.process()).collect::<Vec<_>>();
+
+        let mut identical_twin = string_at(220.0);
+        identical_twin.pluck(1.0);
+        for _ in 0..2_000 {
+            identical_twin.process();
+        }
+        identical_twin.set_damping(0.99);
+        let after = (0..200)
+            .map(|_| identical_twin.process())
+            .collect::<Vec<_>>();
+
+        assert_ne!(before, after, "changing damping had no audible effect");
+    }
+
+    #[test]
+    fn set_sustain_does_not_change_loop_delay() {
+        let mut string = string_at(440.0);
+        let before = string.loop_delay();
+        string.set_sustain(0.5);
+        assert_eq!(string.loop_delay(), before);
+    }
+
+    #[test]
+    fn set_seed_changes_the_next_pluck_without_affecting_the_current_one() {
+        let mut left = string_at(440.0);
+        let mut right = string_at(440.0);
+        left.pluck(0.8);
+        right.pluck(0.8);
+        for _ in 0..64 {
+            assert_eq!(left.process(), right.process());
+        }
+        right.set_seed(0xDEAD_BEEF);
+        left.pluck(0.8);
+        right.pluck(0.8);
+        let mut differed = false;
+        for _ in 0..64 {
+            if left.process() != right.process() {
+                differed = true;
+            }
+        }
+        assert!(differed, "reseeding did not change the next pluck");
+    }
+
+    proptest! {
+        /// Whatever damping is requested, live retuning never produces a
+        /// loop shorter than the minimum representable delay, and the
+        /// string never blows up.
+        #[test]
+        fn live_damping_changes_never_break_the_string(damping in proptest::num::f32::ANY) {
+            let mut string = string_at(220.0);
+            string.pluck(1.0);
+            string.set_damping(damping);
+            prop_assert!(string.loop_delay() >= MIN_LOOP_DELAY);
+            for _ in 0..1_000 {
+                let sample = string.process();
+                prop_assert!(sample.is_finite());
+            }
         }
     }
 

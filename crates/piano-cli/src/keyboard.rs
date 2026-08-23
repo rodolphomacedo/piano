@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 use piano_audio::AudioSession;
+use piano_core::string::{DEFAULT_DAMPING, DEFAULT_SUSTAIN};
 use piano_params::Tuning;
 
 use crate::{parse_key, report_timing};
@@ -21,6 +22,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Strike strength used for every key: a QWERTY keyboard has no notion of
 /// how hard a key was pressed.
 const DEFAULT_VELOCITY: f32 = 0.85;
+
+/// How much `[`/`]` change damping per press.
+const DAMPING_STEP: f32 = 0.02;
+
+/// How much `-`/`=` change sustain per press. Smaller than
+/// [`DAMPING_STEP`] because the audible range of sustain that does not
+/// either die instantly or ring forever is narrow, close to 1.0.
+const SUSTAIN_STEP: f32 = 0.002;
 
 /// QWERTY key to semitone-offset table for the "typing keyboard as piano"
 /// layout common to software synths: the bottom row is one octave, the top
@@ -96,7 +105,25 @@ pub(crate) fn run(args: &KeyboardArgs) -> Result<()> {
     Ok(())
 }
 
+/// Live-adjustable voicing, mirrored locally so the terminal can print the
+/// current value — `AudioSession` only accepts new settings, it does not
+/// report the current one back.
+struct Voicing {
+    damping: f32,
+    sustain: f32,
+}
+
+impl Voicing {
+    fn defaults() -> Self {
+        Self {
+            damping: DEFAULT_DAMPING,
+            sustain: DEFAULT_SUSTAIN,
+        }
+    }
+}
+
 fn play_until_quit(session: &mut AudioSession, base_note: u8) -> Result<()> {
+    let mut voicing = Voicing::defaults();
     loop {
         if !event::poll(POLL_INTERVAL)? {
             continue;
@@ -111,9 +138,31 @@ fn play_until_quit(session: &mut AudioSession, base_note: u8) -> Result<()> {
             return Ok(());
         }
         if let KeyCode::Char(letter) = key.code {
-            strike(session, base_note, letter);
+            handle_key(session, &mut voicing, base_note, letter);
         }
     }
+}
+
+fn handle_key(session: &mut AudioSession, voicing: &mut Voicing, base_note: u8, letter: char) {
+    match letter {
+        '[' => nudge_damping(session, voicing, -DAMPING_STEP),
+        ']' => nudge_damping(session, voicing, DAMPING_STEP),
+        '-' => nudge_sustain(session, voicing, -SUSTAIN_STEP),
+        '=' => nudge_sustain(session, voicing, SUSTAIN_STEP),
+        _ => strike(session, base_note, letter),
+    }
+}
+
+fn nudge_damping(session: &mut AudioSession, voicing: &mut Voicing, delta: f32) {
+    voicing.damping = (voicing.damping + delta).clamp(0.0, 1.0);
+    session.set_damping(voicing.damping);
+    println!("damping -> {:.2}", voicing.damping);
+}
+
+fn nudge_sustain(session: &mut AudioSession, voicing: &mut Voicing, delta: f32) {
+    voicing.sustain = (voicing.sustain + delta).clamp(0.0, 1.0);
+    session.set_sustain(voicing.sustain);
+    println!("sustain -> {:.3}", voicing.sustain);
 }
 
 fn should_quit(key: &KeyEvent) -> bool {
@@ -139,6 +188,8 @@ fn print_instructions(base_midi: u8) {
     println!("piano keyboard — live playback, nothing is written to disk.");
     println!("bottom row  z s x d c v g b h n j m ,   -> one octave from MIDI {base_midi}");
     println!("top row     q 2 w 3 e r 5 t 6 y 7 u i 9 o 0 p -> continues upward");
+    println!("[ ]  -> damping down / up (brighter <-> duller)");
+    println!("- =  -> sustain down / up (shorter <-> longer ring)");
     println!("Esc or Ctrl+C to quit.\n");
 }
 

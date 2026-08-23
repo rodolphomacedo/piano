@@ -1,0 +1,74 @@
+name: Release build
+
+# Manual only, on purpose: a three-platform build matrix has no business
+# running on every push alongside ci.yml. Trigger it by hand (or `gh workflow
+# run release-build.yml`) when you actually want binaries to inspect or hand
+# to a tester. It does not tag anything, and it does not create a GitHub
+# Release — see docs/ROADMAP.md's M8 entry for why that boundary is
+# deliberate. Every artifact here is a private, auto-expiring *workflow*
+# artifact (the repo's own Actions tab), not a public Release asset.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    name: piano-cli for ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-13 is the last Intel (x86_64) runner image GitHub ships;
+          # macos-14 is Apple Silicon (arm64). Each builds its own native
+          # target rather than cross-compiling, so this is what actually
+          # ran on that hardware, not just what the compiler accepted.
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install stable
+
+      - name: Install the ${{ matrix.target }} target
+        run: rustup target add ${{ matrix.target }}
+
+      # Same reason as ci.yml: cpal's ALSA backend needs the headers to link
+      # on Linux, and piano-cli pulls in piano-audio.
+      - name: Install ALSA development headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build piano-cli
+        run: cargo build --release -p piano-cli --target ${{ matrix.target }}
+
+      # A quick sanity check that the binary this job just built actually
+      # runs on the runner that built it (true for the two native-arch mac
+      # legs and the Linux leg; nothing here is cross-compiled). `--help`
+      # exits zero and touches no audio device, so it is safe in a headless
+      # CI sandbox where `piano play`/`piano midi` would have nothing to
+      # open.
+      - name: Smoke test the built binary
+        run: ./target/${{ matrix.target }}/release/piano --help
+
+      # Private workflow artifact, not a public Release asset — see the
+      # comment at the top of this file. 14 days is enough for a human to
+      # grab a build and try it without artifacts piling up indefinitely.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piano-cli-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/piano
+          retention-days: 14
+          if-no-files-found: error

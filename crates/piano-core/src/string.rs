@@ -1,20 +1,27 @@
-//! A plucked string, modelled as an extended Karplus–Strong loop.
+//! A struck string, modelled as an extended digital waveguide.
 //!
 //! # The physics, in one paragraph
 //!
 //! A transverse wave travels along the string, reflects at both ends, and comes
 //! back inverted and slightly quieter. One trip around the string takes
-//! `sample_rate / frequency` samples — that is the delay line. The reflection is
-//! neither perfect nor flat: high partials lose energy faster than low ones,
-//! which is the lowpass filter in the feedback path. That is the entire model.
-//! Its limits (no inharmonicity, no hammer, one string per note) are what
-//! milestone M4 replaces with a full digital waveguide.
+//! `sample_rate / frequency` samples — that is the delay line, read back with
+//! an allpass-interpolated fractional tap (`PERF-004`) so the loop's tuning
+//! does not drift with pitch. The reflection is neither perfect nor flat:
+//! high partials lose energy faster than low ones (the loop filter), and
+//! because the string is stiff rather than ideally flexible, its partials
+//! sit progressively sharp of an exact harmonic series (the dispersion
+//! cascade, `PERF-005`, implementing Fletcher's stiff-string formula). The
+//! excitation is a nonlinear felt-hammer contact pulse (`PERF-007`) rather
+//! than a flat noise burst, so how hard the key is struck changes the
+//! *shape* of what excites the string, not just its level. That is the
+//! whole of milestone M4.
 
 use crate::{
     delay::DelayLine,
+    dispersion::DispersionCascade,
     error::ParamError,
-    filter::{DcBlocker, OnePoleLowpass},
-    math,
+    filter::{DcBlocker, LoopFilter},
+    hammer, math,
     noise::Xorshift32,
     units::{Hz, SampleRate},
 };
@@ -37,7 +44,7 @@ pub const DEFAULT_DAMPING: f32 = 0.5;
 /// Sustain [`StringConfig::new`] uses when the caller does not choose one.
 pub const DEFAULT_SUSTAIN: f32 = 0.996;
 
-/// Tunable properties of a plucked string.
+/// Tunable properties of a struck string.
 #[derive(Debug, Clone, Copy)]
 pub struct StringConfig {
     /// Fundamental frequency of the note.
@@ -46,6 +53,11 @@ pub struct StringConfig {
     pub damping: f32,
     /// Broadband loop gain in `[0, 1]`. Higher sustains longer.
     pub sustain: f32,
+    /// Stiff-string inharmonicity coefficient `B` (Fletcher's
+    /// `f_n ≈ n·f_1·sqrt(1 + B·n²)`), in
+    /// `[0, dispersion::MAX_INHARMONICITY]`. Higher makes upper partials sit
+    /// further above an exact harmonic series. See [`crate::dispersion`].
+    pub inharmonicity: f32,
     /// Seed for the excitation noise, so renders are reproducible.
     pub seed: u32,
 }
@@ -58,12 +70,13 @@ impl StringConfig {
             frequency,
             damping: DEFAULT_DAMPING,
             sustain: DEFAULT_SUSTAIN,
+            inharmonicity: crate::dispersion::DEFAULT_INHARMONICITY,
             seed: 0x2545_F491,
         }
     }
 }
 
-/// A single plucked string voice.
+/// A single struck string voice.
 ///
 /// Allocates once, in [`PluckedString::new`]. Every other method is
 /// allocation-free, lock-free and panic-free, and is therefore safe to call from
@@ -71,7 +84,8 @@ impl StringConfig {
 #[derive(Debug, Clone)]
 pub struct PluckedString {
     delay: DelayLine,
-    loop_filter: OnePoleLowpass,
+    loop_filter: LoopFilter,
+    dispersion: DispersionCascade,
     dc_blocker: DcBlocker,
     rng: Xorshift32,
     /// Samples per cycle at this string's fixed frequency. `frequency`
@@ -83,6 +97,10 @@ pub struct PluckedString {
     loop_delay: f32,
     sustain: f32,
     envelope: f32,
+    /// Kept only for [`hammer::simulate_contact`]'s integration step at the
+    /// next [`PluckedString::pluck`]; the audio-thread `process` loop never
+    /// reads it.
+    sample_rate: f32,
 }
 
 impl PluckedString {
@@ -95,11 +113,14 @@ impl PluckedString {
     /// than two samples of delay.
     pub fn new(config: StringConfig, sample_rate: SampleRate) -> Result<Self, ParamError> {
         let period = sample_rate.hertz() / config.frequency.hertz();
-        let loop_filter = OnePoleLowpass::new(math::clamp_or_low(config.damping, 0.0, 1.0));
+        let loop_filter = LoopFilter::new(math::clamp_or_low(config.damping, 0.0, 1.0));
+        let dispersion = DispersionCascade::new(config.frequency.hertz(), config.inharmonicity);
 
-        // The loop is the delay line plus the loss filter plus the one-sample
-        // delay of the feedback path itself. Tuning must account for all three.
-        let loop_delay = period - loop_filter.phase_delay_at_dc() - 1.0;
+        // The loop is the delay line plus the loss filter plus the
+        // dispersion cascade plus the one-sample delay of the feedback path
+        // itself. Tuning must account for all four.
+        let loop_delay =
+            period - loop_filter.phase_delay_at_dc() - dispersion.phase_delay_at_dc() - 1.0;
         if loop_delay < MIN_LOOP_DELAY {
             return Err(ParamError::FrequencyOutOfRange {
                 frequency: config.frequency.hertz(),
@@ -111,12 +132,14 @@ impl PluckedString {
         Ok(Self {
             delay: DelayLine::with_capacity(period as usize + 4),
             loop_filter,
+            dispersion,
             dc_blocker: DcBlocker::default(),
             rng: Xorshift32::new(config.seed),
             period,
             loop_delay,
             sustain: math::clamp_or_low(config.sustain, 0.0, 1.0),
             envelope: 0.0,
+            sample_rate: sample_rate.hertz(),
         })
     }
 
@@ -134,12 +157,7 @@ impl PluckedString {
     pub fn set_damping(&mut self, damping: f32) {
         self.loop_filter
             .set_pole(math::clamp_or_low(damping, 0.0, 1.0));
-        let retuned = self.period - self.loop_filter.phase_delay_at_dc() - 1.0;
-        self.loop_delay = if retuned < MIN_LOOP_DELAY {
-            MIN_LOOP_DELAY
-        } else {
-            retuned
-        };
+        self.retune_loop_delay();
     }
 
     /// Adjusts the broadband loop gain for every future round trip.
@@ -151,6 +169,18 @@ impl PluckedString {
         self.sustain = math::clamp_or_low(sustain, 0.0, 1.0);
     }
 
+    /// Adjusts the stiff-string inharmonicity coefficient `B` for every
+    /// future round trip. `inharmonicity` is clamped into
+    /// `[0, dispersion::MAX_INHARMONICITY]`, same as
+    /// [`StringConfig::inharmonicity`]. Because the dispersion cascade's own
+    /// phase delay is part of what tunes the loop (see the module docs),
+    /// changing it also retunes `loop_delay`, the same reasoning
+    /// [`PluckedString::set_damping`] uses for the loss filter.
+    pub fn set_inharmonicity(&mut self, inharmonicity: f32) {
+        self.dispersion.set_inharmonicity(inharmonicity);
+        self.retune_loop_delay();
+    }
+
     /// Reseeds the excitation noise used by the *next* [`PluckedString::pluck`].
     /// A string already ringing is unaffected, since its noise burst was
     /// already drawn.
@@ -158,21 +188,35 @@ impl PluckedString {
         self.rng = Xorshift32::new(seed);
     }
 
-    /// Excites the string with a noise burst of the given velocity.
+    /// Excites the string with a hammer-shaped noise burst at the given
+    /// velocity.
     ///
-    /// `velocity` is clamped into `[0, 1]`. Cost is proportional to the loop
-    /// length — a few hundred writes even for the lowest note — which is a
-    /// bounded spike on the audio thread, not an unbounded one.
+    /// `velocity` is clamped into `[0, 1]` and, via
+    /// [`hammer::simulate_contact`], shapes the burst's envelope: a harder
+    /// strike produces a shorter, more sharply-peaked pulse with more
+    /// high-frequency content, not merely a louder one. See the `hammer`
+    /// module docs for the physical model and its simplifications. Cost is
+    /// proportional to the loop length — a few hundred writes even for the
+    /// lowest note — plus the bounded, compile-time-capped hammer contact
+    /// simulation: a bounded spike on the audio thread, not an unbounded
+    /// one.
     pub fn pluck(&mut self, velocity: f32) {
         let velocity = math::clamp_or_low(velocity, 0.0, 1.0);
         self.delay.clear();
         self.loop_filter.reset();
+        self.dispersion.reset();
         self.dc_blocker.reset();
         self.envelope = velocity;
 
+        let (contact_force, contact_samples) = hammer::simulate_contact(velocity, self.sample_rate);
         let burst_length = self.loop_delay as usize + 1;
-        for _ in 0..burst_length {
-            let sample = self.rng.next_bipolar() * velocity;
+        for index in 0..burst_length {
+            let shape = if index < contact_samples {
+                contact_force.get(index).copied().unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let sample = self.rng.next_bipolar() * velocity * shape;
             self.delay.write(sample);
         }
     }
@@ -180,8 +224,10 @@ impl PluckedString {
     /// Produces one output sample and advances the string by one sample.
     #[inline]
     pub fn process(&mut self) -> f32 {
-        let travelled = self.delay.read_interpolated(self.loop_delay);
-        let reflected = self.loop_filter.process(travelled) * self.sustain;
+        let travelled = self.delay.read_allpass(self.loop_delay);
+        let filtered = self.loop_filter.process(travelled);
+        let dispersed = self.dispersion.process(filtered);
+        let reflected = dispersed * self.sustain;
         self.delay.write(math::flush_denormal(reflected));
 
         let output = self.dc_blocker.process(travelled);
@@ -218,6 +264,23 @@ impl PluckedString {
     #[must_use]
     pub fn loop_delay(&self) -> f32 {
         self.loop_delay
+    }
+
+    /// Recomputes `loop_delay` from `period` minus every filter's current
+    /// phase delay at DC, floored at [`MIN_LOOP_DELAY`] rather than going
+    /// negative. Shared by [`PluckedString::set_damping`] and
+    /// [`PluckedString::set_inharmonicity`], the two live controls whose
+    /// filters sit inside the tuned loop.
+    fn retune_loop_delay(&mut self) {
+        let retuned = self.period
+            - self.loop_filter.phase_delay_at_dc()
+            - self.dispersion.phase_delay_at_dc()
+            - 1.0;
+        self.loop_delay = if retuned < MIN_LOOP_DELAY {
+            MIN_LOOP_DELAY
+        } else {
+            retuned
+        };
     }
 
     #[inline]
@@ -257,13 +320,25 @@ mod tests {
     }
 
     #[test]
-    fn loop_delay_is_close_to_the_period() {
+    fn total_loop_length_matches_the_period() {
+        // `loop_delay()` alone is no longer expected to sit close to the
+        // period the way it did before M4: the loop filter's zero and the
+        // dispersion cascade now both claim several samples of phase delay
+        // at DC (by design — that claimed delay is exactly what makes upper
+        // partials sit sharp). The invariant that still must hold is the
+        // *total* loop length across delay line, loss filter, dispersion
+        // cascade and feedback path summing back to the period, the same
+        // reasoning `set_damping_keeps_the_total_loop_length_anchored_to_the_period`
+        // checks after a live retune.
         let string = string_at(440.0);
         let period = 48_000.0 / 440.0;
+        let total_delay = string.loop_delay()
+            + string.loop_filter.phase_delay_at_dc()
+            + string.dispersion.phase_delay_at_dc()
+            + 1.0;
         assert!(
-            (string.loop_delay() - period).abs() < 3.0,
-            "delay {}",
-            string.loop_delay()
+            (total_delay - period).abs() < 1e-3,
+            "total delay {total_delay} drifted from period {period}"
         );
     }
 
@@ -354,7 +429,10 @@ mod tests {
             let mut string =
                 PluckedString::new(StringConfig::new(frequency), rate).expect("440 Hz is tunable");
             string.set_damping(damping);
-            let total_delay = string.loop_delay() + string.loop_filter.phase_delay_at_dc() + 1.0;
+            let total_delay = string.loop_delay()
+                + string.loop_filter.phase_delay_at_dc()
+                + string.dispersion.phase_delay_at_dc()
+                + 1.0;
             assert!(
                 (total_delay - period).abs() < 1e-3,
                 "damping {damping}: total delay {total_delay} drifted from period {period}"
@@ -394,6 +472,35 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_ne!(before, after, "changing damping had no audible effect");
+    }
+
+    #[test]
+    fn set_inharmonicity_retunes_the_loop_the_same_way_damping_does() {
+        let mut string = string_at(440.0);
+        let before = string.loop_delay();
+        string.set_inharmonicity(0.02);
+        assert_ne!(string.loop_delay(), before);
+        let total_delay = string.loop_delay()
+            + string.loop_filter.phase_delay_at_dc()
+            + string.dispersion.phase_delay_at_dc()
+            + 1.0;
+        let period = 48_000.0 / 440.0;
+        assert!(
+            (total_delay - period).abs() < 1e-3,
+            "total delay {total_delay} drifted from period {period}"
+        );
+    }
+
+    #[test]
+    fn set_inharmonicity_never_produces_a_non_finite_or_unbounded_signal() {
+        let mut string = string_at(220.0);
+        string.pluck(1.0);
+        string.set_inharmonicity(0.05);
+        for index in 0..48_000 {
+            let sample = string.process();
+            assert!(sample.is_finite(), "sample {index} was not finite");
+            assert!(sample.abs() < 4.0, "sample {index} = {sample} escaped");
+        }
     }
 
     #[test]
@@ -438,6 +545,34 @@ mod tests {
             for _ in 0..1_000 {
                 let sample = string.process();
                 prop_assert!(sample.is_finite());
+            }
+        }
+
+        /// Same guarantee as `live_damping_changes_never_break_the_string`,
+        /// for the dispersion cascade's own live control.
+        #[test]
+        fn live_inharmonicity_changes_never_break_the_string(inharmonicity in proptest::num::f32::ANY) {
+            let mut string = string_at(220.0);
+            string.pluck(1.0);
+            string.set_inharmonicity(inharmonicity);
+            prop_assert!(string.loop_delay() >= MIN_LOOP_DELAY);
+            for _ in 0..1_000 {
+                let sample = string.process();
+                prop_assert!(sample.is_finite());
+            }
+        }
+
+        /// Whatever velocity a strike uses, the excitation stays finite and
+        /// bounded — including NaN, +-infinity, zero and the extremes of
+        /// the clamped range.
+        #[test]
+        fn plucking_at_any_velocity_never_breaks_the_string(velocity in proptest::num::f32::ANY) {
+            let mut string = string_at(220.0);
+            string.pluck(velocity);
+            for _ in 0..2_000 {
+                let sample = string.process();
+                prop_assert!(sample.is_finite());
+                prop_assert!(sample.abs() < 4.0, "sample {sample} escaped");
             }
         }
     }

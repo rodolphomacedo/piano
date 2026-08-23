@@ -53,6 +53,10 @@ float_fn!(
     /// Tangent of an angle in radians.
     tan, tan, libm::tanf
 );
+float_fn!(
+    /// Rounds to the nearest integer, half away from zero.
+    round, round, libm::roundf
+);
 
 /// Raises `base` to `exponent`.
 #[inline]

@@ -23,7 +23,9 @@
 extern crate alloc;
 
 pub mod delay;
+pub mod dispersion;
 pub mod filter;
+pub mod hammer;
 pub mod math;
 pub mod noise;
 pub mod string;

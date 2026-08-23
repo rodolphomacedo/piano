@@ -49,9 +49,10 @@ Following the discipline of not collapsing everything into "fast":
 | [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Open |
 | [PERF-009](#perf-009) | Soundboard convolution | M6 | Open |
 | [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | Open |
-| [PERF-011](#perf-011) | WASM has no SIMD by default | M3 | Open |
+| [PERF-011](#perf-011) | WASM has no SIMD by default | M3 | Mitigated, unmeasured |
 | [PERF-012](#perf-012) | Allocation at note-on | M2 | Closed |
 | [PERF-013](#perf-013) | `f32` precision in long bass decays | M7 | Open |
+| [PERF-014](#perf-014) | `wasm-bindgen` call overhead at the JS↔Wasm boundary | M3 | Open |
 
 ---
 
@@ -285,6 +286,21 @@ engine's internal block size at 128 so it matches the worklet quantum exactly;
 accept a lower voice cap in the browser and make it a parameter rather than a
 constant.
 
+*Status (M3)*: **Mitigated, unmeasured.** `.cargo/config.toml` sets
+`target.wasm32-unknown-unknown.rustflags = ["-C", "target-feature=+simd128"]`,
+verified locally to actually take effect (`cargo rustc ... -- --print cfg`
+shows `target_feature="simd128"` for a plain build). One caveat worth
+recording: the `RUSTFLAGS` environment variable is not additive with
+`.cargo/config.toml`'s `target.<triple>.rustflags` — whichever one Cargo
+picks, it uses *instead of* the other, never both. CI's workspace-wide
+`RUSTFLAGS: -D warnings` would silently drop `simd128` for a wasm32 build
+unless that job's own `env:` repeats both flags together (`-D warnings -C
+target-feature=+simd128`), which is what the `wasm` job in
+`.github/workflows/ci.yml` does. `piano-core` and `piano-wasm` do not write
+any explicit SIMD code, so this entry stays open until someone measures
+whether auto-vectorisation alone moves the needle, per this document's own
+rule that a status closes only with a number.
+
 ---
 
 ### PERF-012
@@ -330,3 +346,51 @@ values per string; widening it costs almost no memory traffic.
 
 *Test that would catch it*: render A0 for 60 seconds and check the envelope decays
 monotonically to exact zero rather than sticking at a small constant.
+
+---
+
+### PERF-014
+
+**`wasm-bindgen` call overhead at the JS↔Wasm boundary.**
+
+`docs/REALTIME-AUDIO-RULES.md` forbids allocation inside the audio callback.
+`piano-wasm::PianoVoice::render` itself honours that: its output buffer is
+sized once at construction and never resized. But `AudioWorkletProcessor.
+process()` — the actual per-quantum entry point, in JS — calls three
+`wasm-bindgen`-generated functions every 128 samples: `render()`,
+`outputPtr()` and (implicitly, via the cached `this.memory`) a fresh
+`Float32Array` view constructor. Two honesty notes belong on the record
+rather than in a commit message nobody rereads:
+
+1. **`render()` and `outputPtr()` themselves are zero-copy.** Neither takes
+   nor returns a slice — `render` takes no arguments and returns nothing,
+   `outputPtr` returns a plain `u32` address — so `wasm-bindgen`'s glue does
+   not marshal a buffer through its own allocator on these two calls. This
+   is precisely why the API was designed this way instead of the more
+   obvious `render(&mut self, output: &mut [f32])`: a `&mut [f32]` parameter
+   would make the generated JS call `__wbindgen_malloc`/`__wbindgen_free`
+   once per quantum to copy data across the boundary, which *would* be a
+   real per-callback allocation and a real violation of the audio rules.
+2. **The JS-side `new Float32Array(memory.buffer, ptr, quantum)` call in
+   `piano-processor.js` is not free**, even though it copies no bytes.
+   Constructing a typed-array view is a small object allocation in the JS
+   engine's own (garbage-collected, not `wasm-bindgen`'s) heap, done once per
+   `process()` call. It is unavoidable in this design because `strike()` can
+   grow the Wasm heap between quanta, which detaches any cached view built
+   over the old `ArrayBuffer` — see the comment at the call site. This is JS
+   garbage-collector churn, not a Rust/Wasm allocation, and is the accepted
+   cost of the zero-copy design; it has not been measured against the
+   alternative (accepting the `wasm-bindgen` slice-copy overhead instead and
+   never touching `memory.buffer` directly from JS).
+
+*Why this is `Open` rather than `Mitigated`*: no cycle count or GC-pause
+measurement exists for either path. The zero-copy design was chosen on
+first-principles reasoning (avoid a guaranteed allocator round trip in
+favour of a JS object allocation of unknown but probably-smaller cost), not
+a benchmark — exactly the kind of claim this document's own rules say must
+not be treated as settled without a number.
+
+*What would close it*: a browser profiler trace of `process()` over a
+sustained note, comparing GC pause frequency/duration against the
+alternative `&mut [f32]`-parameter design, at whatever polyphony M3's
+successor milestones eventually add to the browser build.

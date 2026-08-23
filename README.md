@@ -7,12 +7,13 @@ the sound is computed from a model of what a vibrating string actually does. The
 long-term target is the class of instrument that commercial modelled pianos
 occupy; the short-term target is to get there one audible step at a time.
 
-**Status: milestone M2.** A plucked string renders to a WAV file, in tune to
-within about 1.5 cents, and now also plays live through the speakers — one
-note at a time, from the computer keyboard, or from a MIDI controller. Every
-parameter that shapes the sound (damping, sustain, the excitation seed) is a
-live, adjustable control, not a build-time constant. See the
-[roadmap](docs/ROADMAP.md).
+**Status: milestone M3.** A plucked string renders to a WAV file, in tune to
+within about 1.5 cents, plays live through the speakers — one note at a time,
+from the computer keyboard, or from a MIDI controller — and now also runs in
+a browser tab, compiled to WebAssembly and driven from an `AudioWorklet`, no
+install required. Every parameter that shapes the sound (damping, sustain,
+the excitation seed) is a live, adjustable control, not a build-time
+constant. See the [roadmap](docs/ROADMAP.md).
 
 ## Try it
 
@@ -62,6 +63,24 @@ Notes play as struck; CC74 (brightness, if your controller has one) drives
 damping and CC1 (mod wheel) drives sustain, both live. Esc or Ctrl+C in the
 terminal to quit — the instrument itself has no on/off switch to send back.
 
+Play in a browser tab — no install, no toolchain beyond `rustup` and a
+one-time `wasm-bindgen-cli` install:
+
+```sh
+rustup target add wasm32-unknown-unknown   # once
+cargo install wasm-bindgen-cli --version 0.2.100 --locked   # once; must match the wasm-bindgen version in Cargo.toml
+cargo build -p piano-wasm --release --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-dir crates/piano-wasm/www/pkg target/wasm32-unknown-unknown/release/piano_wasm.wasm
+cd crates/piano-wasm/www && python3 -m http.server 8080
+```
+
+Open `http://localhost:8080`, move the frequency slider, click Strike. A
+plain static file server is enough — and required, since browsers refuse to
+load ES modules or WASM over `file://`. `simd128` is on by default for this
+target (`.cargo/config.toml`, `PERF-011`); there is no MIDI input and no
+polyphony in the browser yet, only a single voice, matching what this
+milestone (M3) asks for.
+
 ## Why it is built this way
 
 Three constraints drive every structural decision, and they are worth stating
@@ -92,6 +111,7 @@ depends on the core, never the reverse.
 | `piano-render` | Offline rendering and WAV output |
 | `piano-audio` | Realtime output via `cpal`, the lock-free command queue, denormal control |
 | `piano-midi` | MIDI input via `midir`, decoded into the same command queue |
+| `piano-wasm` | Browser bindings via `wasm-bindgen`, driven from an `AudioWorklet` |
 | `piano-cli` | The `piano` binary |
 
 ## Documentation
@@ -109,7 +129,7 @@ depends on the core, never the reverse.
 ## Development
 
 ```sh
-cargo test --workspace                                      # 90 tests
+cargo test --workspace                                      # 98 tests
 cargo clippy --workspace --all-targets -- -D warnings       # must be clean
 cargo fmt --all --check
 cargo build -p piano-core --no-default-features             # no_std must keep building

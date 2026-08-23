@@ -1,0 +1,6 @@
+# Web-only build flags. `wasm32-unknown-unknown` is otherwise plain scalar
+# code — enabling `simd128` lets LLVM auto-vectorise where it can. See
+# PERF-011 in docs/PERFORMANCE.md: this is a mitigation, not yet a
+# measurement, so that entry stays open until someone benchmarks it.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

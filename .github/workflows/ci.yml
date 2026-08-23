@@ -61,6 +61,33 @@ jobs:
       - name: Build piano-params without default features
         run: cargo build -p piano-params --no-default-features
 
+  wasm:
+    name: piano-wasm builds for the browser
+    runs-on: ubuntu-latest
+    # The workspace-wide `RUSTFLAGS: -D warnings` above is a full override,
+    # not an addition: Cargo lets exactly one RUSTFLAGS source win, and the
+    # `RUSTFLAGS` env var always beats `target.<triple>.rustflags` from
+    # .cargo/config.toml (verified locally; see docs/PERFORMANCE.md
+    # PERF-011). Repeating `-D warnings` here alongside `+simd128` is what
+    # makes both apply in this job, matching what a local build gets from
+    # .cargo/config.toml alone.
+    env:
+      RUSTFLAGS: -D warnings -C target-feature=+simd128
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      # This is the Rust-side half of milestone M3: catches anything that
+      # would not compile for the browser (std misuse, a dependency with no
+      # wasm32 support) before it silently bit-rots. Generating the
+      # wasm-bindgen JS glue itself needs the matching `wasm-bindgen-cli`
+      # binary and is a manual step — see README.md's "Try it in a browser".
+      - name: Build piano-wasm for wasm32-unknown-unknown
+        run: cargo build -p piano-wasm --release --target wasm32-unknown-unknown
+
   macos:
     name: Tests on macOS
     runs-on: macos-latest

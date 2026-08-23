@@ -57,7 +57,7 @@ sample-rate change is deferred).
 
 ---
 
-## M3 — Web playground
+## M3 — Web playground ✅
 
 The core compiled to WASM and driven from an `AudioWorklet`, with a page that has
 a button and a frequency slider. Ugly is fine. The point is a fast feedback loop
@@ -67,6 +67,24 @@ for anyone, on any machine, with no toolchain.
 matching the worklet quantum.
 
 **Done when**: clicking a button in a browser plays the same string model.
+
+*Achieved, with one open item*: `piano-wasm` wraps a single `PluckedString` in
+a `wasm-bindgen` `PianoVoice`, built and reviewed to the same no-allocation
+standard as `piano-audio::Engine` (`PianoVoice::render` is the per-quantum
+entry point; `PianoVoice::strike`, the one allocating call, is documented to
+run only between quanta — see `PERF-014`). The plain HTML/JS page and
+`AudioWorkletProcessor` in `crates/piano-wasm/www/` were written against, and
+verified against, the actual `wasm-bindgen 0.2.100 --target web` glue —
+generating that glue and reading it caught a real bug before it could reach
+a browser (`initSync` is a named export, not the default one, in this
+`wasm-bindgen` version; the worklet's import statement had it backwards).
+`cargo build -p piano-wasm --release --target wasm32-unknown-unknown`
+succeeds with `simd128` enabled, and `wasm-bindgen` turns that binary into
+loadable JS/Wasm without errors. **Not yet done**: no human has opened a
+browser tab and clicked the button — the one verification this milestone's
+own "done when" line names cannot be claimed from a terminal, and was not
+available in the environment this milestone was built in. Whoever confirms
+that should also delete this sentence.
 
 ---
 

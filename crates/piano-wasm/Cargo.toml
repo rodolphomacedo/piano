@@ -1,0 +1,22 @@
+[package]
+name = "piano-wasm"
+description = "Browser bindings for the piano synthesiser: wasm-bindgen glue for an AudioWorklet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+# cdylib is what wasm-bindgen needs to produce a loadable .wasm; rlib keeps
+# `cargo test -p piano-wasm` working on the host target, same as any other
+# crate in the workspace.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+piano-core = { workspace = true, features = ["std"] }
+wasm-bindgen = { workspace = true }
+
+[lints]
+workspace = true

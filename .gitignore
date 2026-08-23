@@ -4,6 +4,9 @@
 !docs/assets/*.wav
 .DS_Store
 /pkg
+# wasm-bindgen's generated glue + .wasm for the browser demo — built by the
+# command in README.md's "Try it in a browser" section, never committed.
+crates/piano-wasm/www/pkg
 /coverage
 lcov.info
 perf.data*

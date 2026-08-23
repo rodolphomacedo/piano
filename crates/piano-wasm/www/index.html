@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>piano — web playground</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
+  input[type="range"] { width: 100%; }
+  button { font-size: 1.1rem; padding: 0.5rem 1.5rem; }
+  #status { color: #555; }
+  code { background: #eee; padding: 0.1rem 0.3rem; }
+</style>
+</head>
+<body>
+<h1>piano — web playground</h1>
+<p>
+  A physically modelled piano string, compiled to WebAssembly and driven
+  from an <code>AudioWorklet</code>. No samples, no recordings — the sound
+  comes from <code>piano-core</code>'s digital waveguide, the same DSP the
+  native <code>piano play</code> command uses. Milestone M3; see
+  <a href="https://github.com/rodolphomacedo/piano/blob/main/docs/ROADMAP.md">the roadmap</a>.
+</p>
+
+<p>
+  <label for="frequency">Frequency: <span id="frequency-value">440.0</span> Hz</label><br>
+  <input type="range" id="frequency" min="27.5" max="2000" step="0.5" value="440">
+</p>
+
+<p>
+  <button id="strike" type="button">Strike</button>
+</p>
+
+<p id="status">Click Strike to begin — browsers require a user gesture before audio can play.</p>
+
+<script type="module">
+  const frequencySlider = document.getElementById("frequency");
+  const frequencyLabel = document.getElementById("frequency-value");
+  const strikeButton = document.getElementById("strike");
+  const statusText = document.getElementById("status");
+
+  frequencySlider.addEventListener("input", () => {
+    frequencyLabel.textContent = Number(frequencySlider.value).toFixed(1);
+  });
+
+  let audioContext = null;
+  let workletNode = null;
+
+  // Builds the audio graph exactly once, on first use. Deferred until the
+  // first click rather than done on page load, because AudioContext must be
+  // created (or resumed) from within a user-gesture handler — autoplay
+  // policy, not this project's choice.
+  async function ensureAudioGraph() {
+    if (workletNode) {
+      return workletNode;
+    }
+    audioContext = new AudioContext();
+    const wasmBytes = await fetch("./pkg/piano_wasm_bg.wasm").then((response) => response.arrayBuffer());
+    await audioContext.audioWorklet.addModule("./piano-processor.js");
+    workletNode = new AudioWorkletNode(audioContext, "piano-processor", {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { wasmBytes },
+    });
+    workletNode.connect(audioContext.destination);
+    return workletNode;
+  }
+
+  strikeButton.addEventListener("click", async () => {
+    try {
+      statusText.textContent = "Loading…";
+      const node = await ensureAudioGraph();
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+      const frequency = Number(frequencySlider.value);
+      node.port.postMessage({ frequency, velocity: 0.9 });
+      statusText.textContent = `Struck ${frequency.toFixed(1)} Hz`;
+    } catch (error) {
+      statusText.textContent = `Error: ${error.message}`;
+      console.error(error);
+    }
+  });
+</script>
+</body>
+</html>

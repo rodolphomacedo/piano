@@ -23,8 +23,9 @@ piano-core     pure DSP. no_std + alloc. forbid(unsafe_code). No I/O, no threads
                  │        │        └── piano-cli   the `piano` binary
                  │        │
                  │        ├── piano-audio    realtime output via cpal (M2, done)
-                 │        ├── piano-midi     MIDI input via midir (M2, done)
-                 │        └── piano-wasm     [M3] browser bindings + AudioWorklet
+                 │        └── piano-midi     MIDI input via midir (M2, done)
+                 │
+                 └── piano-wasm     browser bindings + AudioWorklet (M3, done)
 ```
 
 Dependencies point in one direction only. A change in how audio reaches the
@@ -59,7 +60,7 @@ called from an audio callback by accident.
 The thinnest possible shell: parse arguments, call one library function, print
 what happened. If a decision matters, it does not live here.
 
-### `piano-audio` (M2, done), `piano-midi` (M2, done) and `piano-wasm` (M3)
+### `piano-audio`, `piano-midi` and `piano-wasm` (M2 and M3, done)
 
 `piano-audio` owns the `cpal` stream, the lock-free command ring (`rtrb`), and
 the platform-specific denormal control (`PERF-002`) — the one place in the
@@ -79,8 +80,20 @@ callback). It never calls into `piano-audio` directly; the CLI is what drains
 both queues and turns MIDI events into `AudioSession` calls, keeping the two
 crates decoupled the same way `piano-render` and `piano-audio` already are.
 
-`piano-wasm` owns the `wasm-bindgen` surface and the `AudioWorklet` glue —
-not yet written.
+`piano-wasm` owns the `wasm-bindgen` surface: a single `PianoVoice` wrapping
+one `PluckedString`, the same shape as one voice of `piano-audio::Engine`
+minus the 88-voice pool and command queue — M3 asked for a button and a
+slider, not polyphony. `PianoVoice::render` is this crate's audio callback,
+written to the same no-allocation contract as `piano-audio::Engine`'s: the
+one allocating call is `PianoVoice::strike`, meant to run only from the
+`AudioWorklet`'s message handler, between render quanta, never nested inside
+`render` itself. The output buffer is exposed to JS as a raw pointer into
+Wasm linear memory (`PianoVoice::output_ptr`) rather than returned, so
+reading a rendered block is a zero-copy `Float32Array` view instead of a
+`wasm-bindgen`-marshalled copy on every quantum — see `PERF-014` in
+`docs/PERFORMANCE.md` for what still isn't zero-copy at this boundary, and
+why. The `AudioWorkletProcessor` and the page live in
+`crates/piano-wasm/www/`, plain JS and HTML with no bundler.
 
 ## How a note becomes sound
 

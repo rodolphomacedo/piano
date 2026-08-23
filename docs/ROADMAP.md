@@ -310,7 +310,7 @@ test should also delete this sentence.
 
 ---
 
-## M7 — Performance engineering
+## M7 — Performance engineering ✅
 
 A dedicated pass with the benchmark harness in place: profile, measure, and close
 `PERF` register entries with numbers.
@@ -321,6 +321,68 @@ resolution of `PERF-001`, `PERF-010` and `PERF-013`.
 
 **Done when**: every open `PERF` entry has either a measurement showing it does not
 matter or a fix with a before/after number.
+
+*Achieved.* Every open entry named in this milestone's own scope now has a
+real, dated measurement in `docs/PERFORMANCE.md`, taken on the exact
+reference machine that document's own "Budget" section names (a 2.3 GHz
+Intel Core i5-8259U, verified against `sysctl -n machdep.cpu.brand_string`
+on the machine this milestone was built on, not assumed):
+
+- **`PERF-001`** (bounds checks): **closed, measured negligible.** A
+  `get_unchecked` comparison (bench-only, never shipped — `piano-core`
+  stays `#![forbid(unsafe_code)]`) showed a 7.3 % difference on an
+  isolated delay-line micro-benchmark, under 0.3 % of the whole engine's
+  per-block budget. No mitigation applied, per this entry's own rule not to
+  act without a benchmark justifying it.
+- **`PERF-010`** (cache behaviour): **mitigated and measured.** The
+  existing voice-outer, block-inner loop order measures ~5.3 % faster than
+  the naive sample-outer alternative at M6's real 222-voice working set —
+  real, but more modest than the entry's own worst-case framing, because
+  the ~2 MB working set fits inside the reference machine's 6 MB L3.
+- **`PERF-013`** (`f32` precision in bass decays): **closed, measured, no
+  bug found.** A 60-second A0 render at this project's own real bass
+  voicing decays monotonically and keeps shrinking through the full render
+  (measured peak fell from 6.56×10⁻⁶ at 30 s to 1.46×10⁻⁹ at 60 s) — no
+  stall, so the `f64`-filter-state mitigation this entry described was not
+  needed and was not added.
+
+Beyond the three entries the "Done when" line names, this milestone also
+put a real number on every other open or aggregate-only entry it could
+reach: `PERF-003`'s per-sample dispatch is now decomposed (a single voice's
+own `process_block`, a trichord's, and a full 222-string block, all
+measured separately from the whole-engine aggregate); `PERF-005`'s
+dispersion cascade has a measured per-section cost, plus a genuine SIMD
+experiment (a safe-Rust structure-of-arrays rewrite showed a real ~41 %
+win on a trichord, but was **not** shipped into production — the
+refactor risks touching every already-measured M4-M6 test for a saving
+that is not currently the block's dominant cost, an honest "found but not
+worth it yet" rather than either hiding the finding or shipping it
+unweighed); `PERF-006`'s energy gate now has a real, if scenario-specific,
+saved-cost number (~48 % over a natural full-chord decay, pedal-down
+worst case still unmeasured); `PERF-007`'s hammer contact simulation
+measures 11.01 µs per strike, confirmed as a bounded note-on spike, not a
+steady load; `PERF-008`'s bridge bus and `PERF-009`'s soundboard both now
+have isolated per-block costs (≈10 % and <1 % of the full ungated block,
+respectively) instead of only the aggregate number M6 left behind.
+
+A genuine p99.9 callback-timing harness
+(`piano-audio`'s `callback_timing_distribution_at_full_polyphony_reports_
+p99_9`) replaces the earlier tests' single `elapsed / count` mean with a
+real repeated-sampling histogram (1 000 independent blocks, reusing the
+same `CallbackTimer` the real audio thread already records into): **p50
+950 µs, p95 1 000 µs, p99 1 100 µs, p99.9 1 500 µs, max 1 617 µs**, against
+the 2 670 µs deadline — comfortably inside it, but a real illustration of
+this document's own "averages hide it" warning: the worst observed block
+is well above the mean the M6-era aggregate number implied.
+
+**Not done, honestly**: `PERF-002` (denormal handling), `PERF-004` (allpass
+interpolation), `PERF-011` (WASM SIMD) and `PERF-014` (`wasm-bindgen`
+boundary overhead) were not this milestone's named scope and remain
+unmeasured — nothing here should be read as claiming otherwise. This
+milestone changed no user-audible behaviour: every number above is
+internal measurement and (for `PERF-001`) a deliberate non-change; see
+`docs/pt-BR/M7-como-usar.md` for the honest "what you will NOT hear"
+section this fact deserves.
 
 ---
 

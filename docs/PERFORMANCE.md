@@ -35,23 +35,56 @@ Following the discipline of not collapsing everything into "fast":
 | Allocation count inside `process` | Must be exactly zero, always |
 | Memory bandwidth per sample | The real limit once polyphony is high |
 
+## M7's benchmark harness, and where it lives
+
+Three `criterion` bench targets live in `crates/piano-core/benches/`
+(`components.rs`, `delay_line.rs`, `cache_order.rs`, plus
+`simd_experiment.rs` for the one SIMD experiment below), not in
+`piano-audio` or a new top-level `benches/` crate. This was a deliberate
+choice, not a default: `piano_audio::engine::Engine` is `pub(crate)`, so a
+bench target — which compiles as its own separate crate, even inside the
+same package — cannot reach it at all, only `piano-audio`'s public
+`AudioSession` surface, which opens a real `cpal` output stream and is
+therefore unusable in a sandboxed or headless benchmark run. Every DSP type
+this milestone needed to isolate (`DelayLine`, `DispersionCascade`,
+`BridgeBus`, `Soundboard`, `PluckedString`, `UnisonGroup`) is `pub` at the
+`piano-core` level, so building the harness there is what actually makes
+component isolation possible, at the cost of not being able to bench
+`piano-audio::Engine`'s own command-queue/dispatch layer directly — that
+layer is covered instead by comparing the `piano-core`-level full-block
+number against `piano-audio`'s own `#[ignore]`d wall-clock test (see
+`PERF-003`, `PERF-006`). Run with `cargo bench -p piano-core`. These are
+manual, human-read measurements, the same "measure by hand, quote the
+number" discipline the `#[ignore]`d wall-clock tests in `piano-audio`
+already used before this milestone — CI does not run `cargo bench`.
+
+The callback-timing side of M7 (a genuine p99.9 histogram, not a single
+aggregate number) lives where the existing wall-clock tests already were:
+`crates/piano-audio/src/engine_tests.rs`'s new
+`callback_timing_distribution_at_full_polyphony_reports_p99_9`, reusing
+`piano_audio::timing::CallbackTimer` — the same lock-free histogram the
+real audio thread already records into via `piano-audio::stream` — rather
+than building a second, parallel timing mechanism just for benchmarking.
+`#[ignore]`d for the same reason as its sibling: run with `cargo test
+--release -p piano-audio -- --ignored --nocapture`.
+
 ## Register
 
 | ID | Area | Milestone | Status |
 |---|---|---|---|
-| [PERF-001](#perf-001) | Bounds checks in the delay-line hot loop | M7 | Open |
+| [PERF-001](#perf-001) | Bounds checks in the delay-line hot loop | M7 | **Closed — measured negligible** |
 | [PERF-002](#perf-002) | Denormal handling in decaying tails | M2 | Mitigated, unmeasured |
-| [PERF-003](#perf-003) | Per-sample dispatch in the voice loop | M5 | Mitigated, unmeasured in isolation |
+| [PERF-003](#perf-003) | Per-sample dispatch in the voice loop | M5 | Mitigated, **measured in isolation (M7)** |
 | [PERF-004](#perf-004) | Linear interpolation in the fractional delay | M4 | Implemented, unmeasured |
-| [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Implemented, unmeasured |
-| [PERF-006](#perf-006) | Polyphony and voice management | M5 | Mitigated (energy gating); stealing not needed |
-| [PERF-007](#perf-007) | Hammer–string contact solver | M4 | Implemented, unmeasured |
-| [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Implemented, measured in aggregate |
-| [PERF-009](#perf-009) | Soundboard convolution | M6 | Implemented (modal synthesis), measured in aggregate |
-| [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | Mitigated, unmeasured in isolation |
+| [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Implemented, **measured (M7)** |
+| [PERF-006](#perf-006) | Polyphony and voice management | M5 | Mitigated (energy gating), **gate's saving measured (M7)** |
+| [PERF-007](#perf-007) | Hammer–string contact solver | M4 | Implemented, **measured (M7)** |
+| [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Implemented, **isolated cost measured (M7)** |
+| [PERF-009](#perf-009) | Soundboard convolution | M6 | Implemented (modal synthesis), **isolated cost measured (M7)** |
+| [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | **Mitigated and measured — ~5% faster than naive** |
 | [PERF-011](#perf-011) | WASM has no SIMD by default | M3 | Mitigated, unmeasured |
 | [PERF-012](#perf-012) | Allocation at note-on | M2 | Closed |
-| [PERF-013](#perf-013) | `f32` precision in long bass decays | M7 | Open |
+| [PERF-013](#perf-013) | `f32` precision in long bass decays | M7 | **Closed — measured, no stall found** |
 | [PERF-014](#perf-014) | `wasm-bindgen` call overhead at the JS↔Wasm boundary | M3 | Open |
 
 ---
@@ -77,6 +110,23 @@ with a proof comment — never spread across the crate.
 
 *Do not act before*: a benchmark shows the branches actually cost something.
 Modern branch predictors handle always-taken branches almost for free.
+
+*Status (M7)*: **Closed — measured negligible, no `unsafe` added.**
+`crates/piano-core/benches/delay_line.rs` compares the shipped, safe
+`DelayLine::read`/`write` against a `get_unchecked`-based stand-in built
+only for this benchmark (never shipped — `piano-core` stays
+`#![forbid(unsafe_code)]`), both driven at M6's real 222-voice scale, one
+128-sample block's worth of interleaved reads and writes per voice. Measured
+on the documented reference machine, `cargo bench -p piano-core --bench
+delay_line`: **89.82 µs** (safe) vs **83.30 µs** (`get_unchecked`) — a
+**7.3 % difference**, working out to roughly 0.11 ns (about a quarter of one
+cycle at 2.3 GHz) per bounds check, not the 2-4 cycles this entry's own
+worst-case estimate anticipated. Set against the whole engine's real
+per-block budget (2.67 ms), the 6.5 µs saved is under 0.3 % of it — this
+entry's own rule ("do not act before a benchmark shows the branches
+actually cost something") is not satisfied, so no mitigation was applied:
+the existing masked-index design in `piano_core::delay::DelayLine` is
+unchanged, and no `unsafe` was added anywhere in `piano-core`.
 
 ---
 
@@ -148,6 +198,24 @@ number and what it does and does not isolate. Dispatch is still per-voice
 (now per-`UnisonGroup`, still a concrete type, never `Box<dyn Trait>`), so
 this entry's own concern stays addressed; the growth is expected extra
 arithmetic, not a dispatch regression.
+
+*Update (M7)*: **decomposed, per this document's own deferral.**
+`crates/piano-core/benches/components.rs` isolates a single voice's own
+`process_block` cost from the aggregate: **4.31 µs** for one A4
+`PluckedString` over a 128-sample block (≈ 33.7 ns/sample), and **16.02 µs**
+for a full A4 trichord `UnisonGroup` with local coupling (≈ 125.2 ns/sample,
+≈ 41.7 ns/sample/string — about 24 % more than a lone string, the local-
+coupling arithmetic's own cost, not dispatch). A full 88-key/222-string
+block at the `piano-core` level (dispersion + hammer's one-time cost +
+bridge + soundboard + per-voice dispatch, no engine-level energy gating)
+measures **1 353.6 µs/block** — see `PERF-006` below for what the gap to
+the engine's own 697.2 µs/block number (which *does* gate silent voices)
+reveals. None of this points at dispatch itself as a cost: multiplying the
+isolated single-voice number by 222 gives roughly 957 µs, in the same
+order of magnitude as the measured 1 353.6 µs full-block number (the
+remainder being bridge-bus and per-sample coupling overhead, both now also
+measured below) — consistent with this entry's original claim that
+concrete-type, block-based dispatch is not where the cost lives.
 
 ---
 
@@ -238,6 +306,39 @@ floor and the peak-finder occasionally locks onto a spurious neighbouring
 bin — a test-resolution limitation noted in the test file, not a claim about
 the model itself.
 
+*Status (M7)*: **Measured.** `crates/piano-core/benches/components.rs`'s
+`dispersion_cascade_one_block` group measures a full 128-sample block
+through the cascade in isolation: **8.38 µs** at A0 (8 active sections,
+≈ 8.2 ns per section-evaluation) and **2.50 µs** at A4 (2 active sections,
+≈ 9.8 ns per section-evaluation) — the two per-section costs agree to
+within about 20 %, the expected sanity check for a cascade whose active
+section count is meant to be the only thing register scales. At the full
+88-key/222-string block level (`bench_full_polyphony_block`,
+1 353.6 µs/block, no gating — see `PERF-003`/`PERF-006`), dispersion alone
+across every voice's own section count is a real but bounded fraction of
+that total, not the dominant cost the "single largest CPU consumer" framing
+worried about at design time — this instrument's realistic per-key section
+counts (8 only in the bottom octave, tapering to 0-2 across the rest of the
+keyboard) keep the true weighted-average cost well below the worst-case
+`8 × 3 × 60` estimate this entry's own "cost if unmanaged" paragraph
+computed. **A genuine, measured optimisation opportunity was found but not
+shipped**: `crates/piano-core/benches/simd_experiment.rs` compares the
+shipped sequential-per-string cascade (three independent
+`DispersionCascade`s, called one after another — **9.69 µs** for a
+trichord's worth of one block) against a structure-of-arrays rewrite
+(three strings' identical arithmetic run in lockstep across parallel
+coefficient/state arrays, in safe Rust with no explicit SIMD intrinsics,
+so LLVM can auto-vectorise it) — **5.72 µs**, a **~41 % reduction**, with
+zero `unsafe`. This was **not** applied to `piano_core::dispersion` or
+`piano_core::unison` in this milestone: doing so for real requires moving
+each `DispersionCascade`'s state out of its owning `PluckedString` and into
+`UnisonGroup` as a shared structure-of-arrays field, a real API change that
+touches the M4-M6 tuning/inharmonicity/two-stage-decay tests this project's
+whole measured history depends on, for a saving that (per the paragraph
+above) is not currently the block's dominant cost. Recorded here, honestly,
+as a real measured opportunity for a future milestone rather than either
+silently skipped or shipped without weighing the risk.
+
 ---
 
 ### PERF-006
@@ -294,6 +395,32 @@ isolated measurement of the gate's own saved cost exists, now further
 complicated by measuring "saved cost" while pedal state changes what the
 gate can save.
 
+*Update (M7)*: **the gate's own saved cost now has a real number, found
+almost by accident while decomposing `PERF-003`.**
+`crates/piano-core/benches/components.rs`'s `bench_full_polyphony_block`
+measures **1 353.6 µs/block** processing all 222 strings *unconditionally*
+every iteration (no `is_silent`/`is_receptive` skip — that check is
+`piano_audio::Engine`'s own, not `piano-core`'s, so a `piano-core`-level
+benchmark cannot include it). `piano-audio`'s own
+`callback_time_at_full_88_voice_polyphony_clears_the_deadline` — which
+*does* gate, averaged over 1 000 blocks (≈ 2.67 s) starting from the same
+freshly-struck full chord — measures **697.2 µs/block**. Both benchmarks
+start from the identical state (every key struck at full velocity); the
+only structural difference is the engine's own `is_silent() &&
+!is_receptive()` skip. The **656.4 µs gap (≈ 48 %)** is not a clean measure
+of "the gate's savings" in isolation — the ungated benchmark keeps every
+voice ringing at its original, undecayed cost for its entire run, while
+the gated one is averaged over a window in which many treble voices (whose
+own decay is under 2 s, `docs/PHYSICS.md`) have already died out and been
+skipped by the time later blocks are measured — but it is a real,
+reproducible number showing the gate saves roughly half the block cost
+over a natural full-chord decay, not the "near zero" this entry worried
+about for the *pedal-down* case specifically (that scenario remains
+unmeasured, since it requires *every* voice to stay receptive throughout,
+which the setup above does not exercise). This entry stays open rather
+than closing, for the same honest reason as before: no measurement isolates
+the pedal-down worst case, only the natural-decay case above.
+
 ---
 
 ### PERF-007
@@ -336,6 +463,18 @@ velocity changes the excitation's spectral *shape*, not just its level
 cycles per contact simulation, and whether a true coupled hammer/string
 solve (the fixed-point-iteration approach this entry originally described)
 would sound meaningfully different — both would close this entry.
+
+*Status (M7)*: **Cost per contact simulation now measured.**
+`crates/piano-core/benches/components.rs`'s `hammer_simulate_contact_one_strike`
+measures **11.01 µs** for one call at velocity 0.8, on the reference
+machine. This is a per-note-on cost, not a per-sample one — `PluckedString::
+pluck` calls it once per strike, never from the per-sample `process` loop —
+so even at the fastest physically plausible repeated-note rate (well under
+100 strikes/second for a single key), this is a small, bounded spike
+nowhere near the 2.67 ms callback budget. Still open: whether a true
+coupled hammer/string solve would sound meaningfully different remains
+unmeasured — this milestone answered the *cost* question `PERF-007` asked,
+not the *fidelity* one.
 
 ---
 
@@ -381,6 +520,25 @@ bridge's own cost from the unison strings' or the soundboard's — doing
 that is left to M7, this document's own dedicated performance-engineering
 milestone, the same deferral `PERF-003`/`PERF-010` already made for
 isolating dispatch and cache cost from raw arithmetic.
+
+*Update (M7)*: **the bridge's own cost is now isolated.**
+`crates/piano-core/benches/components.rs`'s `bridge_bus_add_and_read_
+222_voices_one_block` drives `BridgeBus::add_and_read` at the full M6
+scale (222 voices, one 128-sample block, 28 416 calls total) with nothing
+else active: **133.13 µs**, ≈ 4.69 ns (≈ 10.8 cycles at 2.3 GHz) per call.
+Against the full 88-key/222-string block's own 1 353.6 µs (`PERF-003`,
+`PERF-006`), the bridge bus alone accounts for roughly **10 %** of the
+ungated total — a real, non-trivial share, but nowhere close to dominating
+it, consistent with this being an `O(N)` mechanism rather than the `O(N²)`
+one this entry was written to prevent. Also see M7's p99.9 callback-timing
+measurement below this document's "Metrics we track separately" table is
+now backed by a real histogram, not a single aggregate: **p50 950 µs, p95
+1 000 µs, p99 1 100 µs, p99.9 1 500 µs, max 1 617 µs**, over 1 000 blocks at
+full polyphony (`piano-audio`'s `callback_timing_distribution_at_full_
+polyphony_reports_p99_9`) — the worst observed block (1 617 µs, 60 % of
+budget) is markedly higher than the mean this entry's own aggregate number
+implied, though still comfortably inside the 2.67 ms deadline; exactly the
+"averages hide it" concern this document's own metrics table names.
 
 ---
 
@@ -430,6 +588,15 @@ stage, not a per-voice one), is a small, bounded addition relative to the
 up-to-222-string voice cost the same block also pays for — an argument,
 not a number, so this stays open for M7 to close with one.
 
+*Update (M7)*: **now a number, not an argument.**
+`crates/piano-core/benches/components.rs`'s `soundboard_process_one_block`
+measures the soundboard alone, one 128-sample block: **2.46 µs**, ≈ 19.3 ns
+(≈ 44 cycles at 2.3 GHz) per sample for all 8 resonators. Against the full
+88-key/222-string block's 1 353.6 µs (`PERF-003`, `PERF-006`), the
+soundboard accounts for well under 1 % of the total — confirming this
+entry's own prediction ("a small, bounded addition") with a real
+measurement rather than the argument it previously rested on.
+
 ---
 
 ### PERF-010
@@ -468,6 +635,25 @@ process_block` now chunks into `BRIDGE_BLOCK_SAMPLES`-sized pieces for
 is processed for. The working set per voice is larger than M5's (up to 3x
 for a trichord key), which makes this entry's original cache-pressure
 concern more relevant, not less — still left to M7 to actually measure.
+
+*Status (M7)*: **Mitigated and measured.**
+`crates/piano-core/benches/cache_order.rs` compares `Engine::process_
+block`'s actual order (voice-outer, block-inner) against the naive
+alternative (sample-outer, voice-inner) this entry warns against, both
+processing the same 222 `PluckedString`s (frequencies spread across the
+full keyboard, matching the real working set's varying delay-line sizes,
+not 222 identical copies) for a 128-sample block. Measured on the reference
+machine, `cargo bench -p piano-core --bench cache_order`: **1 020.3 µs**
+(voice-outer, current) vs **1 074.5 µs** (sample-outer, naive) — the
+current order is **~5.3 % faster**. This is real but far more modest than
+the entry's own worst-case framing ("far past the 256 KB L2... becomes
+memory-bandwidth bound") suggested: the working set (~2 MB for 222 voices)
+sits comfortably inside the reference machine's 6 MB shared L3, so a naive
+sample-outer loop pays for repeated L3 (not main-memory) traffic rather
+than a full cache miss on every access — expensive enough to measure, not
+catastrophic. The existing voice-outer order is kept, backed now by a real
+number rather than the reasoning alone; no code change was needed since
+`Engine::process_block` already used it (M2/M4).
 
 ---
 
@@ -566,6 +752,32 @@ values per string; widening it costs almost no memory traffic.
 
 *Test that would catch it*: render A0 for 60 seconds and check the envelope decays
 monotonically to exact zero rather than sticking at a small constant.
+
+*Status (M7)*: **Closed — measured, no stall found, no `f64` mitigation
+applied.** `crates/piano-render/tests/m7_bass_decay.rs` renders A0 for 60
+seconds at this project's own real bass voicing (`piano_audio::voicing`'s
+own A0 anchors: `sustain` derived from a 35 s target decay, `damping` 0.6,
+`inharmonicity` 0.0001 — duplicated into the test rather than imported,
+since `piano-render` does not depend on `piano-audio`,
+`docs/ARCHITECTURE.md`), tracking one-second-window peak magnitude
+throughout. Three findings, all from the same render: (1) every sample
+stays finite for the full 60 s; (2) the one-second-window envelope is
+monotonically non-increasing throughout (no window rose above the previous
+one, beyond a 1e-6 relative float-noise tolerance); (3) the tail keeps
+decaying rather than stalling — measured peak at 30 s was **6.56×10⁻⁶**,
+at 60 s **1.46×10⁻⁹**, a further ~4 500× reduction over the second 30 s
+window, in the same order of magnitude the loop-gain model predicts
+(`sustain^(frequency·30s)` ≈ 2 700×) rather than flattening out at a fixed
+floor. This is consistent with the entry's own stated reasoning — `f32`'s
+roughly-constant *relative* precision does not reproduce the classic
+fixed-point "limit cycle" stall a recursive filter with absolute-precision
+arithmetic can suffer — confirmed by an actual render rather than trusted
+as an argument. The `f64`-filter-state-in-the-lowest-octave mitigation this
+entry describes was therefore **not implemented**: there is nothing in this
+measurement for it to fix. If a future milestone renders bass notes far
+longer than 60 s (multiple minutes) or at even lower gain floors, this
+measurement would be worth repeating rather than assumed to extrapolate
+indefinitely.
 
 ---
 

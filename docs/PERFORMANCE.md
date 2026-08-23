@@ -41,14 +41,14 @@ Following the discipline of not collapsing everything into "fast":
 |---|---|---|---|
 | [PERF-001](#perf-001) | Bounds checks in the delay-line hot loop | M7 | Open |
 | [PERF-002](#perf-002) | Denormal handling in decaying tails | M2 | Mitigated, unmeasured |
-| [PERF-003](#perf-003) | Per-sample dispatch in the voice loop | M5 | Open |
+| [PERF-003](#perf-003) | Per-sample dispatch in the voice loop | M5 | Mitigated, unmeasured in isolation |
 | [PERF-004](#perf-004) | Linear interpolation in the fractional delay | M4 | Implemented, unmeasured |
 | [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Implemented, unmeasured |
-| [PERF-006](#perf-006) | Polyphony and voice management | M5 | Open |
+| [PERF-006](#perf-006) | Polyphony and voice management | M5 | Mitigated (energy gating); stealing not needed |
 | [PERF-007](#perf-007) | Hammer–string contact solver | M4 | Implemented, unmeasured |
 | [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Open |
 | [PERF-009](#perf-009) | Soundboard convolution | M6 | Open |
-| [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | Open |
+| [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | Mitigated, unmeasured in isolation |
 | [PERF-011](#perf-011) | WASM has no SIMD by default | M3 | Mitigated, unmeasured |
 | [PERF-012](#perf-012) | Allocation at note-on | M2 | Closed |
 | [PERF-013](#perf-013) | `f32` precision in long bass decays | M7 | Open |
@@ -123,6 +123,23 @@ cannot be inlined, defeating the optimiser across the whole DSP chain.
 2. The engine processes **blocks, not samples**: `process_block(&mut [f32])` with
    64–128 samples, so any dispatch cost is amortised over the block and the inner
    loop is a tight, inlinable, vectorisable body.
+
+*Status (M5)*: **Mitigated, unmeasured in isolation.** Both structural
+mitigations turned out to already be in place, from M2/M4 rather than
+freshly built for M5: `piano_audio::engine::Voice` wraps a concrete
+`Option<PluckedString>`, never `Box<dyn Trait>` (verified by reading
+`engine.rs`, not assumed), and `Engine::process_block` already calls
+`PluckedString::process_block_add` once per voice for the whole block
+rather than dispatching per sample. A real, if aggregate, number now
+exists: `piano-audio`'s `callback_time_at_full_88_voice_polyphony_
+clears_the_deadline` (`engine_tests.rs`, `#[ignore]`d — a wall-clock
+measurement, not a CI gate) measured 221.9 µs to process a 128-sample
+block at full 88-voice polyphony on the documented reference machine (2.3
+GHz Intel Core i5-8259U), about 8 % of the 2.67 ms deadline. That number
+is consistent with dispatch cost being negligible, but it is a whole-engine
+measurement, not one that isolates dispatch overhead from arithmetic or
+cache cost — decomposing it is left to M7, which this document already
+schedules for exactly that kind of work.
 
 ---
 
@@ -233,6 +250,25 @@ many keys are held.
 - **A hard voice cap** that degrades gracefully. Dropping a quiet note is always
   better than missing a buffer deadline.
 
+*Status (M5)*: **Mitigated (energy gating); voice stealing not needed.**
+Energy gating turned out to already exist, from M2 — `Engine::process_block`'s
+`if string.is_silent() { continue; }`, confirmed by `git log -p` against
+`engine.rs` rather than assumed — so M5's own contribution here was making
+a *released* voice actually reach `is_silent` promptly: before M5,
+`PluckedString` had no way to shorten a note early at all, so the gate only
+ever paid off after a long natural decay. `PluckedString::release` plus a
+faster envelope-follower forgetting rate once released
+(`RELEASED_ENVELOPE_DECAY`, `string.rs`) closes that gap — see M5's
+`docs/ROADMAP.md` entry for the numbers. Voice stealing (reassigning a slot
+when out of slots) was deliberately **not built**: `PERF-012`'s one
+permanent voice per key means there is never an "out of slots" case on a
+standard 88-key instrument, so there is nothing to steal from — a hard
+voice cap only becomes a real question if a future milestone allows more
+than one voice per key (unison strings, M6) or lets polyphony exceed 88.
+This entry stays open rather than closing, since no cycle-level measurement
+isolates the gate's own saved cost (as opposed to the whole-engine number
+`PERF-003` records) and a hard voice cap was not built.
+
 ---
 
 ### PERF-007
@@ -336,6 +372,17 @@ voice for a whole block of 128 samples (its delay line stays hot in L1/L2), then
 move to the next voice, accumulating into a shared output block. This is the same
 conclusion PERF-003 reaches from a different direction.
 
+*Status (M5)*: **Mitigated, unmeasured in isolation.** `Engine::process_block`
+already loops voice-outer, block-inner (`for voice in &mut self.voices {
+... string.process_block_add(output) ... }`), the loop order this entry
+recommends — in place since M2/M4, not new to M5. The same aggregate
+221.9 µs/block measurement `PERF-003` records is consistent with this not
+being a bottleneck at 88 voices, but does not isolate cache effects from
+dispatch or raw arithmetic cost. Still scheduled for M7, as this document's
+own register already said before M5 touched it: a cache-miss-isolating
+measurement (e.g. comparing this loop order against the naive
+sample-outer, voice-inner one) is what would actually close it.
+
 ---
 
 ### PERF-011
@@ -392,6 +439,15 @@ blocks with notes struck across the full keyboard including repeated re-strikes
 of the same key, and asserts zero allocations in the guarded region. The test
 was verified to actually detect a violation (a deliberately injected allocation
 made it fail before being removed) rather than passing vacuously.
+
+*Note (M5)*: stays closed. M5 added `Command::NoteOff` and
+`Command::SustainPedal` — both handled by walking the existing fixed-size
+`voices` array (`PianoKey`/index lookups, boolean flag writes,
+`PluckedString::release` calls), none of it allocating — and
+`tests_no_allocation.rs` was extended to push both new commands inside the
+same guarded region rather than left to trust that by inspection alone.
+Per-key voicing (`piano-audio::voicing`) only ever runs at `Engine::new`,
+before the guard is active, same as the rest of voice construction.
 
 ---
 

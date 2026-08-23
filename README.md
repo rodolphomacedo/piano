@@ -7,12 +7,16 @@ the sound is computed from a model of what a vibrating string actually does. The
 long-term target is the class of instrument that commercial modelled pianos
 occupy; the short-term target is to get there one audible step at a time.
 
-**Status: milestone M3.** A plucked string renders to a WAV file, in tune to
-within about 1.5 cents, plays live through the speakers — one note at a time,
-from the computer keyboard, or from a MIDI controller — and now also runs in
-a browser tab, compiled to WebAssembly and driven from an `AudioWorklet`, no
-install required. Every parameter that shapes the sound (damping, sustain,
-the excitation seed) is a live, adjustable control, not a build-time
+**Status: milestone M5.** A struck string (a proper digital waveguide with
+dispersion and a nonlinear felt-hammer excitation, M4) renders to a WAV
+file, in tune to within about 1.5 cents, plays live through the speakers —
+polyphonically, a full 88-key voice pool, from the computer keyboard or a
+MIDI controller — and also runs in a browser tab, compiled to WebAssembly
+and driven from an `AudioWorklet`, no install required. MIDI input plays
+chords, releases notes early (note-off), and honours the sustain pedal
+(CC64); every voice's damping, sustain and inharmonicity has its own
+per-register baseline rather than one setting for the whole keyboard, and
+every parameter is still a live, adjustable control, not a build-time
 constant. See the [roadmap](docs/ROADMAP.md).
 
 ## Try it
@@ -50,7 +54,13 @@ cargo run --release -p piano-cli -- keyboard
 The bottom row (`Z S X D C V G B H N J M ,`) is one octave; the top row
 (`Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P`) continues upward. `[`/`]` and `-`/`=`
 change damping and sustain live, audible on notes already ringing. Esc or
-Ctrl+C to quit.
+Ctrl+C to quit. Holding several keys plays a chord (one voice per key, no
+stealing needed — see `PERF-012`). **Key-release is terminal-dependent**:
+most terminals, including macOS's default Terminal.app, never report a
+key-up event at all, so notes ring out on their own; a terminal that
+implements the Kitty keyboard protocol (kitty, WezTerm and similar) is
+detected automatically and gets real early release. `piano midi` below
+always has real note-off regardless of terminal.
 
 Play from a MIDI controller — a digital piano over USB or a MIDI cable:
 
@@ -59,8 +69,11 @@ cargo run --release -p piano-cli -- midi --list   # see what is plugged in
 cargo run --release -p piano-cli -- midi
 ```
 
-Notes play as struck; CC74 (brightness, if your controller has one) drives
-damping and CC1 (mod wheel) drives sustain, both live. Esc or Ctrl+C in the
+Notes play as struck and release on note-off; CC74 (brightness, if your
+controller has one) drives damping and CC1 (mod wheel) drives sustain, both
+live and both distinct from CC64, the sustain (hold) *pedal* — holding it
+keeps every note ringing past its own note-off, same as a real piano's
+right pedal. Play several notes together for a chord. Esc or Ctrl+C in the
 terminal to quit — the instrument itself has no on/off switch to send back.
 
 Play in a browser tab — no install, no toolchain beyond `rustup` and a
@@ -129,7 +142,7 @@ depends on the core, never the reverse.
 ## Development
 
 ```sh
-cargo test --workspace                                      # 98 tests
+cargo test --workspace                                      # 132 tests
 cargo clippy --workspace --all-targets -- -D warnings       # must be clean
 cargo fmt --all --check
 cargo build -p piano-core --no-default-features             # no_std must keep building

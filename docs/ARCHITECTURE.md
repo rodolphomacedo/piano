@@ -73,12 +73,27 @@ excitation seed — has a live setter reachable through the same command queue,
 so a controller, a CLI flag or (later) a Bayesian parameter estimator all
 reach the engine through one path, not three.
 
+`Engine` also owns the polyphony bookkeeping M5 added: `Command::NoteOff`
+and `Command::SustainPedal` reach it through the same command queue, and a
+per-voice `pending_pedal_release` flag (not per-string state — that stays
+`piano-core`'s concern) tracks which held keys the sustain pedal is
+keeping alive, so `PluckedString` itself never has to know that pedals
+exist. `piano-audio::voicing` is a new small module with one job: compute
+each of the 88 keys' baseline `damping`/`sustain`/`inharmonicity` from
+this project's own already-documented per-register numbers, so `Engine`
+stops handing every key the same global default and varying only
+`frequency`.
+
 `piano-midi` owns the `midir` connection and decodes raw MIDI bytes into
 `MidiEvent`s on its own SPSC queue (ADR-0005's pattern again, because a MIDI
 driver's callback thread is exactly as unsuited to blocking as an audio
 callback). It never calls into `piano-audio` directly; the CLI is what drains
 both queues and turns MIDI events into `AudioSession` calls, keeping the two
 crates decoupled the same way `piano-render` and `piano-audio` already are.
+CC64 (the sustain pedal, M5) needed no change here at all: it decodes as an
+ordinary `MidiEvent::ControlChange`, same as CC1 and CC74 already did, so
+teaching the instrument to act on the pedal was entirely a `piano-cli`
+change.
 
 `piano-wasm` owns the `wasm-bindgen` surface: a single `PianoVoice` wrapping
 one `PluckedString`, the same shape as one voice of `piano-audio::Engine`
@@ -136,7 +151,7 @@ nobody has to reverse-engineer the intent:
 | Multiple strings per note | A voice owns 2–3 `PluckedString`s with detuned frequencies | M6 |
 | Sympathetic resonance | A shared bridge bus every voice reads and writes — **not** all-to-all coupling (`PERF-008`) | M6 |
 | Soundboard | A single post-mix stage, after all voices are summed | M6 |
-| Block processing | `process_block_add` already has the signature; the engine loop order is what changes (`PERF-010`) | M5 |
+| Block processing | `process_block_add` already has the signature; `Engine::process_block` already loops voice-outer, block-inner — landed by M2/M4, confirmed still true in M5. Isolating and closing the cache-behaviour measurement itself is M7's job (`PERF-010`) | M5 |
 
 ## Testing strategy
 

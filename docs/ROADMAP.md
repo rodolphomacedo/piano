@@ -133,13 +133,13 @@ per that document's own rule that a status closes only with a number.
 
 ---
 
-## M5 — The whole keyboard
+## M5 — The whole keyboard ✅
 
 88 keys, real polyphony, and the voice management that makes it survivable.
 Basic MIDI note input already landed in M2 (`piano midi`, one permanent voice
-per key means no stealing is needed yet); what M5 still owes is the sustain
-pedal and a release/damping model — the current instrument has no way to stop
-a note early, MIDI or otherwise.
+per key means no stealing is needed yet); what M5 still owed was the sustain
+pedal and a release/damping model — the instrument had no way to stop a note
+early, MIDI or otherwise.
 
 **Includes**: a pre-allocated voice pool (`PERF-012`), energy-gated voice skipping
 and voice stealing (`PERF-006`), block-based processing (`PERF-003`, `PERF-010`),
@@ -147,6 +147,71 @@ and per-key parameter tables.
 
 **Done when**: a MIDI keyboard plays chords, the sustain pedal works, and the
 callback holds its deadline at the documented voice count.
+
+*Achieved, with open items.* A release/damping model landed in
+`piano-core`: `PluckedString::release` (`crates/piano-core/src/string.rs`)
+engages a damper flag that multiplies the loop's broadband gain by
+`RELEASE_LOSS_MULTIPLIER` (0.4, Chaigne & Askenfelt 1994's per-round-trip
+loss model) on every following round trip, reaching
+`SILENCE_THRESHOLD` in roughly 10 round trips regardless of register — and,
+since the envelope follower that gates energy-based voice skipping has its
+own independent forgetting rate, a second constant
+(`RELEASED_ENVELOPE_DECAY`) was needed so `is_silent` actually reflects that
+fast decay instead of the ~380 ms floor the held-note follower constant
+would otherwise impose; a `proptest` (`release_any_number_of_times_never_
+breaks_the_string`) checks totality across any number of `release` calls at
+any point relative to plucking. `piano-audio::Engine` (`engine.rs`) wires
+this to a new `Command::NoteOff` and a `Command::SustainPedal` on the same
+SPSC command-queue pattern `SetDamping`/`SetSustain` already used, with a
+per-voice `pending_pedal_release` flag: a `NoteOff` while the pedal is down
+marks the voice instead of releasing it, and `SustainPedal { down: false }`
+walks all 88 voices (a compile-time-bounded loop, not unbounded) releasing
+everything that was pending — naming throughout keeps this unambiguous
+against the pre-existing, unrelated CC1→`set_sustain` decay-rate control
+(`AudioSession::set_sustain_pedal`, never a bare `set_sustain`-adjacent
+name). `piano-midi` needed no new parser variant — CC64 falls out of the
+existing generic `ControlChange` decoding — so only `piano-cli`'s `midi.rs`
+changed, mapping CC64 ≥ 64/127 to pedal-down and wiring `NoteOff` to
+`AudioSession::note_off`. Per-key parameter tables landed as
+`piano-audio::voicing` (`voicing.rs`): each of the 88 keys gets its own
+`damping`/`sustain`/`inharmonicity` baseline, `sustain` derived by a closed
+form from this project's own already-documented per-register decay times
+(`docs/PHYSICS.md`'s "Typical decay" row) and `inharmonicity` interpolated
+between the bass/treble figures `piano_core::dispersion` already cites from
+Fletcher & Rossing; `damping`'s bass/treble anchors are this project's own
+reasoned (not measured) interpolation, honestly labelled as such in the
+module doc comment. Energy-gated voice skipping (`PERF-006`'s cheap half)
+turned out to already exist from M2 — `Engine::process_block`'s `if
+string.is_silent() { continue; }` — verified by `git log -p`, not assumed;
+what M5 actually added on that front was making a *released* voice reach
+`is_silent` promptly (above) so that skip has something to bite on soon
+after a note-off, not just after a long natural decay. True voice
+*stealing* was not built, per this milestone's own scope: one permanent
+voice per key (`PERF-012`, already closed in M2) means slots never run
+out, so there is nothing to steal from. A real measurement exists for the
+"holds its deadline at the documented voice count" criterion:
+`piano-audio::engine::tests::callback_time_at_full_88_voice_polyphony_
+clears_the_deadline` (run manually, `#[ignore]`d in CI because wall-clock
+timing on a shared runner is not a fair pass/fail gate) measured 221.9 µs
+per 128-sample block with all 88 voices freshly struck, against a 2.67 ms
+deadline, on the exact reference machine `docs/PERFORMANCE.md`'s budget
+section names (a 2.3 GHz Intel Core i5-8259U) — about 8% of the deadline,
+comfortably inside it. **Not yet done**: the computer keyboard's key-release
+was investigated, not assumed — most terminals, including macOS's default
+Terminal.app, only ever deliver key-*press* events in raw mode; genuine
+key-up needs the terminal to implement the Kitty keyboard protocol (kitty,
+WezTerm and a still-minority list of others). `piano keyboard` now queries
+`crossterm::terminal::supports_keyboard_enhancement()` and only claims
+early release when the terminal actually reports it, printing an honest
+message either way — this was not run against a real interactive terminal
+in the environment this milestone was built in (no TTY), so the *enabled*
+path (uncommon terminals) is implemented against the documented crossterm
+0.28 API but unverified by an actual keypress; the *disabled* path (the
+common case, unchanged ring-to-completion behaviour) is exactly what
+shipped before this milestone and was already exercised. No human has
+listened to a chord or a pedal-held note yet — nobody had done so as of
+this milestone landing. Whoever confirms either of those should delete
+this sentence.
 
 ---
 

@@ -8,7 +8,9 @@
 
 use std::path::Path;
 
-use piano_core::{ParamError, PluckedString, SampleRate, string::StringConfig};
+use piano_core::{
+    ParamError, PluckedString, SampleRate, string::StringConfig, unison::UnisonGroup,
+};
 use piano_params::{PianoKey, Tuning};
 use thiserror::Error;
 
@@ -72,6 +74,42 @@ pub fn render_note(request: RenderRequest) -> Result<Vec<f32>, RenderError> {
 
     let mut samples = vec![0.0; sample_count];
     string.process_block_add(&mut samples);
+    apply_fade_out(&mut samples, fade_length(request.sample_rate));
+    Ok(samples)
+}
+
+/// Renders a single note through a full unison group
+/// ([`piano_core::unison::UnisonGroup`]) rather than a lone string — M6's
+/// unison beating and the two-stage decay it produces through local bridge
+/// coupling (`docs/ROADMAP.md`, `PERF-008`).
+///
+/// Kept separate from [`render_note`] rather than folding unison in there:
+/// M1-M4's already-measured single-string tuning and inharmonicity tests
+/// (`crates/piano-render/tests/m4_spectral.rs`) exercise exactly the
+/// single-string primitive they were written and calibrated against, and
+/// this keeps it that way rather than risking a regression in an
+/// already-closed measurement for the sake of also covering M6 in the same
+/// function.
+///
+/// # Errors
+///
+/// Same conditions as [`render_note`]: an impossible duration, or a
+/// (detuned) frequency that cannot be represented at `request.sample_rate`.
+pub fn render_unison_note(
+    request: RenderRequest,
+    unison_count: usize,
+) -> Result<Vec<f32>, RenderError> {
+    let sample_count = duration_to_samples(request.seconds, request.sample_rate)?;
+
+    let frequency = request.key.frequency(request.tuning);
+    let config = StringConfig::new(frequency);
+    let mut group = UnisonGroup::new(config, unison_count, request.sample_rate)?;
+    group.pluck(request.velocity);
+
+    let mut samples = vec![0.0; sample_count];
+    for sample in &mut samples {
+        *sample = group.process();
+    }
     apply_fade_out(&mut samples, fade_length(request.sample_rate));
     Ok(samples)
 }

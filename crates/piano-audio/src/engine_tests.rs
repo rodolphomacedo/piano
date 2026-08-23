@@ -363,6 +363,63 @@ fn callback_time_at_full_88_voice_polyphony_clears_the_deadline() {
     );
 }
 
+/// M7's own callback-timing harness (`docs/PERFORMANCE.md`, "Metrics we
+/// track separately": "Worst-case callback time (p99.9, not p50) — one
+/// late buffer is an audible click; averages hide it"). Unlike
+/// `callback_time_at_full_88_voice_polyphony_clears_the_deadline` above,
+/// which only ever reports one aggregate `elapsed / count` mean, this
+/// records *every* block's own duration into a
+/// [`crate::timing::CallbackTimer`] — the same lock-free histogram
+/// `piano_audio::stream` already uses on the real audio thread — and reads
+/// back p50 through p99.9 plus the true max. A real, repeated-sampling
+/// distribution, not a single run: `CALLBACK_TIMING_BLOCKS` (1 000)
+/// independent measurements at full 88-key/222-string polyphony.
+///
+/// `#[ignore]`d for the same reason as the test above: wall-clock timing on
+/// a shared CI runner is not a fair pass/fail gate. Run by hand with
+/// `cargo test --release -p piano-audio -- --ignored --nocapture
+/// callback_timing_distribution`.
+#[test]
+#[ignore = "wall-clock measurement, run manually with --ignored --nocapture"]
+fn callback_timing_distribution_at_full_polyphony_reports_p99_9() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer_with_capacity(KEY_COUNT);
+    for midi in LOWEST_PIANO_KEY..=HIGHEST_PIANO_KEY {
+        producer
+            .push(Command::NoteOn {
+                midi,
+                velocity: 1.0,
+            })
+            .expect("queue has room");
+    }
+    engine.drain_commands(&mut consumer);
+
+    let timer = crate::timing::CallbackTimer::new();
+    let mut buffer = vec![0.0f32; 128];
+    for _ in 0..CALLBACK_TIMING_BLOCKS {
+        let started = std::time::Instant::now();
+        engine.process_block(&mut buffer);
+        timer.record(started.elapsed());
+    }
+
+    let report = timer.report();
+    println!(
+        "88-voice callback timing over {} blocks: p50={} us, p95={} us, \
+         p99={} us, p99.9={} us, max={} us (budget 2 670 us at 48 kHz)",
+        report.callback_count,
+        report.p50_micros,
+        report.p95_micros,
+        report.p99_micros,
+        report.p99_9_micros,
+        report.max_micros,
+    );
+    assert!(
+        report.p99_9_micros < 2_670,
+        "p99.9 {} us exceeded the 2.67 ms deadline",
+        report.p99_9_micros
+    );
+}
+
 #[test]
 fn a_note_the_engine_cannot_tune_is_ignored_without_panicking() {
     let rate = SampleRate::new(8_000.0).expect("8 kHz is valid");

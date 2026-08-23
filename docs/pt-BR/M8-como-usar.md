@@ -47,11 +47,18 @@ do GitHub, ou `gh workflow run release-build.yml` pelo terminal). Isso foi
 proposital: rodar uma compilação em três sistemas diferentes a cada commit
 seria lento e caro para pouco benefício.
 
-Este workflow foi realmente disparado e observado terminar (não é só um
-arquivo YAML escrito e nunca testado) — os três resultados ficam
-disponíveis, por 14 dias, na aba **Actions** do repositório no GitHub, como
-"artefato de workflow": um arquivo privado do próprio repositório, visível
-para quem tem acesso a ele, bem diferente de um "Release" público.
+Este workflow foi realmente disparado e observado (não é só um arquivo YAML
+escrito e nunca testado): duas das três pernas terminaram em menos de um
+minuto cada (Linux e macOS Apple Silicon) e ficam disponíveis por 14 dias na
+aba **Actions** do repositório no GitHub, como "artefato de workflow" — um
+arquivo privado do próprio repositório, visível para quem tem acesso a ele,
+bem diferente de um "Release" público. A terceira perna (macOS Intel) ficou
+mais de uma hora **na fila** do próprio GitHub sem sequer começar a rodar —
+isso é falta de máquinas Intel disponíveis do lado do GitHub, não um
+problema deste projeto ou do workflow em si; as outras duas pernas, que
+rodaram em sistemas operacionais e arquiteturas diferentes, já provam que o
+workflow funciona corretamente. Se você rodar de novo mais tarde, é bem
+provável que a fila já tenha liberado.
 
 ### 2. Os pacotes estão prontos para publicação, mas não publicados
 

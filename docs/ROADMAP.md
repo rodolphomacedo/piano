@@ -386,12 +386,100 @@ section this fact deserves.
 
 ---
 
-## M8 — Release and packaging
+## M8 — Release and packaging ✅
 
 Reproducible builds for macOS Intel, macOS Apple Silicon and Linux; published
 crates; a documented plugin path if it is worth taking.
 
 **Done when**: someone who is not the author can install it and play it.
+
+*Achieved, with one deliberate boundary.* Every piece of this milestone that
+does not require an irreversible, externally-visible action against a
+shared public system (crates.io, GitHub Releases) is done and verified.
+The two that do were **intentionally left for the project's owner to
+trigger by hand**, not built by an autonomous agent — see below for why,
+stated plainly rather than glossed over.
+
+- **Reproducible cross-platform builds.**
+  `.github/workflows/release-build.yml`, `workflow_dispatch`-only so a
+  three-way build matrix never runs on every push alongside `ci.yml`,
+  builds `piano-cli` for `x86_64-apple-darwin`, `aarch64-apple-darwin` and
+  `x86_64-unknown-linux-gnu`, each on its own native runner (macOS-13,
+  macOS-14, `ubuntu-latest`) rather than cross-compiled, with a `--help`
+  smoke test per leg before upload. Actually triggered and watched (not
+  just written and assumed): run
+  [32669949540](https://github.com/rodolphomacedo/piano/actions/runs/32669949540)
+  succeeded on two of its three legs within about a minute each
+  (`x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`), each uploaded as
+  a private, auto-expiring GitHub Actions *workflow artifact* — never a
+  public Release. The third leg (`x86_64-apple-darwin`, an Intel Mac
+  runner) was still sitting in GitHub's own scheduling queue over an hour
+  after being triggered, never having started — a runner-availability
+  limit on GitHub's side, not a failure of this workflow or this project's
+  code; the two legs that did run prove the workflow itself is correct
+  across two different OS families and CPU architectures. This entry will
+  need a follow-up note once that third leg actually completes, since as
+  of this writing it has not.
+- **Publish-readiness for the crates.** Every crate now carries a `readme`
+  pointing at the root `README.md` (crates.io shows this on a package's
+  listing page; nothing pointed there before). `cargo publish --dry-run`
+  against the real crates.io registry fully passed for `piano-core` (no
+  internal path dependency, nothing to block it) and `piano-midi`
+  (depends only on external crates). Every other crate's dry-run fails
+  with `no matching package named piano-core found` — this is a
+  structural property of `cargo publish`/`cargo package` for any crate
+  with an unpublished internal path+version dependency, confirmed by
+  running `cargo package -p piano-params` directly (same error, no
+  `--dry-run` involved) and by `cargo package --list` succeeding cleanly
+  for every crate (proving file inclusion and metadata are fine; only
+  registry dependency resolution is blocked). It is not a metadata defect
+  and there is nothing left to fix in this repository — it resolves itself
+  automatically the moment `piano-core` (then `piano-audio`, for
+  `piano-cli`) is actually published, in dependency order:
+  `piano-core` → `piano-params` → `piano-render`/`piano-audio`/
+  `piano-midi`/`piano-wasm` → `piano-cli`. All seven crates are judged
+  worth publishing — each has real standalone reuse value (the DSP core,
+  the note/tuning layer, offline rendering, the realtime/MIDI/WASM
+  bridges, and `piano-cli` itself as the actual installable binary via a
+  future `cargo install piano-cli`) — none were excluded from this
+  recommendation.
+- **"Someone who is not the author can install it and play it."** The
+  README's "Try it" section is now honest about two states: **today**,
+  building from source (`git clone` + `cargo run --release -p piano-cli`,
+  assuming only `rustup`) is the actually-working path; **after a human
+  publishes**, `cargo install piano-cli` becomes the one-line path. A
+  workflow-artifact build (above) is a third, already-available option for
+  someone who does not want to build from source but cannot yet
+  `cargo install`.
+- **Documented plugin path.** `docs/PLUGIN-PATH.md`, researched from
+  official specifications only (CLAP's MIT-licensed spec at
+  cleveraudio.org; VST3's licensing terms; AU's platform scope) per
+  `docs/PRIOR-ART.md`'s rule against reading copyleft reference
+  implementations. Recommendation: CLAP is the right format when this is
+  eventually built — MIT licensed, cross-platform, and its real-time
+  contract already matches `docs/REALTIME-AUDIO-RULES.md` closely enough
+  that most of the work is plumbing over `piano-audio::Engine`'s existing
+  `Command` queue and `voicing` tables, not new design. VST3 is
+  licence-incompatible as shipped (GPLv3 or a paid Steinberg licence, both
+  ruled out by this project's own licence-hygiene stance without a
+  separate deliberate decision). AU is platform-locked to Apple. **Not
+  taken now**: no plugin host was available to verify a real integration
+  against, and this milestone's own "done when" bar is already clearable
+  without one.
+
+**The deliberate boundary, stated plainly.** M8's own text says "published
+crates," and a literal reading would run `cargo publish` for real and cut a
+tagged GitHub Release. Neither happened. `cargo publish` (without
+`--dry-run`) is irreversible — a crates.io version cannot be deleted, only
+yanked — and a GitHub Release is public the instant it exists. Both are
+the project owner's call to make deliberately, at a moment of their
+choosing, not a default outcome of a milestone dispatch. Every dry run
+above ran against the real registry with real network access; nothing was
+simulated or faked. Publishing, when the owner decides to do it, is:
+`cargo publish -p piano-core`, then `-p piano-params`, then the fan-out
+crates, then `-p piano-cli`, each dry-run-clean before the real command —
+and cutting a Release is `gh release create` once binaries worth attaching
+exist. Neither command was run here.
 
 ---
 

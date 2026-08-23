@@ -227,6 +227,11 @@ cargo build -p piano-core --no-default-features             # no_std must keep b
 # in docs/PERFORMANCE.md:
 cargo bench -p piano-core                                    # per-component criterion benchmarks
 cargo test --release -p piano-audio -- --ignored --nocapture # whole-engine and p99.9 timing numbers
+
+# M8's packaging checks — also not part of `cargo test`, and never `cargo
+# publish` without `--dry-run` (see docs/ROADMAP.md's M8 entry):
+cargo publish --dry-run -p piano-core                         # verified clean against the real registry
+gh workflow run release-build.yml                              # builds all three platforms by hand
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -11,6 +11,11 @@
 % exhausts a TeX register pool that pgfcorearrows.code.tex needs, producing
 % a "Missing \endcsname inserted" error deep inside pgf itself.
 \usepackage[most]{tcolorbox}
+% pgfplots reuses the same pgf/tikz core tcolorbox already loaded above, so
+% it must stay in this same early block for the same register-pool reason.
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\usetikzlibrary{arrows.meta,positioning,calc}
 \usepackage[strings]{underscore}
 \usepackage{csquotes}
 \usepackage{tgpagella}      % body serif -- a Palatino-like humanist face
@@ -477,6 +482,92 @@ por trás disso (a \enquote{equação de onda}) mostra algo bonito: a vibração
 de uma corda pode sempre ser descrita como \textbf{duas ondas viajando em
 direções opostas}, quicando entre as duas pontas fixas.
 
+\section*{Por que não gravar um único ciclo e repeti-lo?}
+
+Antes de seguir, vale examinar de frente uma ideia alternativa, bem
+razoável à primeira vista: \enquote{por que não simplesmente calcular a
+forma de uma vibração completa da corda --- um ciclo já com todos os
+harmônicos embutidos --- e repetir esse mesmo pedacinho de onda sem parar,
+na taxa de amostragem, pelo tempo que a nota durar? Para a nota morrer,
+bastaria ir aplicando por cima um filtro que vai diminuindo o volume}.
+Essa técnica existe de verdade --- chama-se \emph{wavetable synthesis},
+\enquote{síntese por tabela de onda} --- e é usada por muitos instrumentos
+eletrônicos. Ela não é usada aqui, e a razão é reveladora sobre o que este
+projeto realmente simula.
+
+\subsection*{O problema: qual ciclo, exatamente, eu repito?}
+
+Para repetir \enquote{um ciclo com todos os harmônicos já embutidos}, é
+preciso primeiro \emph{saber} qual é esse ciclo --- sua forma exata já
+teria que estar pronta antes de começar. Mas o capítulo~8 mostra um fato
+central sobre como um piano de verdade soa: \textbf{o ciclo não é sempre o
+mesmo}. No instante em que o martelo bate, a onda é rica em harmônicos
+agudos (um formato \enquote{pontudo}, cheio de detalhe fino); alguns
+segundos depois, os agudos já morreram e sobrou uma onda bem mais
+\enquote{redonda}, próxima de um seno puro (capítulo~8 explica exatamente
+por quê). Repetir sempre o mesmo ciclo geraria um som estático, sem essa
+evolução --- e é exatamente por isso que um sintetizador \emph{wavetable}
+simples costuma soar \enquote{eletrônico} em vez de \enquote{de verdade}:
+ele reproduz uma foto congelada do timbre, não uma corda perdendo energia
+continuamente e de forma diferente em cada frequência.
+
+A saída óbvia seria: então calcule uma tabela de onda \emph{diferente}
+para cada instante da nota, já com o timbre certo daquele momento --- mas
+isso é, palavra por palavra, o problema inteiro que este projeto resolve.
+Seria preciso já conhecer a resposta (o som completo, evoluindo no tempo)
+antes de sintetizá-la.
+
+\subsection*{A saída: deixar a física calcular a evolução sozinha}
+
+A linha de atraso resolve isso invertendo o problema. Em vez de armazenar
+\emph{o resultado} (a onda já pronta, em qualquer instante), ela armazena
+\emph{o mecanismo físico} que produz esse resultado: uma perturbação que
+viaja, ida e volta, perdendo um pouquinho de agudo a cada volta
+(capítulo~8). O timbre evoluindo com o tempo --- pontudo no ataque,
+redondo no final --- não precisa ser calculado à parte, nem precisa já ser
+conhecido de antemão: ele \emph{emerge} sozinho, volta após volta, do
+mesmo laço simples repetido milhares de vezes por segundo. É a diferença
+entre gravar um filme inteiro do início ao fim e simular, quadro a quadro,
+as leis de física que o produziriam --- a segunda opção é mais barata, se
+generaliza sozinha para qualquer corda (grave, aguda, martelada fraca ou
+forte) sem gravar nada novo, e é fisicamente a coisa certa a fazer, porque
+é literalmente o que uma corda de verdade faz.
+
+\begin{center}
+\begin{tikzpicture}[
+  box/.style={draw, thick, rounded corners, minimum width=3.5cm,
+    minimum height=1.05cm, align=center, font=\small},
+  lbl/.style={font=\scriptsize, color=soft},
+  >=Latex
+]
+\node[box] (delay) {Linha de atraso\\($N$ amostras)};
+\node[box, right=2.8cm of delay] (filter)
+  {Filtro passa-baixa\\(\texttt{damping}, cap.~8)};
+
+\draw[->, thick, color=accent] (delay.east) -- (filter.west)
+  node[midway, above, lbl] {a cada amostra};
+\draw[->, thick, color=accent]
+  (filter.south) -- ++(0,-1.1) -| (delay.south)
+  node[pos=0.25, below, lbl] {realimentação: o que sai volta a entrar};
+\draw[->, thick]
+  ($(delay.north)+(-0.4,0)$) -- ++(0,1.0)
+  node[above, align=center, lbl]
+  {martelada (ruído)\\só no instante do ataque};
+\draw[->, thick]
+  (filter.north) -- ++(0,1.0)
+  node[above, lbl] {saída (o som)};
+\end{tikzpicture}
+\end{center}
+
+\begin{newword}
+\nova{O que este diagrama diz} Não existe, nessa figura, nenhum lugar onde
+o \enquote{formato da onda} esteja guardado por inteiro. Existe só um
+número circulando entre duas operações simples --- avançar na fila,
+perder um pouco de agudo --- repetidas milhões de vezes ao longo de uma
+nota. É essa repetição, não uma tabela pronta, que produz o som e a sua
+evolução no tempo.
+\end{newword}
+
 \section*{Transformando isso em código: a linha de atraso}
 
 Esse fato --- \enquote{é só uma onda indo e voltando} --- é ótimo porque
@@ -535,6 +626,88 @@ Repare que o número não deu exatamente 109 --- deu 109,1. Essa fração é
 importante, e o capítulo~9 explica por quê (e como o projeto lida com ela
 sem desafinar a nota).
 
+\section*{De onde vêm os harmônicos, na prática: nenhum é calculado
+separadamente}
+
+Vale parar aqui e responder uma pergunta que essa fila de espera levanta:
+os harmônicos do capítulo~5 --- a fundamental, o dobro, o triplo, e por aí
+em diante --- de onde eles saem, exatamente, no código? A resposta é a
+parte mais elegante da ideia inteira: \textbf{eles não são calculados um
+por um}. Não existe, em lugar nenhum de \texttt{piano\_core}, um laço do
+tipo \enquote{gere o harmônico 1, depois o harmônico 2, depois o harmônico
+3}.
+
+O que existe é só a fila de espera realimentando a si mesma, do jeito
+descrito acima. E uma fila de tamanho fixo realimentada assim tem, por
+pura matemática (nenhuma física adicional é necessária para chegar nesse
+resultado --- é uma propriedade de qualquer laço de atraso realimentado, o
+mesmo princípio por trás do que processamento de sinais chama de
+\enquote{filtro pente}, \emph{comb filter}), ressonância exatamente na
+frequência fundamental \emph{e em todos os seus múltiplos inteiros ao
+mesmo tempo} --- $2\times$, $3\times$, $4\times$, e assim sucessivamente,
+até o limite que a taxa de amostragem permite representar (capítulo~6).
+Excitar essa fila com ruído (capítulo~11) equivale a \enquote{cutucar}
+todas essas ressonâncias de uma vez; a fila devolve, sozinha, energia
+amplificada em cada uma delas, na proporção que a física de cada uma dita
+--- sem que nenhuma linha de código precise saber que o harmônico~7
+existe.
+
+\begin{newword}
+\nova{Por que isso importa} Esse é o motivo pelo qual este projeto não
+precisa --- e não usa --- uma técnica chamada \textbf{síntese aditiva},
+que soma manualmente um oscilador senoidal para cada harmônico desejado
+(um para a fundamental, outro para o dobro, outro para o triplo\ldots).
+Síntese aditiva é uma abordagem legítima, usada por muitos sintetizadores,
+mas é uma técnica \emph{diferente}: em vez de simular a física de uma
+corda, ela reconstrói o resultado sonoro \enquote{de fora para dentro},
+harmônico por harmônico, escolhido à mão. Este projeto simula a corda; os
+harmônicos são uma \emph{consequência} do modelo físico, não uma entrada
+dele.
+\end{newword}
+
+\subsection*{\enquote{Dá para eu escolher ter só 1 ou 4 harmônicos?}}
+
+Não, não do jeito que a pergunta sugere --- e vale explicar o porquê, em
+vez de simplesmente dizer não. Numa síntese aditiva, \enquote{quantos
+harmônicos} é literalmente um parâmetro: você soma quantos osciladores
+quiser. Neste projeto essa alavanca não existe porque a arquitetura é
+outra: os harmônicos não são \emph{itens de uma lista} que o código gera
+um a um e que poderiam, por isso, ser cortados de uma lista mais curta.
+Eles são \emph{o espectro de ressonância de uma fila de espera
+realimentada} --- e uma fila realimentada sempre ressoa no conjunto
+inteiro de múltiplos da fundamental, nunca só nos que alguém escolheu à
+mão, pela mesma razão física que uma corda de violão de verdade não deixa
+você \enquote{desligar} o terceiro harmônico sem desligar a corda inteira.
+
+O que existe, de verdade, são três alavancas que mudam \emph{quanto} sobra
+de cada harmônico, sem nunca eliminar um harmônico específico:
+
+\begin{itemize}
+\item \textbf{\texttt{damping}} (capítulo~8): quanto mais alto, mais
+depressa os harmônicos agudos morrem em relação ao grave --- levado ao
+extremo, a nota soa quase só como a fundamental depois de poucos
+milissegundos, mesmo que todos os harmônicos tenham sido excitados no
+ataque.
+\item \textbf{\texttt{inharmonicity}} (capítulo~10): desloca a
+\emph{posição} de cada harmônico (o capítulo~10 explica quanto), não a sua
+presença ou ausência.
+\item \textbf{a força da martelada} (capítulo~11, via
+\texttt{piano\_core::hammer::HammerConfig}): muda o \emph{equilíbrio
+espectral} da excitação inicial --- uma martelada mais dura acende os
+harmônicos agudos com mais energia relativa --- mas continua acendendo
+todos eles, nunca só um subconjunto escolhido.
+\end{itemize}
+
+Há também um limite físico embutido, não uma escolha do usuário: nenhum
+harmônico acima da metade da taxa de amostragem (o limite de Nyquist,
+capítulo~6) pode existir de jeito nenhum --- a 48\,000 amostras por
+segundo, o teto é 24\,000~Hz. Para A4 (440~Hz) isso deixa espaço para
+cerca de 54 múltiplos inteiros antes do teto; para A0 (27,5~Hz), quase
+870 --- embora, na prática, o filtro passa-baixa do capítulo~8 já tenha
+silenciado a esmagadora maioria deles bem antes de o ouvido humano (que
+também para de ouvir por volta de 20\,000~Hz) ter qualquer chance de
+notar.
+
 \section*{O resto do laço}
 
 Uma fila sozinha, recirculando um número para sempre, tocaria a nota
@@ -578,9 +751,7 @@ A solução do projeto: dentro da fila de espera (a linha de atraso do
 capítulo~7), antes do número voltar a circular, ele passa por um filtro
 passa-baixa simples --- implementado como \texttt{filter::OnePoleLowpass}
 no código --- que reduz um pouquinho a \enquote{agudeza} do número a cada
-volta. Feito isso milhares de vezes por segundo, o resultado acumulado é
-exatamente o comportamento real: brilhante no início, cada vez mais opaco,
-até silêncio.
+volta.
 
 \begin{newword}
 \nova{\enquote{Um polo} (\emph{one-pole})} A versão mais simples possível
@@ -591,8 +762,150 @@ já é suficiente para capturar o comportamento essencial de \enquote{agudos
 morrem mais rápido que graves} que uma corda de verdade exibe.
 \end{newword}
 
-O tanto de energia que se perde a cada volta é controlado, no código, por
-um parâmetro chamado \texttt{damping}.
+\section*{O que o filtro realmente faz, amostra a amostra}
+
+Concretamente, o filtro guarda um único número --- sua própria saída na
+amostra anterior --- e, a cada amostra nova, mistura um pouco do valor que
+acabou de chegar com um pouco do que ele já tinha:
+
+\[
+\text{saída}_i = (1 - a)\cdot\text{entrada}_i + a\cdot\text{saída}_{i-1}
+\]
+
+O número $a$ (entre 0 e 1, mais perto de 1 quanto maior o
+\texttt{damping}) é o quanto o filtro \enquote{gruda} no valor anterior.
+Se $a$ fosse 0, o filtro copiaria a entrada sem mudar nada; se $a$ fosse
+quase 1, a saída mal se move de uma amostra para a outra --- o que, num
+sinal que sobe e desce rapidamente (um agudo), apaga quase todo o
+movimento, e num sinal que sobe e desce devagar (um grave), deixa passar
+quase tudo. É essa única linha de matemática, repetida amostra a amostra,
+que produz o comportamento \enquote{deixa passar grave, apaga agudo}
+descrito acima.
+
+O gráfico abaixo mostra exatamente isso: quanto do volume original de cada
+frequência sobra depois de passar pelo filtro \textbf{uma única vez}, para
+um valor de $a$ típico.
+
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[
+  width=11cm, height=6.2cm,
+  xlabel={Frequência (grave~$\to$~agudo, cap.~6)},
+  ylabel={Fração do volume que sobra},
+  xmin=0, xmax=1, ymin=0, ymax=1.05,
+  domain=0:1, samples=200,
+  no markers, thick,
+  axis lines=left,
+  xtick={0,1}, xticklabels={grave,agudo},
+  ytick={0,0.5,1},
+  axis line style={color=soft},
+  tick label style={font=\scriptsize, color=soft},
+  label style={font=\small},
+]
+\addplot[color=accent, thick]
+  {(1-0.7)/sqrt(1 - 2*0.7*cos(deg(x*pi)) + 0.7*0.7)};
+\end{axis}
+\end{tikzpicture}
+\end{center}
+
+\begin{newword}
+\nova{Como ler este gráfico} Perto de \enquote{grave} (esquerda), a curva
+está em~1: o filtro deixa passar praticamente 100\,\% do volume. Perto de
+\enquote{agudo} (direita), a curva cai para perto de zero: o filtro apaga
+quase tudo. Isso é o efeito de \textbf{uma única passagem} --- pouco
+dramático sozinho. O que faz toda a diferença é repetir essa mesma
+passagem milhares de vezes por segundo, uma a cada volta da fila de
+espera --- é isso que a próxima seção detalha.
+\end{newword}
+
+\section*{\enquote{É a cada segundo que ele aplica o \texttt{damping}?}}
+
+Esta é a confusão mais comum ao pensar nesse mecanismo pela primeira vez,
+então vale ser bem explícito: \textbf{o filtro roda em toda e qualquer
+amostra}, sempre --- 48\,000 vezes por segundo, para qualquer nota, grave
+ou aguda, sem exceção nenhuma. Ele não \enquote{espera um segundo} para
+agir, nem age uma vez por nota: ele age em cada uma das 48\,000 amostras
+que o computador calcula a cada segundo (capítulo~6).
+
+O que muda de nota para nota é \textbf{quantas voltas completas} o sinal
+dá na fila (capítulo~7) dentro de 1 segundo --- e cada volta completa
+passa pelo filtro exatamente uma vez, porque o filtro fica dentro do laço,
+não fora dele. Uma volta completa é, por definição, um ciclo da nota
+(capítulo~3), então:
+
+\[
+\text{voltas por segundo} = \text{frequência da nota}
+\]
+
+Uma corda de A4 (440~Hz) dá 440 voltas completas por segundo --- passa
+pelo filtro 440 vezes por segundo. Uma corda de A0 (27,5~Hz) dá só 27,5
+voltas por segundo --- passa pelo filtro 27,5 vezes por segundo,
+\textbf{dezesseis vezes menos frequentemente que A4}, mesmo com o
+\emph{mesmo} \texttt{damping}. Essa diferença --- não uma diferença física
+maior no metal da corda --- é a razão principal pela qual cordas graves
+soam por dezenas de segundos e cordas agudas por 1 ou 2: a corda grave não
+perde menos energia por volta, ela só dá muito menos voltas por segundo,
+então a mesma perda por volta demora muito mais tempo para se acumular.
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+Nota & Frequência & Passagens pelo filtro / segundo & Decaimento típico \\
+\midrule
+A0 (grave) & 27,5~Hz & 27,5 & 30--40~s \\
+A4 (médio) & 440~Hz & 440 & 8--15~s \\
+C8 (agudo) & 4186~Hz & 4186 & 1--2~s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{newword}
+\nova{Honestidade sobre a tabela} Os decaimentos típicos não vêm só das
+voltas por segundo --- \texttt{damping} e \texttt{sustain} também variam
+um pouco por registro no código, calibrados para casar com a tabela
+medida em \texttt{docs/PHYSICS.md}. O ponto central continua de pé: a
+\emph{mesma} perda por volta produz decaimentos muito diferentes conforme
+a nota, só porque o número de voltas por segundo já é, sozinho, muito
+diferente.
+\end{newword}
+
+O resultado acumulado --- milhares (ou dezenas de milhares) de pequenas
+perdas de agudo, uma a cada volta, repetidas pelo tempo que a nota durar
+--- é uma curva de queda de volume aproximadamente exponencial: ela nunca
+\enquote{zera de repente}, cai bastante nos primeiros instantes em termos
+absolutos e cada vez mais devagar depois. O gráfico abaixo mostra essa
+curva para as três notas da tabela acima, cada uma no seu próprio ritmo de
+voltas por segundo.
+
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[
+  width=11cm, height=6.2cm,
+  xlabel={Tempo (segundos)},
+  ylabel={Volume (proporção do ataque)},
+  xmin=0, xmax=40, ymin=0, ymax=1.02,
+  domain=0:40, samples=200,
+  no markers, thick,
+  axis lines=left,
+  axis line style={color=soft},
+  tick label style={font=\scriptsize, color=soft},
+  label style={font=\small},
+  legend style={font=\scriptsize, draw=none, fill=none},
+  legend pos=north east,
+]
+\addplot[color=accent, thick] {exp(-x/12)};
+\addlegendentry{A0 --- grave (27,5 voltas/s)}
+\addplot[color=ink, thick] {exp(-x/3.2)};
+\addlegendentry{A4 --- médio (440 voltas/s)}
+\addplot[color=soft, thick] {exp(-x/0.55)};
+\addlegendentry{C8 --- agudo (4186 voltas/s)}
+\end{axis}
+\end{tikzpicture}
+\end{center}
+
+O tanto de energia que se perde a cada volta --- o valor de $a$ da fórmula
+acima --- é controlado, no código, por um parâmetro chamado
+\texttt{damping}.
 
 \begin{newword}
 \nova{Amortecimento} (\emph{damping}) O quanto de energia uma corda perde

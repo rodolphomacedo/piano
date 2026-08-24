@@ -288,6 +288,74 @@ que você ouve como uma nota musical. A física formal por trás disso (a
 ser descrita como **duas ondas viajando em direções opostas**, quicando entre
 as duas pontas fixas.
 
+### Por que não gravar um único ciclo e repeti-lo?
+
+Antes de seguir, vale examinar de frente uma ideia alternativa, bem
+razoável à primeira vista: "por que não simplesmente calcular a forma de
+uma vibração completa da corda — um ciclo já com todos os harmônicos
+embutidos — e repetir esse mesmo pedacinho de onda sem parar, na taxa de
+amostragem, pelo tempo que a nota durar? Para a nota morrer, bastaria ir
+aplicando por cima um filtro que vai diminuindo o volume". Essa técnica
+existe de verdade — chama-se *wavetable synthesis*, "síntese por tabela de
+onda" — e é usada por muitos instrumentos eletrônicos. Ela não é usada
+aqui, e a razão é reveladora sobre o que este projeto realmente simula.
+
+**O problema: qual ciclo, exatamente, eu repito?** Para repetir "um ciclo
+com todos os harmônicos já embutidos", é preciso primeiro *saber* qual é
+esse ciclo — sua forma exata já teria que estar pronta antes de começar.
+Mas o capítulo 8 mostra um fato central sobre como um piano de verdade
+soa: **o ciclo não é sempre o mesmo**. No instante em que o martelo bate,
+a onda é rica em harmônicos agudos (um formato "pontudo", cheio de detalhe
+fino); alguns segundos depois, os agudos já morreram e sobrou uma onda bem
+mais "redonda", próxima de um seno puro (o capítulo 8 explica exatamente
+por quê). Repetir sempre o mesmo ciclo geraria um som estático, sem essa
+evolução — e é exatamente por isso que um sintetizador *wavetable* simples
+costuma soar "eletrônico" em vez de "de verdade": ele reproduz uma foto
+congelada do timbre, não uma corda perdendo energia continuamente e de
+forma diferente em cada frequência.
+
+A saída óbvia seria: então calcule uma tabela de onda *diferente* para
+cada instante da nota, já com o timbre certo daquele momento — mas isso é,
+palavra por palavra, o problema inteiro que este projeto resolve. Seria
+preciso já conhecer a resposta (o som completo, evoluindo no tempo) antes
+de sintetizá-la.
+
+**A saída: deixar a física calcular a evolução sozinha.** A linha de
+atraso resolve isso invertendo o problema. Em vez de armazenar *o
+resultado* (a onda já pronta, em qualquer instante), ela armazena *o
+mecanismo físico* que produz esse resultado: uma perturbação que viaja,
+ida e volta, perdendo um pouquinho de agudo a cada volta (capítulo 8). O
+timbre evoluindo com o tempo — pontudo no ataque, redondo no final — não
+precisa ser calculado à parte, nem precisa já ser conhecido de antemão:
+ele *emerge* sozinho, volta após volta, do mesmo laço simples repetido
+milhares de vezes por segundo. É a diferença entre gravar um filme inteiro
+do início ao fim e simular, quadro a quadro, as leis de física que o
+produziriam — a segunda opção é mais barata, se generaliza sozinha para
+qualquer corda (grave, aguda, martelada fraca ou forte) sem gravar nada
+novo, e é fisicamente a coisa certa a fazer, porque é literalmente o que
+uma corda de verdade faz.
+
+```
+   martelada (ruído,           saída
+   só no ataque)                (som)
+        │                         ▲
+        ▼                         │
+  ┌───────────────┐   a cada   ┌──────────────────────┐
+  │ linha de atraso │ ────────▶ │ filtro passa-baixa    │
+  │  (N amostras)   │  amostra  │  (damping, cap. 8)    │
+  └───────────────┘            └──────────────────────┘
+        ▲                                 │
+        └──────── realimentação ──────────┘
+          (o que sai volta a entrar)
+```
+
+> 📖 **O que este diagrama diz:** não existe, nele, nenhum lugar onde o
+> "formato da onda" esteja guardado por inteiro. Existe só um número
+> circulando entre duas operações simples — avançar na fila, perder um
+> pouco de agudo — repetidas milhões de vezes ao longo de uma nota. É essa
+> repetição, não uma tabela pronta, que produz o som e a sua evolução no
+> tempo.
+
 ### Transformando isso em código: a linha de atraso
 
 Esse fato — "é só uma onda indo e voltando" — é ótimo porque uma "onda indo
@@ -341,6 +409,76 @@ Repare que o número não deu exatamente 109 — deu 109,1. Essa fração é
 importante, e o capítulo 9 explica por quê (e como o projeto lida com ela
 sem desafinar a nota).
 
+### De onde vêm os harmônicos, na prática: nenhum é calculado separadamente
+
+Vale parar aqui e responder uma pergunta que essa fila de espera levanta: os
+harmônicos do capítulo 5 — a fundamental, o dobro, o triplo, e por aí em
+diante — de onde eles saem, exatamente, no código? A resposta é a parte mais
+elegante da ideia inteira: **eles não são calculados um por um**. Não existe,
+em lugar nenhum de `piano_core`, um laço do tipo "gere o harmônico 1, depois
+o harmônico 2, depois o harmônico 3".
+
+O que existe é só a fila de espera realimentando a si mesma, do jeito
+descrito acima. E uma fila de tamanho fixo realimentada assim tem, por pura
+matemática (nenhuma física adicional é necessária para chegar nesse
+resultado — é uma propriedade de qualquer laço de atraso realimentado, o
+mesmo princípio por trás do que processamento de sinais chama de "filtro
+pente", *comb filter*), ressonância exatamente na frequência fundamental *e
+em todos os seus múltiplos inteiros ao mesmo tempo* — 2×, 3×, 4×, e assim
+sucessivamente, até o limite que a taxa de amostragem permite representar
+(capítulo 6). Excitar essa fila com ruído (capítulo 11) equivale a "cutucar"
+todas essas ressonâncias de uma vez; a fila devolve, sozinha, energia
+amplificada em cada uma delas, na proporção que a física de cada uma dita —
+sem que nenhuma linha de código precise saber que o harmônico 7 existe.
+
+> 📖 **Por que isso importa:** esse é o motivo pelo qual este projeto não
+> precisa — e não usa — uma técnica chamada **síntese aditiva**, que soma
+> manualmente um oscilador senoidal para cada harmônico desejado (um para a
+> fundamental, outro para o dobro, outro para o triplo…). Síntese aditiva é
+> uma abordagem legítima, usada por muitos sintetizadores, mas é uma técnica
+> *diferente*: em vez de simular a física de uma corda, ela reconstrói o
+> resultado sonoro "de fora para dentro", harmônico por harmônico, escolhido
+> à mão. Este projeto simula a corda; os harmônicos são uma *consequência*
+> do modelo físico, não uma entrada dele.
+
+#### "Dá para eu escolher ter só 1 ou 4 harmônicos?"
+
+Não, não do jeito que a pergunta sugere — e vale explicar o porquê, em vez
+de simplesmente dizer não. Numa síntese aditiva, "quantos harmônicos" é
+literalmente um parâmetro: você soma quantos osciladores quiser. Neste
+projeto essa alavanca não existe porque a arquitetura é outra: os harmônicos
+não são *itens de uma lista* que o código gera um a um e que poderiam, por
+isso, ser cortados de uma lista mais curta. Eles são *o espectro de
+ressonância de uma fila de espera realimentada* — e uma fila realimentada
+sempre ressoa no conjunto inteiro de múltiplos da fundamental, nunca só nos
+que alguém escolheu à mão, pela mesma razão física que uma corda de violão
+de verdade não deixa você "desligar" o terceiro harmônico sem desligar a
+corda inteira.
+
+O que existe, de verdade, são três alavancas que mudam *quanto* sobra de
+cada harmônico, sem nunca eliminar um harmônico específico:
+
+- **`damping`** (capítulo 8): quanto mais alto, mais depressa os harmônicos
+  agudos morrem em relação ao grave — levado ao extremo, a nota soa quase só
+  como a fundamental depois de poucos milissegundos, mesmo que todos os
+  harmônicos tenham sido excitados no ataque.
+- **`inharmonicity`** (capítulo 10): desloca a *posição* de cada harmônico
+  (o capítulo 10 explica quanto), não a sua presença ou ausência.
+- **a força da martelada** (capítulo 11, via
+  `piano_core::hammer::HammerConfig`): muda o *equilíbrio espectral* da
+  excitação inicial — uma martelada mais dura acende os harmônicos agudos
+  com mais energia relativa — mas continua acendendo todos eles, nunca só um
+  subconjunto escolhido.
+
+Há também um limite físico embutido, não uma escolha do usuário: nenhum
+harmônico acima da metade da taxa de amostragem (o limite de Nyquist,
+capítulo 6) pode existir de jeito nenhum — a 48.000 amostras por segundo, o
+teto é 24.000 Hz. Para A4 (440 Hz) isso deixa espaço para cerca de 54
+múltiplos inteiros antes do teto; para A0 (27,5 Hz), quase 870 — embora, na
+prática, o filtro passa-baixa do capítulo 8 já tenha silenciado a
+esmagadora maioria deles bem antes de o ouvido humano (que também para de
+ouvir por volta de 20.000 Hz) ter qualquer chance de notar.
+
 ### O resto do laço
 
 Uma fila sozinha, recirculando um número para sempre, tocaria a nota **para
@@ -379,9 +517,7 @@ agudos vão embora primeiro, sobra só o fundamental por último.
 A solução do projeto: dentro da fila de espera (a linha de atraso do
 capítulo 7), antes do número voltar a circular, ele passa por um filtro
 passa-baixa simples — implementado como `filter::OnePoleLowpass` no código
-— que reduz um pouquinho a "agudeza" do número a cada volta. Feito isso
-milhares de vezes por segundo, o resultado acumulado é exatamente o
-comportamento real: brilhante no início, cada vez mais opaco, até silêncio.
+— que reduz um pouquinho a "agudeza" do número a cada volta.
 
 > 📖 **"Um polo" (*one-pole*):** a versão mais simples possível de um
 > filtro — precisa de só uma multiplicação e uma soma por amostra para
@@ -390,13 +526,102 @@ comportamento real: brilhante no início, cada vez mais opaco, até silêncio.
 > suficiente para capturar o comportamento essencial de "agudos morrem mais
 > rápido que graves" que uma corda de verdade exibe.
 
-O tanto de energia que se perde a cada volta é controlado, no código, por um
-parâmetro chamado `damping` (📖 **Amortecimento** [*damping*]: o quanto de
-energia uma corda perde por unidade de tempo; mais amortecimento = a nota
-morre mais rápido). É esse número — junto de um segundo parâmetro, `sustain`
-— que faz uma corda grave soar por 30 a 40 segundos e uma corda aguda por
-apenas 1 a 2 segundos, exatamente como num piano de verdade (veja a tabela
-no capítulo 10).
+### O que o filtro realmente faz, amostra a amostra
+
+Concretamente, o filtro guarda um único número — sua própria saída na
+amostra anterior — e, a cada amostra nova, mistura um pouco do valor que
+acabou de chegar com um pouco do que ele já tinha:
+
+```
+saída[i] = (1 - a) · entrada[i] + a · saída[i-1]
+```
+
+O número `a` (entre 0 e 1, mais perto de 1 quanto maior o `damping`) é o
+quanto o filtro "gruda" no valor anterior. Se `a` fosse 0, o filtro
+copiaria a entrada sem mudar nada; se `a` fosse quase 1, a saída mal se
+move de uma amostra para a outra — o que, num sinal que sobe e desce
+rapidamente (um agudo), apaga quase todo o movimento, e num sinal que sobe
+e desce devagar (um grave), deixa passar quase tudo. É essa única linha de
+matemática, repetida amostra a amostra, que produz o comportamento "deixa
+passar grave, apaga agudo" descrito acima.
+
+A tabela abaixo mostra, para um `a` típico, quanto do volume original de
+cada faixa de frequência sobra depois de passar pelo filtro **uma única
+vez** (o PDF traz a curva contínua correspondente; aqui, alguns pontos
+dela):
+
+| Frequência (fração do agudo máximo, capítulo 6) | Fração do volume que sobra numa passagem |
+|---|---|
+| 0 % (bem grave) | ~100 % |
+| 25 % | ~85 % |
+| 50 % | ~55 % |
+| 75 % | ~25 % |
+| 100 % (bem agudo) | ~10 % |
+
+O efeito de uma única passagem é pequeno na ponta grave e forte na ponta
+aguda, mas ainda modesto sozinho. O que faz toda a diferença é repetir
+essa mesma passagem milhares de vezes por segundo, uma a cada volta da
+fila de espera — é isso que a próxima seção detalha.
+
+### "É a cada segundo que ele aplica o `damping`?"
+
+Esta é a confusão mais comum ao pensar nesse mecanismo pela primeira vez,
+então vale ser bem explícito: **o filtro roda em toda e qualquer amostra**,
+sempre — 48.000 vezes por segundo, para qualquer nota, grave ou aguda, sem
+exceção nenhuma. Ele não "espera um segundo" para agir, nem age uma vez
+por nota: ele age em cada uma das 48.000 amostras que o computador calcula
+a cada segundo (capítulo 6).
+
+O que muda de nota para nota é **quantas voltas completas** o sinal dá na
+fila (capítulo 7) dentro de 1 segundo — e cada volta completa passa pelo
+filtro exatamente uma vez, porque o filtro fica dentro do laço, não fora
+dele. Uma volta completa é, por definição, um ciclo da nota (capítulo 3),
+então:
+
+```
+voltas por segundo = frequência da nota
+```
+
+Uma corda de A4 (440 Hz) dá 440 voltas completas por segundo — passa pelo
+filtro 440 vezes por segundo. Uma corda de A0 (27,5 Hz) dá só 27,5 voltas
+por segundo — passa pelo filtro 27,5 vezes por segundo, **dezesseis vezes
+menos frequentemente que A4**, mesmo com o *mesmo* `damping`. Essa
+diferença — não uma diferença física maior no metal da corda — é a razão
+principal pela qual cordas graves soam por dezenas de segundos e cordas
+agudas por 1 ou 2: a corda grave não perde menos energia por volta, ela só
+dá muito menos voltas por segundo, então a mesma perda por volta demora
+muito mais tempo para se acumular.
+
+| Nota | Frequência | Passagens pelo filtro / segundo | Decaimento típico |
+|---|---|---|---|
+| A0 (grave) | 27,5 Hz | 27,5 | 30–40 s |
+| A4 (médio) | 440 Hz | 440 | 8–15 s |
+| C8 (agudo) | 4186 Hz | 4186 | 1–2 s |
+
+> 📖 **Honestidade sobre a tabela:** os decaimentos típicos não vêm só das
+> voltas por segundo — `damping` e `sustain` também variam um pouco por
+> registro no código, calibrados para casar com a tabela medida em
+> `docs/PHYSICS.md`. O ponto central continua de pé: a *mesma* perda por
+> volta produz decaimentos muito diferentes conforme a nota, só porque o
+> número de voltas por segundo já é, sozinho, muito diferente.
+
+O resultado acumulado — milhares (ou dezenas de milhares) de pequenas
+perdas de agudo, uma a cada volta, repetidas pelo tempo que a nota durar —
+é uma curva de queda de volume aproximadamente exponencial: ela nunca
+"zera de repente", cai bastante nos primeiros instantes em termos
+absolutos e cada vez mais devagar depois. O PDF mostra essa curva
+sobreposta para as três notas da tabela; em palavras, o formato é: A0 leva
+cerca de 12 s para cair a ~37 % do volume do ataque, A4 leva cerca de
+3,2 s para o mesmo ponto, e C8 leva cerca de 0,55 s — cada uma na sua
+própria escala de tempo, mas seguindo exatamente a mesma curva.
+
+O tanto de energia que se perde a cada volta — o valor de `a` da fórmula
+acima — é controlado, no código, por um parâmetro chamado `damping`
+(📖 **Amortecimento** [*damping*]: o quanto de energia uma corda perde por
+unidade de tempo; mais amortecimento = a nota morre mais rápido). É esse
+número — junto de um segundo parâmetro, `sustain` — que faz uma corda
+grave soar por 30 a 40 segundos e uma corda aguda por apenas 1 a 2
+segundos, exatamente como num piano de verdade.
 
 ---
 

@@ -2,6 +2,8 @@
 
 A physically modelled piano synthesiser in Rust.
 
+Development sponsored by [Grabatus Labs](https://grabatus.com).
+
 Not a sampler. There are no recordings of a piano anywhere in this repository
 — every sound is *computed*, sample by sample, from a simulation of what a
 real steel string does when a felt hammer strikes it. See ["What is this,

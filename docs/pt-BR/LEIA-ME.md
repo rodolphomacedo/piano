@@ -1,5 +1,7 @@
 # Piano — guia completo em português
 
+Desenvolvimento patrocinado pela [Grabatus Labs](https://grabatus.com).
+
 Este é o ponto de partida em português para todo o projeto: o que ele é, por
 que existe, como instalar, e como usar cada uma das formas de tocar. Os
 outros arquivos em `docs/pt-BR/` (`M5-como-usar.md`, `M6-como-usar.md`, etc.)

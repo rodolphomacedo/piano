@@ -1,0 +1,1220 @@
+\documentclass[11pt,oneside]{book}
+
+% ---------------------------------------------------------------------------
+% Fonts and language
+% ---------------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[main=brazil]{babel}
+% tcolorbox (and its pgf/tikz dependency) must load early, right after
+% babel -- loading it after several other packages under the `book` class
+% exhausts a TeX register pool that pgfcorearrows.code.tex needs, producing
+% a "Missing \endcsname inserted" error deep inside pgf itself.
+\usepackage[most]{tcolorbox}
+\usepackage[strings]{underscore}
+\usepackage{csquotes}
+\usepackage{tgpagella}      % body serif -- a Palatino-like humanist face
+\usepackage{tgheros}        % sans, used only for numerals and labels
+\usepackage{tgcursor}       % mono, used only for code identifiers
+\usepackage{amsmath}
+\usepackage{microtype}
+\frenchspacing
+
+% ---------------------------------------------------------------------------
+% Page geometry
+% ---------------------------------------------------------------------------
+\usepackage{geometry}
+\geometry{a4paper,margin=2.8cm,bindingoffset=0mm}
+
+% ---------------------------------------------------------------------------
+% Colour palette -- warm, quiet, matches the instrument's own wood tones
+% ---------------------------------------------------------------------------
+\usepackage{xcolor}
+\definecolor{ink}{HTML}{1B1B1B}
+\definecolor{accent}{HTML}{9C5330}
+\definecolor{rulecol}{HTML}{D8CFC4}
+\definecolor{soft}{HTML}{6B6B6B}
+
+% ---------------------------------------------------------------------------
+% Lists, tables, boxes, drop caps
+% ---------------------------------------------------------------------------
+\usepackage{enumitem}
+\setlist{itemsep=3pt,topsep=5pt,parsep=0pt}
+\renewcommand\labelitemi{\color{accent}\textbullet}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{lettrine}
+\setlength{\DefaultFindent}{2pt}
+
+% ---------------------------------------------------------------------------
+% Headers, footers
+% ---------------------------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[C]{\small\sffamily\color{soft}\nouppercase{\leftmark}}
+\fancyfoot[C]{\small\color{soft}\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\chaptermark}[1]{\markboth{#1}{}}
+\fancypagestyle{plain}{%
+  \fancyhf{}
+  \fancyfoot[C]{\small\color{soft}\thepage}
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+% ---------------------------------------------------------------------------
+% Chapter and section titles -- quiet numeral, then the title, then a
+% hairline rule. Nothing else fights for attention on the page.
+% ---------------------------------------------------------------------------
+\usepackage{titlesec}
+
+\titleformat{\chapter}[display]
+  {\normalfont}
+  {\sffamily\color{accent}\Large\thechapter}
+  {6pt}
+  {\raggedright\huge\bfseries\color{ink}}
+  [\vspace{6pt}{\color{rulecol}\titlerule}\vspace{20pt}]
+\titlespacing*{\chapter}{0pt}{0pt}{10pt}
+
+\titleformat{name=\chapter,numberless}[display]
+  {\normalfont}
+  {}
+  {0pt}
+  {\raggedright\huge\bfseries\color{ink}}
+  [\vspace{6pt}{\color{rulecol}\titlerule}\vspace{20pt}]
+
+\titleformat{\section}
+  {\normalfont\sffamily\bfseries\color{ink}\large}{\thesection}{8pt}{}
+\titlespacing*{\section}{0pt}{22pt}{8pt}
+
+\titleformat{\subsection}
+  {\normalfont\sffamily\bfseries\color{ink}}{}{0pt}{}
+\titlespacing*{\subsection}{0pt}{16pt}{6pt}
+
+% ---------------------------------------------------------------------------
+% Links
+% ---------------------------------------------------------------------------
+\usepackage[colorlinks=true,linkcolor=accent,urlcolor=accent,citecolor=accent,
+  bookmarksopen=true,pdfstartview=Fit]{hyperref}
+
+% ---------------------------------------------------------------------------
+% The "new word" box -- a single quiet visual device, reused for every
+% definition and every honesty note, deliberately not decorated further.
+% ---------------------------------------------------------------------------
+\newtcolorbox{newword}{
+  colback=white, colframe=accent, boxrule=0pt, leftrule=1.1pt,
+  arc=0pt, outer arc=0pt,
+  left=12pt, right=8pt, top=7pt, bottom=7pt,
+  before skip=12pt, after skip=12pt,
+  fontupper=\small
+}
+\newcommand{\nova}[1]{\textsc{\color{accent}#1.}~}
+
+% Drop-cap helper, used once per chapter opening
+\newcommand{\opening}[2]{\lettrine[lines=2,loversize=0.08,lraise=0.02]{#1}{#2}}
+
+\newcommand{\crate}[1]{\texttt{\small #1}}
+
+\title{Como este piano funciona}
+\author{}
+\date{}
+
+\begin{document}
+
+% =============================================================================
+\frontmatter
+\pagestyle{empty}
+
+% -- Title page --------------------------------------------------------------
+\begin{titlepage}
+\centering
+\vspace*{5cm}
+{\sffamily\color{soft}\small\MakeUppercase{Uma aula completa, sem pré-requisitos}}\\[1.2cm]
+{\sffamily\bfseries\color{ink}\Huge Como este piano\\[2pt]funciona}\\[0.9cm]
+{\color{rulecol}\rule{5cm}{0.6pt}}\\[0.9cm]
+{\itshape\color{soft}\large A física e a matemática por trás de cada nota,\\
+explicadas do zero, em português.}
+\vfill
+{\sffamily\small\color{soft}Desenvolvimento patrocinado pela \href{https://grabatus.com}{Grabatus Labs}}\\[4pt]
+{\sffamily\footnotesize\color{soft}\MakeUppercase{piano --- um sintetizador de piano fisicamente modelado, em Rust}}
+\vspace*{1.5cm}
+\end{titlepage}
+
+% -- Colophon ------------------------------------------------------------
+\thispagestyle{empty}
+\vspace*{2cm}
+\noindent{\small\color{soft}
+\textsc{Como este piano funciona} é a versão didática, sem pré-requisitos,
+da documentação técnica do projeto \emph{piano} --- um sintetizador de piano
+fisicamente modelado, escrito em Rust, sem nenhuma amostra ou gravação de
+áudio real em nenhum lugar do código.
+
+\vspace{8pt}
+O código-fonte, a documentação técnica completa (em inglês) e este mesmo
+documento em Markdown estão publicados abertamente em
+\url{https://github.com/rodolphomacedo/piano}, sob licença MIT ou
+Apache-2.0, à escolha de quem usar.
+
+\vspace{8pt}
+Desenvolvimento patrocinado pela Grabatus Labs --- \url{https://grabatus.com}.
+
+\vspace{8pt}
+Tipografado com \LaTeX{} (motor Tectonic), nas famílias TeX Gyre Pagella,
+TeX Gyre Heros e TeX Gyre Cursor.
+}
+
+% -- Before we begin ----------------------------------------------------
+\chapter*{Antes de começar}
+\addcontentsline{toc}{chapter}{Antes de começar}
+\thispagestyle{plain}
+
+\noindent\textbf{Para quem é este documento?} Para qualquer pessoa ---
+inclusive quem nunca estudou física, música ou programação. Vamos construir
+cada ideia do zero, devagar, com exemplos do dia a dia antes de qualquer
+fórmula. Se em algum momento aparecer uma palavra nova (de música, física ou
+matemática), ela é explicada \emph{antes} de ser usada, com uma caixa como
+esta:
+
+\begin{newword}
+\nova{Palavra nova} Explicação simples, com exemplo.
+\end{newword}
+
+\noindent Não existe pré-requisito. Se você conseguiu ler até aqui, consegue
+ler o documento inteiro.
+
+\tableofcontents
+
+% =============================================================================
+\mainmatter
+\pagestyle{fancy}
+
+% =============================================================================
+\chapter{O que este projeto realmente faz}
+
+\opening{E}{xistem} dois jeitos completamente diferentes de fazer um
+\enquote{piano digital} tocar uma nota.
+
+\textbf{Jeito 1 --- gravar e reproduzir.} Alguém senta em um piano de
+verdade, grava cada tecla sendo tocada em vários volumes diferentes, e
+guarda milhares de arquivos de áudio. Quando você aperta uma tecla no
+teclado digital, ele simplesmente \emph{toca de volta} a gravação certa. É
+assim que a imensa maioria dos pianos digitais, teclados e aplicativos de
+celular funciona --- isso se chama \emph{sampler}.
+
+\begin{newword}
+\nova{Sampler} Um instrumento que reproduz gravações prontas em vez de
+calcular o som.
+\end{newword}
+
+Funciona bem, mas tem um problema conceitual: o piano nunca está
+\enquote{tocando} de verdade, ele está apenas apertando o \enquote{play} numa
+gravação antiga.
+
+\textbf{Jeito 2 --- calcular a física.} É o que este projeto faz. Dentro do
+código não existe nenhum arquivo de áudio, nenhuma gravação, nenhum
+\enquote{play}. Existe uma simulação matemática de como uma corda de piano de
+verdade se comporta: como ela vibra quando é golpeada, como perde energia
+com o tempo, como duas ou três cordas da mesma tecla interagem, como a caixa
+de madeira do piano colore o som. Cada vez que você aperta uma tecla, o
+programa \textbf{calcula}, do zero, amostra por amostra, 48 mil vezes a cada
+segundo, o que uma corda de piano de verdade faria fisicamente. Isso se
+chama \emph{modelagem física}.
+
+\begin{newword}
+\nova{Modelagem física} (\emph{physical modelling}, em inglês) Descrever um
+objeto do mundo real --- aqui, uma corda de piano --- como um conjunto de
+equações, e resolver essas equações em tempo real para produzir o
+comportamento do objeto, em vez de gravar o objeto.
+\end{newword}
+
+Essa é a razão de existir de todo este documento: explicar, devagar e com
+exemplos, \textbf{como é possível calcular o som de uma corda de piano em
+tempo real}, e \textbf{quais pedacinhos da física real} este projeto já
+modelou (e quais ainda faltam).
+
+Nada aqui é segredo ou \enquote{mágica de IA}. É física do século XIX e XX
+(a mesma que rege cordas de violão, o balanço de um parquinho e as ondas do
+mar), descrita como fórmulas, e as fórmulas transformadas em código Rust que
+roda rápido o suficiente para acontecer ao vivo.
+
+% =============================================================================
+\chapter{O que é som, afinal}
+
+\opening{A}{ntes} de falar de piano, precisamos entender o que é som ---
+porque tudo o que vem depois é, no fundo, sobre como \emph{fabricar} som a
+partir de números.
+
+Bata palmas. O que aconteceu, fisicamente? Suas mãos empurraram o ar que
+estava entre elas. Esse ar empurrado empurrou o ar vizinho, que empurrou o
+próximo, e assim por diante --- uma onda de pressão se espalhando pelo
+ambiente, exatamente como quando você joga uma pedra num lago parado e vê os
+círculos se espalharem na água.
+
+\begin{newword}
+\nova{Onda} Uma perturbação que se propaga através de um meio (ar, água,
+uma corda) sem que o próprio meio \enquote{viaje} --- é a \emph{perturbação}
+que anda, não o ar em si. Pense em uma ola de estádio: cada torcedor só
+levanta e senta no próprio lugar, mas o movimento parece \enquote{correr}
+pela arquibancada.
+\end{newword}
+
+Quando essa onda de pressão chega até o seu ouvido, ela empurra e puxa o
+tímpano --- uma membrana bem fininha, como a pele esticada de um tambor ---
+para frente e para trás, muito rapidamente. O cérebro interpreta esse
+vaivém-vaivém-vaivém como som.
+
+A pergunta importante é: \textbf{com que velocidade} o ar empurra e puxa? Se
+você bater palmas devagar (uma vez por segundo), o ar até vibra, mas tão
+devagar que você não ouviria \enquote{som} nenhum --- ouviria só um
+\enquote{bump} isolado. Para existir uma nota musical, o vaivém precisa se
+repetir \emph{centenas ou milhares de vezes por segundo}. É disso que o
+próximo capítulo trata.
+
+% =============================================================================
+\chapter{O que é uma nota musical}
+
+\begin{newword}
+\nova{Frequência} Quantas vezes por segundo algo se repete. Se seu coração
+bate 70 vezes por minuto, a frequência dos seus batimentos é \enquote{70 por
+minuto}. Para som, medimos frequência em \textbf{hertz} (abreviado
+\textbf{Hz}), que quer dizer \enquote{vezes por segundo}. Um som de 440~Hz
+vibra o ar para frente e para trás 440 vezes a cada segundo.
+\end{newword}
+
+\opening{U}{ma} \textbf{nota musical} nada mais é do que um som cuja
+frequência é constante e bem definida --- o vaivém do ar se repete no mesmo
+ritmo, sem parar, durante o tempo em que a nota soa. Quanto \textbf{mais
+alta} a frequência, mais \textbf{aguda} (fina) a nota soa aos nossos
+ouvidos; quanto \textbf{mais baixa}, mais \textbf{grave} (grossa).
+
+Um piano tem 88 teclas, e cada uma corresponde a uma frequência diferente. A
+tecla mais grave (a mais à esquerda, chamada \textbf{A0}, ou \textbf{Lá0})
+vibra a 27,5~Hz. A tecla mais aguda (a mais à direita, \textbf{C8}, ou
+\textbf{Dó8}) vibra a 4186~Hz --- mais de 150 vezes mais rápido. A nota de
+referência que afinadores de piano (e este projeto) usam como ponto de
+partida é o \textbf{A4} (\textbf{Lá4}, o Lá \enquote{do meio}), fixado
+internacionalmente em \textbf{440~Hz}.
+
+\begin{newword}
+\nova{Oitava} Duas notas estão \enquote{uma oitava} de distância quando a
+frequência de uma é exatamente o dobro da outra. A4 é 440~Hz; uma oitava
+acima, A5, é 880~Hz; uma oitava abaixo, A3, é 220~Hz. É por isso que dobrar
+(ou cortar pela metade) a frequência soa, aos nossos ouvidos, como \enquote{a
+mesma nota, só que mais aguda/grave} --- não é coincidência, é como o
+ouvido humano processa proporções de frequência.
+\end{newword}
+
+\begin{newword}
+\nova{Notação de nota + oitava (ex.\ A4, C3, F\#5)} A letra é o nome da nota
+(A, B, C, D, E, F, G --- o equivalente em inglês de Lá, Si, Dó, Ré, Mi, Fá,
+Sol) e o número indica em qual oitava ela está --- quanto maior o número,
+mais aguda. Um \texttt{\#} (sustenido) depois da letra significa \enquote{meio
+tom acima}. Este projeto (e a maior parte do software musical no mundo) usa
+essa notação em inglês, então \enquote{A4} é o Lá central e \enquote{C4} é o
+Dó central.
+\end{newword}
+
+O piano é um instrumento \textbf{temperado}: o espaço entre A0 e C8 é
+dividido em 88 degraus (chamados \textbf{semitons}) espaçados de um jeito
+matematicamente preciso, onde cada semitom multiplica a frequência anterior
+por aproximadamente $1{,}0595$ (a raiz 12\textsuperscript{a} de 2 --- porque
+12 semitons formam uma oitava, e uma oitava dobra a frequência:
+$1{,}0595^{12} \approx 2$). Você não precisa decorar esse número; o que
+importa entender é que \textbf{cada tecla do piano é uma frequência-alvo
+específica e fixa}, e é exatamente essa frequência-alvo que o programa
+recebe quando você aperta uma tecla --- o trabalho de todo o resto deste
+documento é: \emph{dada essa frequência, como calcular o som de uma corda
+vibrando nela?}
+
+% =============================================================================
+\chapter{Como um piano de verdade produz som}
+
+\opening{A}{bra} a tampa de um piano de verdade (ou imagine um cortado ao
+meio) e você vai ver, para a maioria das teclas, isto:
+
+\begin{enumerate}[leftmargin=1.6em]
+\item Você aperta uma tecla.
+\item Um mecanismo mecânico (a \textbf{ação}) lança um pequeno
+\textbf{martelo coberto de feltro} contra uma ou mais \textbf{cordas de
+aço} esticadas sob tensão.
+\item O martelo bate na corda e volta --- ele não fica encostado, é uma
+martelada rápida, de menos de 5 milésimos de segundo.
+\item A corda, agora vibrando, empurra a \textbf{caixa de ressonância} (o
+grande tampo de madeira embaixo/atrás das cordas) através de uma peça de
+madeira chamada \textbf{ponte}.
+\item A caixa de ressonância, por ser grande e leve, empurra o ar de
+verdade e é o que você realmente ouve --- a corda sozinha, fininha como é,
+mal move ar suficiente para ser audível.
+\item Enquanto a tecla continua pressionada, a corda continua vibrando e
+perdendo energia aos poucos, até o som sumir. Quando você solta a tecla, um
+\textbf{abafador} (\emph{damper}) de feltro encosta na corda e para a
+vibração imediatamente.
+\item Se você pisar no \textbf{pedal direito} (pedal de sustentação,
+também chamado de \emph{sustain}), todos os abafadores do piano levantam
+ao mesmo tempo --- a corda que você tocou continua soando mesmo depois de
+soltar a tecla, \emph{e} todas as outras cordas do piano ficam livres para
+vibrar também, se algo as excitar (capítulo~13).
+\end{enumerate}
+
+\begin{newword}
+\nova{Ponte} (\emph{bridge}) A peça que transmite a vibração da corda para
+a caixa de ressonância, como o \enquote{sela} de um violão.
+\end{newword}
+
+Esse é o piano inteiro, em sete passos. Cada capítulo a partir daqui pega
+um desses passos e explica: (a) a física real por trás dele, e (b) como
+este projeto o transforma em cálculo matemático que um computador consegue
+fazer 48 mil vezes por segundo.
+
+% =============================================================================
+\chapter{Por que instrumentos diferentes soam diferentes: harmônicos e timbre}
+
+\opening{T}{oque} a mesma nota --- digamos, A4 (440~Hz) --- num piano e num
+violino. Ambos vibram a 440~Hz. Ambos são, estritamente, \enquote{a mesma
+nota}. E ainda assim eles soam completamente diferentes. Por quê?
+
+A resposta é que \textbf{nenhuma corda vibra em apenas uma frequência}.
+Quando uma corda é golpeada ou puxada, ela vibra simultaneamente:
+
+\begin{itemize}
+\item inteira, de ponta a ponta (essa é a \textbf{frequência fundamental}
+--- a nota \enquote{principal} que você identifica, 440~Hz no nosso
+exemplo);
+\item em duas metades, cada metade vibrando ao dobro da velocidade
+(880~Hz);
+\item em três terços, cada terço vibrando ao triplo da velocidade
+(1320~Hz);
+\item e assim por diante, em infinitas divisões cada vez mais fracas.
+\end{itemize}
+
+\begin{newword}
+\nova{Harmônico} (ou \emph{parcial}, ou \emph{overtone}) Cada uma dessas
+vibrações simultâneas de uma corda. O primeiro harmônico (a corda inteira)
+é a fundamental; o segundo, terceiro, quarto harmônico etc. são múltiplos
+inteiros dela ($2\times$, $3\times$, $4\times$ a frequência fundamental) e
+em geral soam mais fracos quanto mais alto o número.
+\end{newword}
+
+\begin{newword}
+\nova{Timbre} A \enquote{cor} ou \enquote{textura} característica de um
+instrumento --- aquilo que faz um piano soar diferente de um violino
+tocando a mesma nota. O timbre é determinado principalmente pela
+\textbf{proporção de volume entre os harmônicos}: um piano tem harmônicos
+numa certa proporção, um violino tem em outra, e é essa \enquote{receita}
+de harmônicos que seu ouvido reconhece como \enquote{isto é um piano}.
+\end{newword}
+
+Todo o trabalho de simular um instrumento de verdade se resume, em grande
+parte, a produzir a \emph{mistura certa de harmônicos, no volume certo,
+morrendo na velocidade certa} --- porque é essa mistura que faz a diferença
+entre \enquote{um bipe eletrônico monótono} e \enquote{aquilo soa como um
+piano de verdade}. Os capítulos~9 a~14 mostram, um a um, os mecanismos
+físicos reais que moldam essa mistura num piano de verdade --- e como este
+projeto os reproduz.
+
+% =============================================================================
+\chapter{Como um computador \enquote{ouve} e \enquote{fala} som}
+
+\opening{U}{m} computador não entende \enquote{ondas contínuas de pressão
+do ar} --- ele só sabe guardar e processar números. Para representar som
+digitalmente, fazemos o seguinte: \textbf{medimos a pressão do ar (ou,
+equivalentemente, a posição de um alto-falante) muitas vezes por segundo, e
+guardamos cada medida como um número}.
+
+\begin{newword}
+\nova{Amostra} (\emph{sample}) Um único número que representa \enquote{qual
+era a pressão do ar (ou posição do alto-falante) neste instante exato}. Uma
+amostra sozinha não tem som nenhum --- é só um número, como uma única foto
+de um vídeo.
+\end{newword}
+
+\begin{newword}
+\nova{Taxa de amostragem} (\emph{sample rate}) Quantas amostras são medidas
+(ou geradas) por segundo. Este projeto usa \textbf{48.000 amostras por
+segundo} (48~kHz) --- o mesmo padrão usado em vídeo profissional e na
+maioria dos equipamentos de áudio modernos. Isso significa: para produzir 1
+segundo de som, o programa precisa calcular 48.000 números, em sequência,
+um após o outro.
+\end{newword}
+
+Por que 48.000 e não, digamos, 100? Porque, para reconstituir uma onda com
+fidelidade, é preciso amostrá-la a uma taxa \textbf{pelo menos duas vezes
+maior} que a frequência mais alta que você quer representar (isso é um
+resultado matemático chamado Teorema de Nyquist--Shannon). O ouvido humano
+escuta até cerca de 20.000~Hz; 48.000 amostras por segundo dão folga
+confortável acima disso.
+
+Isso também nos dá um número muito importante para os próximos capítulos: a
+cada amostra, o programa tem $\frac{1}{48000}$ de segundo --- cerca de
+\textbf{20,8 microssegundos} ($0{,}0000208$ segundos) --- para calcular o
+próximo número antes que ele precise ser enviado à placa de som. Repita
+isso 48 mil vezes, e você tem um segundo de piano tocando. É essa corrida
+contra o tempo, repetida sem parar, que faz o capítulo~15 (sobre o programa
+\enquote{nunca poder travar}) ser tão importante.
+
+% =============================================================================
+\chapter{A grande sacada: uma corda é uma fila de espera}
+
+\opening{C}{hegamos} à ideia central do projeto inteiro --- a peça de
+engenharia que torna possível simular uma corda de piano em tempo real, sem
+precisar de um supercomputador.
+
+\section*{A analogia do eco no corredor}
+
+Imagine um corredor comprido, com uma parede em cada ponta. Você grita uma
+vez na entrada. O som viaja até a parede do fundo, ecoa, volta, ecoa de novo
+na parede de onde você está, volta a ir\ldots{} e assim por diante, ficando
+mais fraco a cada ida e volta, até sumir. O que você ouve, com o tempo, é
+uma série de ecos regularmente espaçados, cada um mais fraco que o
+anterior.
+
+Uma corda de piano vibrando é \textbf{exatamente esse fenômeno}, só que
+muito mais rápido: quando o martelo bate na corda, ele cria uma perturbação
+que viaja de uma ponta da corda até a outra, reflete, volta, reflete de
+novo --- e esse \enquote{ir e vir} que se repete centenas ou milhares de
+vezes por segundo é o que você ouve como uma nota musical. A física formal
+por trás disso (a \enquote{equação de onda}) mostra algo bonito: a vibração
+de uma corda pode sempre ser descrita como \textbf{duas ondas viajando em
+direções opostas}, quicando entre as duas pontas fixas.
+
+\section*{Transformando isso em código: a linha de atraso}
+
+Esse fato --- \enquote{é só uma onda indo e voltando} --- é ótimo porque
+uma \enquote{onda indo e voltando} é exatamente o que um computador já sabe
+representar naturalmente: uma \textbf{fila de espera com um número fixo de
+posições}, onde a cada passo (a cada amostra) o número mais antigo sai por
+um lado, todos os outros andam uma posição, e um número novo entra pelo
+outro lado. Isso, em programação, se chama \textbf{linha de atraso}
+(\emph{delay line}).
+
+\begin{newword}
+\nova{Linha de atraso} (\emph{delay line}) Uma fila de números de tamanho
+fixo. A cada passo, um número novo entra, e o número mais antigo sai ---
+como uma fila de pessoas esperando ônibus, onde uma pessoa nova entra na
+fila atrás e a da frente sobe no ônibus a cada minuto.
+\end{newword}
+
+Em vez de calcular \enquote{qual é a altura de cada pontinho da corda, em
+cada instante} (o que exigiria recalcular \emph{milhares} de pontos, 48 mil
+vezes por segundo --- caro demais até para computadores modernos, se você
+tem 88 teclas tocando ao mesmo tempo), o projeto guarda só \textbf{uma fila
+circulando}, do tamanho certo, representando a onda viajando de ida e volta
+pela corda. Isso é chamado de \textbf{guia de onda digital} (\emph{digital
+waveguide} --- a técnica, publicada por Kevin Karplus e Alex Strong em
+1983 e refinada depois por Julius O.\ Smith, é a base de todo
+\texttt{piano\_core}, o coração deste projeto).
+
+O custo computacional de processar essa fila é \textbf{o mesmo, não importa
+quão grave ou aguda seja a corda} --- é isso que torna possível tocar as 88
+teclas de um piano ao mesmo tempo em tempo real, mesmo num laptop comum.
+
+\section*{Quantas posições tem a fila?}
+
+Aqui é onde a frequência da nota (capítulo~3) entra na conta. Uma onda
+completa \enquote{ida e volta} pela corda corresponde a exatamente um ciclo
+da vibração. Então o tamanho da fila (quantas amostras ela precisa guardar)
+é:
+
+\[
+\text{tamanho da fila} = \frac{\text{taxa de amostragem}}{\text{frequência da nota}}
+\]
+
+Para A4 (440~Hz), a 48.000 amostras por segundo:
+
+\[
+\text{tamanho da fila} = \frac{48\,000}{440} \approx 109{,}1 \text{ amostras}
+\]
+
+Ou seja: a fila que representa a corda de A4 tem pouco mais de 109
+posições. Para a nota mais grave do piano, A0 (27,5~Hz), a fila tem
+$\frac{48\,000}{27{,}5} \approx 1745$ posições --- uma fila bem mais longa,
+porque uma corda grave é (física e metaforicamente) \enquote{mais comprida}
+e o som demora mais para dar a volta completa.
+
+Repare que o número não deu exatamente 109 --- deu 109,1. Essa fração é
+importante, e o capítulo~9 explica por quê (e como o projeto lida com ela
+sem desafinar a nota).
+
+\section*{O resto do laço}
+
+Uma fila sozinha, recirculando um número para sempre, tocaria a nota
+\textbf{para sempre}, sem nunca morrer --- o que não é o que acontece numa
+corda de verdade. Faltam ainda duas peças, que os próximos dois capítulos
+explicam: algo que \textbf{tire energia} da fila a cada volta (o som
+precisa morrer com o tempo, capítulo~8), e algo que \textbf{inicie} a
+vibração de um jeito parecido com uma martelada de feltro, não um empurrão
+genérico (capítulo~11).
+
+% =============================================================================
+\chapter{Por que a nota morre: o filtro que come agudos}
+
+\opening{N}{uma} corda ideal e sem atrito, a energia da martelada ficaria
+circulando na fila para sempre --- a nota tocaria infinitamente, o que
+obviamente não é o que acontece num piano de verdade. Na vida real, a corda
+perde energia a cada ida e volta: um pouco escapa pela ponte para a caixa
+de ressonância (de propósito --- é assim que você ouve o som!), e um pouco
+se perde em atrito interno do próprio metal e do ar ao redor.
+
+O detalhe físico interessante --- e crucial para soar como um piano de
+verdade, não como um bipe genérico --- é que \textbf{essa perda de energia
+não é igual para todos os harmônicos}. Os harmônicos mais agudos (as
+vibrações mais rápidas, capítulo~5) perdem energia muito mais depressa que
+os graves. É por isso que uma nota de piano começa com um ataque
+brilhante, cheio de agudos, e vai ficando cada vez mais \enquote{redonda} e
+grave conforme soa --- os agudos vão embora primeiro, sobra só o
+fundamental por último.
+
+\begin{newword}
+\nova{Filtro passa-baixa} (\emph{lowpass filter}) Um mecanismo que deixa
+frequências baixas passarem quase sem mudança, mas reduz (atenua)
+frequências altas. É exatamente o oposto de um cobertor grosso jogado sobre
+uma caixa de som: os graves (o \enquote{bum bum} do baixo) você ainda ouve
+do lado de fora, os agudos (o \enquote{tss tss} do prato de bateria) somem
+quase por completo --- o cobertor está agindo como um filtro passa-baixa
+físico.
+\end{newword}
+
+A solução do projeto: dentro da fila de espera (a linha de atraso do
+capítulo~7), antes do número voltar a circular, ele passa por um filtro
+passa-baixa simples --- implementado como \texttt{filter::OnePoleLowpass}
+no código --- que reduz um pouquinho a \enquote{agudeza} do número a cada
+volta. Feito isso milhares de vezes por segundo, o resultado acumulado é
+exatamente o comportamento real: brilhante no início, cada vez mais opaco,
+até silêncio.
+
+\begin{newword}
+\nova{\enquote{Um polo} (\emph{one-pole})} A versão mais simples possível
+de um filtro --- precisa de só uma multiplicação e uma soma por amostra
+para funcionar. \enquote{Polo} é um termo técnico de processamento de
+sinais; o que importa saber é que, apesar de simples, um filtro de um polo
+já é suficiente para capturar o comportamento essencial de \enquote{agudos
+morrem mais rápido que graves} que uma corda de verdade exibe.
+\end{newword}
+
+O tanto de energia que se perde a cada volta é controlado, no código, por
+um parâmetro chamado \texttt{damping}.
+
+\begin{newword}
+\nova{Amortecimento} (\emph{damping}) O quanto de energia uma corda perde
+por unidade de tempo; mais amortecimento = a nota morre mais rápido.
+\end{newword}
+
+É esse número --- junto de um segundo parâmetro, \texttt{sustain} --- que
+faz uma corda grave soar por 30 a 40 segundos e uma corda aguda por apenas
+1 a 2 segundos, exatamente como num piano de verdade.
+
+% =============================================================================
+\chapter{O ajuste fino: por que o laço é um pouquinho mais curto}
+
+\opening{V}{oltando} ao capítulo~7: calculamos que a fila para A4 devia ter
+cerca de $109{,}1$ posições. Só que uma fila de espera só pode ter um
+número \textbf{inteiro} de posições --- não existem \enquote{0,1 de uma
+posição}. Se simplesmente arredondássemos para 109, a nota tocaria
+ligeiramente mais aguda que 440~Hz; se arredondássemos para cima,
+ligeiramente mais grave. Qualquer um dos dois desafinaria o piano --- pouco
+nas notas graves, perceptivelmente nas agudas (quanto mais aguda a nota,
+menor é a fila, e um erro de \enquote{1 posição inteira} pesa
+proporcionalmente mais).
+
+A solução tecnicamente correta é permitir uma fila de tamanho
+\textbf{fracionário} --- por exemplo, calcular a posição \enquote{109,1}
+como uma média ponderada entre a posição 109 e a posição 110. Esse
+pedacinho de matemática (chamado \textbf{interpolação}) é o que garante que
+qualquer nota, não só as que \enquote{dão números redondos} de amostras,
+saia afinada.
+
+Tem ainda uma segunda sutileza. O filtro passa-baixa do capítulo~8 não é
+instantâneo --- ele próprio introduz um pequeno atraso extra no sinal
+(assim como esperar um cobertor \enquote{amortecer} um som leva uma fração
+de segundo, não é instantâneo). Se esse atraso extra não fosse descontado,
+o laço inteiro ficaria um pouquinho mais longo do que deveria, e a nota
+sairia ligeiramente mais grave do que a frequência pedida. A correção é
+simples de enunciar, ainda que a matemática exata do \enquote{quanto} venha
+de como o filtro é construído:
+
+\[
+\text{tamanho real da fila} = \text{período da nota} - \text{atraso do filtro} - 1
+\]
+
+Esse ajuste está implementado em \texttt{PluckedString::new}, e o projeto
+tem um teste automatizado
+(\texttt{loop\_delay\_is\_close\_to\_the\_period}) que verifica, toda vez
+que o código muda, que a nota A4 realmente sai a menos de
+\textbf{1,5~cents} de 440~Hz.
+
+\begin{newword}
+\nova{Cents} A unidade que músicos usam para medir desafinação bem fina.
+Um semitom (o menor \enquote{degrau} do piano, capítulo~3) vale 100 cents.
+1,5 cents é uma fração tão pequena de um semitom (1,5\,\%) que praticamente
+nenhum ouvido humano --- nem afinadores profissionais, na maioria dos casos
+--- consegue perceber a diferença. É esse o padrão de precisão que o
+projeto garante, e verifica automaticamente, para cada nota.
+\end{newword}
+
+% =============================================================================
+\chapter{Cordas de verdade são rígidas: a inarmonicidade}
+
+\opening{N}{o} capítulo~5 dissemos que os harmônicos de uma corda ficam em
+múltiplos exatos da fundamental: $2\times$, $3\times$, $4\times$ etc. Isso
+é verdade para uma corda \textbf{ideal} --- perfeitamente flexível, sem
+nenhuma resistência a dobrar. Cordas de piano de verdade, porém, são feitas
+de \textbf{aço grosso e razoavelmente rígido} (principalmente nas notas
+graves), e essa rigidez faz os harmônicos ficarem \textbf{ligeiramente mais
+agudos} do que os múltiplos exatos previstos --- um efeito chamado
+\textbf{inarmonicidade}, descrito matematicamente pela primeira vez pelo
+físico Harvey Fletcher em 1964.
+
+\begin{newword}
+\nova{Inarmonicidade} O quanto os harmônicos de um instrumento real se
+desviam de serem múltiplos exatos da fundamental, por causa da rigidez
+física da corda. É pequena, mas real --- e é uma das razões pelas quais um
+piano de verdade soa \enquote{vivo} e um bipe eletrônico perfeitamente
+harmônico soa \enquote{morto} ou \enquote{artificial}.
+\end{newword}
+
+A fórmula de Fletcher para onde cada harmônico realmente cai é:
+
+\[
+f_n \approx n \, f_1 \sqrt{1 + B n^2}
+\]
+
+Não é preciso decorar a fórmula --- o que ela diz, em palavras, é: \enquote{o
+harmônico número $n$ fica um pouquinho mais agudo do que $n$ vezes a
+fundamental, e esse desvio cresce com o quadrado de $n$ (então harmônicos
+mais altos desviam proporcionalmente mais), multiplicado por um número $B$
+que descreve o quão rígida é aquela corda específica}. Cordas grossas e
+curtas (as graves) têm um $B$ maior; cordas finas e longas (as agudas) têm
+um $B$ menor.
+
+Este é, aliás, o motivo pelo qual afinadores de piano profissionais não
+afinam o instrumento em oitavas \emph{matematicamente} exatas --- eles
+\enquote{esticam} ligeiramente as oitavas graves e agudas para compensar a
+inarmonicidade e fazer o piano soar afinado \emph{aos ouvidos}, não apenas
+no papel. Esse fenômeno, bem documentado na literatura de acústica
+musical, é a mesma razão física que este projeto reproduz.
+
+\subsection*{Como isso vira código}
+
+Reproduzir esse efeito dentro da \enquote{fila de espera} do capítulo~7 usa
+uma peça chamada \textbf{cascata de filtros allpass}
+(\texttt{piano\_core::dispersion::DispersionCascade}), publicada por David
+Jaffe e Julius O.\ Smith em 1983.
+
+\begin{newword}
+\nova{Filtro allpass} Ao contrário do filtro passa-baixa do capítulo~8 (que
+muda o \emph{volume} de diferentes frequências), um filtro allpass deixa o
+volume de \textbf{todas} as frequências exatamente igual --- mas atrasa
+cada frequência por um tempo ligeiramente diferente. Isso é exatamente o
+que \enquote{esticar} os harmônicos para fora da posição exata significa:
+cada harmônico chega um pouquinho \enquote{fora de sincronia} com onde
+estaria numa corda ideal, sem que nenhum fique mais alto ou baixo em
+volume.
+\end{newword}
+
+Encadear vários desses filtros (\enquote{uma cascata}) dentro do laço da
+corda aproxima, com boa precisão, a curva de inarmonicidade real. Quantos
+filtros são necessários varia por registro --- cordas graves precisam de
+mais seções (cerca de 8 para a nota mais grave do piano) e cordas agudas
+precisam de quase nenhuma (0 a 1 para as notas mais agudas), porque o
+efeito de inarmonicidade é fisicamente mais forte nas cordas grossas e
+curtas do que nas finas e longas. Usar sempre o número máximo de seções,
+mesmo onde o ouvido não notaria diferença, gastaria processador à toa ---
+por isso o projeto escala esse número por registro (documentado como
+decisão de performance \texttt{PERF-005}).
+
+% =============================================================================
+\chapter{O martelo de feltro: como uma martelada vira som}
+
+\opening{A}{té} agora falamos do que acontece \textbf{depois} que a corda
+já está vibrando. Falta a pergunta mais básica: \textbf{como a vibração
+começa?}
+
+A técnica clássica de Karplus e Strong (1983), da qual este projeto parte,
+usa uma solução simples: enche a fila de espera inteira com \textbf{ruído
+aleatório}.
+
+\begin{newword}
+\nova{Ruído} Um sinal que contém, em proporções parecidas, todas as
+frequências ao mesmo tempo --- como a \enquote{estática} de uma TV fora de
+sintonia; matematicamente é uma forma prática de \enquote{acender} todos os
+harmônicos de uma corda de uma vez.
+\end{newword}
+
+Fisicamente, isso corresponde a \enquote{empurrar a corda inteira para uma
+posição aleatória de uma vez} --- o que é uma boa aproximação para um
+instrumento \textbf{beliscado}, como um violão. Mas um piano não é
+beliscado, é \textbf{golpeado por um martelo de feltro}, e é exatamente
+esse detalhe que faz o piano soar como piano.
+
+\subsection*{Por que a força da martelada muda o timbre, não só o volume}
+
+Toque uma tecla de piano bem de leve, depois toque a mesma tecla com toda
+a força. Você não vai ouvir \enquote{o mesmo som, só que mais alto} --- vai
+ouvir um som mais \textbf{brilhante}, com mais agudos, quando toca forte.
+Esse é um dos traços mais característicos de um piano de verdade, e a razão
+física é o comportamento do próprio feltro do martelo.
+
+O feltro que cobre o martelo funciona como uma mola, mas uma \textbf{mola
+não-linear}: quanto mais você a comprime, mais dura ela fica (diferente de
+uma mola comum, cuja dureza não muda). Esse comportamento foi medido e
+descrito por Antoine Chaigne e Anders Askenfelt em 1994, com a fórmula:
+
+\[
+F = K \, x^{p} \qquad \text{(com } p \text{ entre 2 e 3, aproximadamente)}
+\]
+
+Em palavras: a força $F$ que o martelo exerce sobre a corda cresce
+\textbf{mais rápido que proporcionalmente} conforme a compressão $x$ do
+feltro aumenta (por isso o expoente $p$ é maior que 1 --- se fosse $p=1$,
+dobrar a compressão dobraria a força; com $p$ entre 2 e 3, dobrar a
+compressão multiplica a força por 4 a 8 vezes). Uma martelada forte
+comprime mais o feltro, o que o deixa efetivamente mais \enquote{duro}
+durante aquele contato específico --- um feltro mais duro transmite um
+golpe \textbf{mais curto e mais brusco}, e um golpe mais brusco excita
+harmônicos mais agudos com mais força. Uma martelada fraca comprime pouco,
+o feltro fica \enquote{macio}, o golpe é mais longo e suave, e o som sai
+mais quente, com menos agudos.
+
+Este projeto implementa esse comportamento em
+\texttt{piano\_core::hammer::simulate\_contact}: dada a velocidade com que
+a tecla foi pressionada, o código simula o contato do martelo com a mola
+não-linear de feltro e produz um \textbf{envelope de força} (a forma da
+martelada ao longo do tempo, que dura menos de 5 milésimos de segundo).
+Esse envelope é usado para \emph{moldar} o ruído inicial que preenche a
+fila de espera --- em vez de simplesmente \enquote{mais forte = mais
+alto}, a forma do ataque muda com a velocidade.
+
+\begin{newword}
+\nova{Honestidade sobre o que ainda falta aqui} O modelo atual simula o
+lado do \emph{martelo} dessa interação --- como o feltro se comprime e
+empurra --- mas, durante os poucos milissegundos de contato, ainda não
+simula a corda \enquote{empurrando de volta} o martelo em tempo real (o
+problema físico completo, chamado de contato acoplado). Isso é uma
+simplificação documentada de propósito (rastreada como \texttt{PERF-007}
+na documentação técnica), e é exatamente o item no topo da lista de
+melhorias futuras do capítulo~17.
+\end{newword}
+
+% =============================================================================
+\chapter{Mais de uma corda por tecla: uníssono e batimento}
+
+\opening{A}{qui} vai um fato que surpreende muita gente: \textbf{a maioria
+das teclas de um piano não tem apenas uma corda} --- tem duas ou três,
+todas afinadas quase (mas não exatamente) na mesma frequência, e um único
+martelo bate nas cordas de uma tecla ao mesmo tempo. Um piano moderno
+típico tem:
+
+\begin{itemize}
+\item \textbf{1 corda} por tecla nas notas mais graves (mais grossas, mais
+caras, mais espaço ocupado --- não cabem duas);
+\item \textbf{2 cordas} por tecla na região média-grave;
+\item \textbf{3 cordas} por tecla em toda a região média-aguda e aguda.
+\end{itemize}
+
+Este projeto usa essa mesma convenção --- 12 teclas com 1 corda, 18 com 2 e
+58 com 3 --- o que soma \textbf{222 cordas efetivas} sendo processadas ao
+vivo, mesmo com só 88 teclas.
+
+\begin{newword}
+\nova{Uníssono} (\emph{unison}) O grupo de 1 a 3 cordas que uma única
+tecla controla. As cordas de um mesmo uníssono são afinadas \emph{quase}
+iguais, mas não perfeitamente --- normalmente há uma diferença de poucos
+\enquote{cents} (capítulo~9) entre elas, de propósito.
+\end{newword}
+
+\subsection*{Por que desafinar de propósito?}
+
+Se as duas ou três cordas de uma tecla fossem afinadas \textbf{exatamente}
+iguais, elas vibrariam perfeitamente em sincronia, e o resultado soaria
+idêntico a uma única corda --- apenas mais alto. Mas quando estão afinadas
+com uma diferença bem pequena, acontece um fenômeno físico chamado
+\textbf{batimento}:
+
+\begin{newword}
+\nova{Batimento} (\emph{beating}) Quando duas ondas sonoras de frequências
+muito próximas (mas não idênticas) tocam juntas, elas alternadamente se
+reforçam e se cancelam, produzindo um efeito de \enquote{pulsar} no volume
+--- um \enquote{uauauauau} lento, cuja velocidade é exatamente igual à
+diferença entre as duas frequências. Você pode ouvir isso muito
+claramente quando duas cordas de violão quase afinadas tocam juntas: em
+vez de um som estável, ouve-se um \enquote{bater} rítmico que vai sumindo
+conforme se ajusta a afinação.
+\end{newword}
+
+Esse \enquote{bater} é parte do que dá a um piano de verdade seu caráter
+rico e \enquote{vivo}, em vez de um som mais \enquote{seco} e sintético.
+
+\subsection*{O envelope de dois estágios}
+
+Tem mais uma consequência física interessante, medida e descrita
+formalmente pelo físico Gabriel Weinreich em 1977: as cordas de um mesmo
+uníssono não vibram de forma independente --- elas estão mecanicamente
+conectadas através da ponte (capítulo~4), que embora seja rígida, cede um
+pouquinho. Essa conexão parcial faz o som de uma nota de piano decair em
+\textbf{dois estágios}, não um só:
+
+\begin{enumerate}[leftmargin=1.6em]
+\item \textbf{Pré-decaimento} (rápido): logo após a martelada, as cordas
+ligeiramente desafinadas batem entre si e perdem energia relativa umas às
+outras rapidamente --- essa fase soa mais \enquote{cheia} e um pouco
+instável.
+\item \textbf{Cauda} (mais lenta): depois que essa energia diferencial se
+dissipa, as cordas se estabilizam num modo compartilhado que decai numa
+taxa parecida com a de uma única corda \enquote{natural} --- essa é a fase
+mais longa e estável, o \enquote{sustain} que você ouve segurando a tecla.
+\end{enumerate}
+
+Este projeto implementa exatamente esse mecanismo (não um envelope
+artificial \enquote{desenhado à mão} para parecer parecido) em duas
+camadas:
+
+\begin{itemize}
+\item \textbf{Acoplamento local} (\texttt{piano\_core::unison}): as 1 a 3
+cordas da mesma tecla se misturam entre si a cada amostra individual ---
+é barato de calcular porque essas cordas já são processadas juntas de
+qualquer forma.
+\item \textbf{Acoplamento global} (\texttt{piano\_core::bridge::BridgeBus},
+capítulo~13): a interação entre teclas \emph{diferentes}, através da
+ponte compartilhada de todo o piano.
+\end{itemize}
+
+O projeto tem inclusive um teste automatizado que \textbf{mede} esse
+efeito (não apenas confia que o código \enquote{deveria} produzir isso):
+ele renderiza uma nota de três cordas, mede a velocidade do decaimento logo
+após o ataque comparada com a velocidade depois que o batimento já se
+estabilizou, e confirma que a primeira é visivelmente mais rápida que a
+segunda --- a assinatura exata que o modelo de Weinreich prevê. Esse teste,
+durante o desenvolvimento, pegou dois bugs reais de implementação antes que
+chegassem ao código final --- um exemplo de como medir o comportamento
+físico é mais confiável do que apenas ler o código e \enquote{achar} que
+está certo.
+
+% =============================================================================
+\chapter{O pedal mágico: ressonância simpática}
+
+\opening{S}{ente-se} ao piano, pise no pedal direito (sustentação) sem
+tocar nenhuma tecla, e cante ou grite uma nota perto das cordas. Você vai
+ouvir o piano \enquote{responder} --- alguma corda dentro dele começa a
+vibrar sozinha, mesmo sem ninguém tê-la tocado. Isso é \textbf{ressonância
+simpática}, e é um dos efeitos mais mágicos (e mais difíceis de simular
+bem) de um piano de verdade.
+
+\begin{newword}
+\nova{Ressonância simpática} Quando um objeto vibrante (uma corda, uma
+voz) faz \emph{outro} objeto próximo, capaz de vibrar na mesma frequência
+ou numa relacionada, começar a vibrar também --- sem nenhum contato
+direto, só através do ar ou de uma estrutura compartilhada. É o mesmo
+princípio por trás de empurrar um balanço no ritmo certo para fazê-lo ir
+cada vez mais alto: pequenos empurrões, no momento certo, se acumulam.
+\end{newword}
+
+Num piano de verdade, isso acontece porque \textbf{todas as cordas do
+instrumento} estão fisicamente conectadas através da mesma ponte e da
+mesma caixa de ressonância. Normalmente, os abafadores de feltro mantêm as
+cordas que você não está tocando \enquote{mudas} --- mas quando você pisa
+no pedal direito, \textbf{todos os abafadores levantam ao mesmo tempo}, e
+qualquer corda cuja frequência (ou harmônico) combine com o que está soando
+pode \enquote{pegar carona} na vibração e começar a soar também, mesmo sem
+ter sido golpeada.
+
+\subsection*{Como reproduzir isso sem explodir o custo computacional}
+
+A forma fisicamente mais completa de simular isso seria calcular como
+\textbf{cada uma das 222 cordas efetivas afeta todas as outras 221},
+individualmente --- o que dá mais de 49 mil pares de interação,
+recalculados a cada amostra, 48 mil vezes por segundo. Isso é
+computacionalmente inviável em tempo real, mesmo em computadores potentes.
+
+A solução do projeto (\texttt{piano\_core::bridge::BridgeBus}) é mais
+elegante: todas as cordas escrevem sua vibração num único
+\textbf{barramento compartilhado} --- pense nele como um \enquote{balde}
+onde cada corda despeja um pouco do seu som, e de onde cada corda também lê
+uma média de tudo que está no balde. Isso captura o essencial do efeito
+real (cordas \enquote{sentem} o que as outras estão fazendo) com um custo
+que cresce de forma administrável --- em vez de crescer explosivamente com
+o número de cordas.
+
+\begin{newword}
+\nova{Simplificação, dita com honestidade} O barramento único usa o
+\textbf{mesmo} ganho de acoplamento para todas as cordas, e não modela como
+a ponte de um piano real transmite som de forma diferente dependendo de
+onde, na madeira, cada corda está apoiada --- isso exigiria medições de um
+instrumento físico específico, algo que o projeto delibera não fazer sem
+antes decidir explicitamente que fontes de dado são aceitáveis
+(capítulo~17). É uma aproximação de engenharia, declarada abertamente na
+documentação técnica, não apresentada como mais fiel do que realmente é.
+\end{newword}
+
+% =============================================================================
+\chapter{A caixa de ressonância: de onde vem o volume}
+
+\opening{C}{omo} mencionado no capítulo~4, uma corda de piano sozinha é
+fininha demais para empurrar ar suficiente e ser ouvida com volume real ---
+quase todo o som que você de fato escuta vem da \textbf{caixa de
+ressonância}, o grande painel de madeira que a ponte transmite a vibração
+para.
+
+A forma mais \enquote{fiel à física} de simular uma caixa de ressonância
+seria gravar, de um piano real, como ele responde a um impulso curtíssimo
+(um \enquote{clique}), e depois combinar matematicamente
+(\enquote{convoluir}) essa gravação com o som de cada corda. \textbf{Este
+projeto não pode fazer isso}, e não por falta de capacidade técnica: a
+regra fundamental do projeto proíbe qualquer gravação de áudio real, para
+sempre, em qualquer circunstância --- todo o som precisa nascer de
+cálculo, nunca de amostras gravadas.
+
+A alternativa escolhida é a \textbf{síntese modal}: representar a caixa de
+ressonância como um conjunto de \enquote{modos} --- frequências
+específicas nas quais a madeira naturalmente prefere vibrar, cada uma com
+seu próprio tempo de decaimento e volume relativo, baseados em valores
+típicos descritos na literatura acadêmica de acústica (não medidos de
+nenhum piano específico).
+
+\begin{newword}
+\nova{Modo de ressonância} Assim como uma corda tem harmônicos
+(capítulo~5), uma placa de madeira grande também tem frequências
+preferenciais nas quais ela \enquote{gosta} de vibrar quando excitada ---
+mas, ao contrário de uma corda (onde os harmônicos formam uma série
+organizada de múltiplos), os modos de uma placa bidimensional são mais
+irregulares e dependem do formato e material específicos da placa.
+\end{newword}
+
+O projeto usa 8 desses modos (\texttt{piano\_core::soundboard::Soundboard}),
+somados ao sinal direto de cada corda (não substituindo-o) antes de virar
+som final --- porque substituir completamente mudaria a afinação e o
+brilho medidos e testados em capítulos anteriores, uma troca
+(\emph{trade-off}) que o projeto documenta abertamente em vez de mudar
+silenciosamente.
+
+% =============================================================================
+\chapter{Por que o programa nunca pode travar}
+
+\opening{L}{embra} do capítulo~6? A cada $\frac{1}{48000}$ de segundo
+(cerca de 20,8 microssegundos), o programa precisa ter calculado o próximo
+número de áudio, para \textbf{todas} as vozes tocando simultaneamente, e
+entregá-lo à placa de som. Se ele demorar mais que isso mesmo uma única
+vez, o resultado não é \enquote{um pouquinho de atraso} --- é um
+\textbf{estalo, clique ou silêncio audível} na música, porque a placa de
+som não tem o que tocar naquele instante exato.
+
+Isso impõe uma regra muito mais rígida do que a maioria dos programas de
+computador precisa seguir. A parte do código que calcula o áudio (chamada
+de \textbf{thread de tempo real}, porque roda numa linha de execução
+separada e dedicada exclusivamente a isso) segue quatro regras absolutas,
+verificadas automaticamente a cada mudança no código:
+
+\begin{enumerate}[leftmargin=1.6em]
+\item \textbf{Nunca aloca memória nova.} Pedir memória nova ao sistema
+operacional pode, ocasionalmente, demorar um tempo imprevisível ---
+inaceitável dentro da janela de 20,8 microssegundos. Toda a memória que
+uma nota vai precisar é reservada com antecedência, na hora em que o
+programa começa a rodar, não quando você aperta a tecla.
+\item \textbf{Nunca espera por outra parte do programa} (nenhum
+\enquote{cadeado} ou trava de sincronização). Se essa parte do código
+tivesse que esperar outra parte terminar algo, e essa outra parte
+estivesse, por qualquer motivo, atrasada, o áudio inteiro travaria com
+ela.
+\item \textbf{Nunca pode gerar um erro fatal.} Um programa comum, ao
+encontrar uma situação inesperada, pode simplesmente parar com uma
+mensagem de erro. Isso é inaceitável no meio de uma peça musical --- então
+todo pedaço de código nessa parte do projeto é escrito de um jeito que
+\textbf{sempre} devolve algum resultado válido, mesmo em casos extremos
+(um número \enquote{infinito}, um número inválido, zero etc.).
+\item \textbf{Nunca entra num laço sem fim garantido.} Todo cálculo tem um
+número máximo de passos conhecido de antemão --- nada de \enquote{repita
+até algo acontecer} sem um limite garantido.
+\end{enumerate}
+
+O projeto até usa uma ferramenta do próprio compilador da linguagem Rust
+(chamada \texttt{no\_std}, e uma configuração que \textbf{proíbe} o uso das
+funções \texttt{unwrap}, \texttt{expect} e \texttt{panic!} fora de testes)
+para tornar \textbf{impossível}, não apenas malvisto, escrever código que
+quebre essas regras sem querer --- o próprio compilador recusa compilar o
+programa se alguém tentar. Isso é o que separa \enquote{um programa que
+geralmente não trava} de \enquote{um programa que matematicamente não pode
+travar por esses motivos}.
+
+% =============================================================================
+\chapter{Como as peças do projeto se encaixam}
+
+\opening{T}{odo} o código está organizado em módulos independentes
+(chamados, na linguagem Rust, de \textbf{crates}), cada um com uma única
+responsabilidade clara, para que uma mudança numa parte não possa quebrar
+outra por acidente:
+
+\begin{center}
+\begin{tcolorbox}[colback=white,colframe=rulecol,boxrule=0.6pt,arc=0pt,
+  left=10pt,right=10pt,top=8pt,bottom=8pt,width=0.92\linewidth]
+\ttfamily\small
+\begin{verbatim}
+piano-core     A fisica pura. Nenhuma peca deste modulo sabe se
+               esta rodando num computador, num navegador ou
+               num teste -- ele so recebe numeros e devolve numeros.
+                 |
+                 +-- piano-params   Nomes de notas, numeros MIDI, afinacao.
+                 |     |
+                 |     +-- piano-render   Renderiza para arquivos .wav
+                 |     |     |
+                 |     |     +-- piano-cli   O programa "piano"
+                 |     |
+                 |     +-- piano-audio    Toca ao vivo pelos alto-falantes
+                 |     +-- piano-midi     Recebe teclados MIDI de verdade
+                 |
+                 +-- piano-wasm     Versao que roda dentro do navegador
+\end{verbatim}
+\end{tcolorbox}
+\end{center}
+
+A ideia central --- repetida por todo o projeto --- é: \textbf{o motor de
+física (\texttt{piano-core}) não sabe nada sobre o mundo exterior}. Ele não
+sabe se está sendo tocado por um teclado de computador, por um piano MIDI
+de verdade conectado por USB, ou por uma página de navegador. Só as
+camadas \emph{fora} dele (\texttt{piano-audio}, \texttt{piano-midi},
+\texttt{piano-wasm}, \texttt{piano-cli}) sabem lidar com o \enquote{mundo
+real} --- placas de som, cabos USB, páginas web. Isso é o que permite o
+\textbf{mesmo} código de física rodar de forma idêntica em três lugares
+completamente diferentes, sem nenhuma parte especial para cada um.
+
+% =============================================================================
+\chapter{O que ainda falta para chegar perto de um piano de verdade}
+
+\opening{E}{ste} projeto não é um protótipo incompleto --- cada mecanismo
+descrito nos capítulos~7 a~14 já está implementado, testado e verificado
+(não apenas planejado). Mas um piano de verdade tem ainda mais detalhes do
+que os já cobertos, e este capítulo lista os que faltam, honestamente, do
+maior impacto perceptível para o menor:
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\linewidth}{p{3.6cm}Xl}
+\toprule
+\textbf{O que falta} & \textbf{Por que importa} & \textbf{Marco} \\
+\midrule
+Contato martelo-corda totalmente acoplado &
+Hoje o martelo (capítulo~11) empurra a corda, mas a corda ainda não
+\enquote{empurra de volta} o martelo durante a martelada --- a versão
+completa muda sutilmente o ataque de cada nota & M9 \\
+\addlinespace
+Posição da martelada e curvas por tecla &
+Onde exatamente o martelo bate ao longo da corda muda o timbre; hoje isso
+ainda não varia por nota & M9 \\
+\addlinespace
+Pedal una corda (esquerdo) e sostenuto (do meio) &
+Hoje só existe o pedal de sustentação (direito); um piano de verdade tem
+três pedais, cada um com um efeito diferente & M10 \\
+\addlinespace
+Ressonância simpática mais rica &
+O barramento único (capítulo~13) já funciona, mas uma versão mais fiel
+diferenciaria o quanto cada corda \enquote{sente} as outras & M11 \\
+\addlinespace
+Caixa de ressonância mais detalhada &
+8 modos (capítulo~14) já dão corpo ao som; um banco maior aproximaria
+ainda mais a complexidade real da madeira & M11 \\
+\addlinespace
+Ruídos mecânicos &
+Um piano de verdade não é só corda --- o mecanismo em si faz ruído, sempre
+sintetizado, nunca gravado & M12 \\
+\addlinespace
+Modelar um piano específico de verdade &
+Hoje o projeto usa números \enquote{típicos} da literatura, não medidos de
+um instrumento físico específico; exigiria decidir, antes de qualquer
+código, que dado medido é aceitável & M13 \\
+\addlinespace
+Um plugin de estúdio (CLAP) &
+Permitiria usar o piano dentro de programas como Ableton, Logic ou Reaper
+& M14 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Esses marcos (M9 a M14) já existem como \textbf{issues públicas no GitHub}
+do projeto, para quem quiser acompanhar ou contribuir --- não são apenas
+ideias soltas, são trabalho planejado e rastreável.
+
+Vale reforçar: mesmo com toda essa lista de \enquote{o que falta}, o piano
+\textbf{já funciona de verdade hoje} --- os capítulos~7 a~14 não são
+teoria, são o comportamento real do programa que você pode compilar e
+tocar agora mesmo (veja \texttt{docs/pt-BR/LEIA-ME.md} para o passo a
+passo de instalação e uso).
+
+% =============================================================================
+\backmatter
+\pagestyle{fancy}
+
+\chapter*{Glossário completo}
+\addcontentsline{toc}{chapter}{Glossário completo}
+\markboth{Glossário completo}{}
+
+\noindent Todas as palavras novas deste documento, num só lugar, para
+consulta rápida.
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{p{4.4cm}X}
+\toprule
+\textbf{Termo} & \textbf{Significado} \\
+\midrule
+Onda & Uma perturbação que se propaga por um meio sem que o meio em si viaje junto. \\
+Frequência & Quantas vezes por segundo algo se repete, medida em hertz (Hz). \\
+Hertz (Hz) & Unidade de frequência: \enquote{vezes por segundo}. \\
+Nota musical & Um som cuja frequência é constante e bem definida durante o tempo em que soa. \\
+Oitava & O intervalo entre uma frequência e o dobro dela. \\
+Semitom & O menor degrau entre notas num piano; 12 semitons formam uma oitava. \\
+A4 / Lá4 & Nota de referência do piano, fixada em 440~Hz. \\
+Harmônico / parcial / overtone & Cada uma das vibrações simultâneas de uma corda, em múltiplos da fundamental. \\
+Fundamental & O primeiro harmônico --- a corda vibrando inteira, de ponta a ponta. \\
+Timbre & A \enquote{cor} característica de um instrumento, determinada pela mistura de harmônicos. \\
+Amostra (\emph{sample}) & Um único número medindo a pressão do ar (ou posição do alto-falante) num instante. \\
+Taxa de amostragem & Quantas amostras são geradas por segundo (48.000 neste projeto). \\
+Linha de atraso (\emph{delay line}) & Uma fila de números de tamanho fixo, onde um número novo entra e o mais antigo sai a cada passo. \\
+Guia de onda digital & A técnica de representar uma corda vibrando como uma linha de atraso circulando. \\
+Filtro passa-baixa & Um mecanismo que reduz frequências altas e deixa as baixas passarem quase sem mudança. \\
+Amortecimento (\emph{damping}) & O quanto de energia uma corda perde por unidade de tempo. \\
+Cents & Unidade fina de afinação; 100 cents formam um semitom. \\
+Inarmonicidade & O desvio dos harmônicos de uma corda real em relação a múltiplos exatos da fundamental, causado pela rigidez física da corda. \\
+Filtro allpass & Um filtro que atrasa frequências diferentes por tempos diferentes, sem mudar o volume de nenhuma. \\
+Ruído & Um sinal que contém várias frequências ao mesmo tempo, em proporções parecidas. \\
+Uníssono (\emph{unison}) & O grupo de 1 a 3 cordas que uma mesma tecla de piano controla. \\
+Batimento (\emph{beating}) & O \enquote{pulsar} de volume que surge quando dois sons de frequências muito próximas tocam juntos. \\
+Ressonância simpática & Quando um objeto vibrante faz outro, próximo, começar a vibrar também, sem contato direto. \\
+Modo de ressonância & Uma frequência preferencial na qual uma estrutura naturalmente vibra. \\
+Ponte (\emph{bridge}) & A peça que transmite a vibração de uma corda para a caixa de ressonância. \\
+Modelagem física & Descrever um objeto real como equações e resolvê-las em tempo real para produzir seu comportamento. \\
+Sampler & Um instrumento que reproduz gravações prontas em vez de calcular o som. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\chapter*{Para saber mais}
+\addcontentsline{toc}{chapter}{Para saber mais}
+\markboth{Para saber mais}{}
+
+\opening{E}{ste} documento é a versão didática e sem pré-requisitos de
+material técnico mais denso que já existe no projeto, em inglês, para quem
+quiser ir mais fundo:
+
+\begin{itemize}
+\item \textbf{\texttt{docs/PHYSICS.md}} --- o mapeamento completo, com mais
+detalhes técnicos e as referências acadêmicas exatas por trás de cada
+mecanismo descrito neste documento.
+\item \textbf{\texttt{docs/ARCHITECTURE.md}} --- como o código está
+organizado por dentro.
+\item \textbf{\texttt{docs/PERFORMANCE.md}} --- as medições reais de
+desempenho por trás de cada decisão de engenharia mencionada aqui.
+\item \textbf{\texttt{docs/ROADMAP.md}} --- todos os marcos do projeto,
+passados e futuros.
+\item \textbf{\texttt{docs/pt-BR/LEIA-ME.md}} --- o guia de instalação e
+uso em português, passo a passo, para quem quer simplesmente tocar o piano
+agora.
+\item Os artigos científicos originais citados ao longo deste documento
+(Karplus e Strong 1983; Jaffe e Smith 1983; Fletcher 1964; Chaigne e
+Askenfelt 1994; Weinreich 1977) estão listados, com título completo e onde
+encontrá-los, em \texttt{docs/PRIOR-ART.md}.
+\end{itemize}
+
+Se depois de ler tudo isso uma pergunta ainda ficou sem resposta, ela
+provavelmente merece virar uma \emph{issue} no GitHub do projeto --- é
+assim que esta documentação, e o próprio piano, continuam melhorando.
+
+\end{document}

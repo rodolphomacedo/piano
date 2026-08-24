@@ -251,6 +251,7 @@ it — see the "Ideas beyond M8" section of `docs/ROADMAP.md`.
 | | |
 |---|---|
 | [**Guia em português**](docs/pt-BR/LEIA-ME.md) | Comece por aqui se preferir português — o que é, como instalar, como usar |
+| [**A aula completa (pt-BR)**](docs/pt-BR/COMO-FUNCIONA.md) · [PDF](docs/pt-BR/COMO-FUNCIONA.pdf) | The physics and the math, explained from scratch in Portuguese, for any reader — no background required |
 | [Roadmap](docs/ROADMAP.md) | Milestones, each ending in something you can hear |
 | [Architecture](docs/ARCHITECTURE.md) | Crate boundaries and why they are where they are |
 | [Physics](docs/PHYSICS.md) | What each component corresponds to on a real string |

@@ -182,6 +182,12 @@ Três ideias guiam basicamente toda decisão técnica deste projeto:
 
 ## Onde encontrar mais
 
+- **Quer entender a física e a matemática por trás do piano, do zero, sem
+  pré-requisito nenhum?** Leia
+  [`docs/pt-BR/COMO-FUNCIONA.md`](COMO-FUNCIONA.md) — uma aula completa, em
+  português, explicando cada conceito de música e de física antes de usá-lo.
+  Também disponível como PDF para baixar:
+  [`docs/pt-BR/COMO-FUNCIONA.pdf`](COMO-FUNCIONA.pdf).
 - Cada etapa do projeto (M5 a M8) tem seu próprio guia de "o que mudou e
   como testar" em `docs/pt-BR/` — bom para quem quer acompanhar a evolução
   passo a passo.

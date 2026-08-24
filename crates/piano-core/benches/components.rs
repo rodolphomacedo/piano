@@ -76,6 +76,7 @@ fn bench_hammer_contact(c: &mut Criterion) {
             black_box(piano_core::hammer::simulate_contact(
                 black_box(0.8),
                 black_box(48_000.0),
+                black_box(piano_core::hammer::DEFAULT_HAMMER),
             ))
         });
     });

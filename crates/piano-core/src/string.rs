@@ -111,6 +111,8 @@ pub struct StringConfig {
     pub inharmonicity: f32,
     /// Seed for the excitation noise, so renders are reproducible.
     pub seed: u32,
+    /// This string's own felt-contact physics. See [`hammer::HammerConfig`].
+    pub hammer: hammer::HammerConfig,
 }
 
 impl StringConfig {
@@ -123,6 +125,7 @@ impl StringConfig {
             sustain: DEFAULT_SUSTAIN,
             inharmonicity: crate::dispersion::DEFAULT_INHARMONICITY,
             seed: 0x2545_F491,
+            hammer: hammer::DEFAULT_HAMMER,
         }
     }
 }
@@ -161,6 +164,10 @@ pub struct PluckedString {
     /// next [`PluckedString::pluck`]; the audio-thread `process` loop never
     /// reads it.
     sample_rate: f32,
+    /// This string's own felt-contact physics, set from
+    /// [`StringConfig::hammer`] and live-adjustable via
+    /// [`PluckedString::set_hammer`].
+    hammer: hammer::HammerConfig,
 }
 
 impl PluckedString {
@@ -220,6 +227,7 @@ impl PluckedString {
             damper_engaged: true,
             envelope: 0.0,
             sample_rate: sample_rate.hertz(),
+            hammer: config.hammer,
         })
     }
 
@@ -285,6 +293,14 @@ impl PluckedString {
         self.rng = Xorshift32::new(seed);
     }
 
+    /// Changes this string's felt-contact physics, used by the *next*
+    /// [`PluckedString::pluck`]. A string already ringing is unaffected,
+    /// since its excitation burst was already shaped and written into the
+    /// delay line.
+    pub fn set_hammer(&mut self, hammer: hammer::HammerConfig) {
+        self.hammer = hammer;
+    }
+
     /// Excites the string with a hammer-shaped noise burst at the given
     /// velocity.
     ///
@@ -309,7 +325,8 @@ impl PluckedString {
         // engaged no longer applies to the new note.
         self.damper_engaged = false;
 
-        let (contact_force, contact_samples) = hammer::simulate_contact(velocity, self.sample_rate);
+        let (contact_force, contact_samples) =
+            hammer::simulate_contact(velocity, self.sample_rate, self.hammer);
         let burst_length = self.loop_delay as usize + 1;
         for index in 0..burst_length {
             let shape = if index < contact_samples {

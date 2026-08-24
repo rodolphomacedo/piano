@@ -483,6 +483,105 @@ exist. Neither command was run here.
 
 ---
 
+## M9 — Hammer and touch realism
+
+Closes the single biggest remaining gap toward Pianoteq-level realism: today's
+hammer contact (`PERF-007`) treats the string as immobile during contact, and
+hammer hardness follows one curve per register rather than per note.
+
+**Includes**: a coupled hammer/string solve
+([#57](https://github.com/rodolphomacedo/piano/issues/57)), per-note hammer
+voicing curves
+([#58](https://github.com/rodolphomacedo/piano/issues/58)), and strike-position
+modelling
+([#32](https://github.com/rodolphomacedo/piano/issues/32), open since M4).
+
+**Done when**: a measured spectral/attack difference exists between the old
+hammer-only model and the coupled one, sourced from cited literature, within
+the existing realtime budget.
+
+---
+
+## M10 — The other two pedals
+
+Only the sustain pedal (CC64) exists today. A real piano has three.
+
+**Includes**: soft pedal / una corda
+([#59](https://github.com/rodolphomacedo/piano/issues/59)), sostenuto
+([#60](https://github.com/rodolphomacedo/piano/issues/60)), and continuous
+half-pedalling on sustain
+([#61](https://github.com/rodolphomacedo/piano/issues/61)).
+
+**Done when**: all three pedals are wired to their standard MIDI CC numbers
+(CC67, CC66, CC64) and each produces an audibly and measurably distinct
+effect from the others.
+
+---
+
+## M11 — Deeper coupling and soundboard
+
+`PERF-008`'s single shared bridge bus and `PERF-009`'s 8-mode soundboard were
+deliberate realtime-budget approximations from M6. This milestone asks
+whether a richer version of each is worth the extra cost — with a
+measurement either way, not an opinion.
+
+**Includes**: richer sympathetic-resonance coupling
+([#62](https://github.com/rodolphomacedo/piano/issues/62)) and an expanded
+soundboard modal bank
+([#63](https://github.com/rodolphomacedo/piano/issues/63)).
+
+**Done when**: each change has a before/after measurement showing it is
+worth (or not worth) its extra cost.
+
+---
+
+## M12 — Mechanical presence
+
+The small mechanical sounds — hammer escapement click, key-bed thud — that
+make a piano feel like a physical object in a room, not just a string.
+
+**Includes**: synthesised (never recorded) hammer let-off and key-bed noise
+([#64](https://github.com/rodolphomacedo/piano/issues/64)), sourced from
+published piano-action acoustics.
+
+**Done when**: a rendered strike has an audible, velocity-correlated
+mechanical component distinct from the string's own excitation.
+
+---
+
+## M13 — Modelling a specific real instrument
+
+Whether to model one named real piano design (a specific Steinway, a
+specific Bösendorfer) rather than a generic instrument, the way Pianoteq
+offers multiple named models.
+
+**Includes**: a single issue on purpose
+([#65](https://github.com/rodolphomacedo/piano/issues/65)) — an ADR
+deciding what real-instrument scale data (string length, tension, bridge
+position) is acceptable to use under this project's absolute no-recordings
+rule, before any implementation is scoped. The same kind of decision-before-
+code discipline that resolved M6's soundboard approach (`PERF-009`).
+
+**Done when**: the ADR is merged. Implementation issues, if any, come after
+and are not yet opened.
+
+---
+
+## M14 — CLAP plugin
+
+Turns `docs/PLUGIN-PATH.md`'s M8 research into a real, loadable plugin.
+
+**Includes**: a `piano-plugin` crate implementing CLAP
+([#66](https://github.com/rodolphomacedo/piano/issues/66)), reusing
+`piano-audio::Engine`/`Command`/`voicing` rather than forking them, per
+`docs/PLUGIN-PATH.md`'s own recommendation.
+
+**Done when**: the plugin loads in a real CLAP host (or `clap-validator`)
+and plays a note — the same "someone who is not the author" bar M8 already
+set for the CLI.
+
+---
+
 ## Backlog — future optimisations
 
 Items that are real but not scheduled. The `PERF` register in

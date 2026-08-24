@@ -75,6 +75,20 @@ pub const SILENCE_THRESHOLD: f32 = 1e-4;
 /// real damped piano note shows.
 const RELEASE_LOSS_MULTIPLIER: f32 = 0.4;
 
+/// How far below its construction-time frequency [`PluckedString::set_frequency`]
+/// can retune without reallocating.
+///
+/// [`PluckedString::new`] reserves delay-line capacity for this much downward
+/// detune (a lower frequency means a longer period means more delay-line
+/// capacity needed); [`PluckedString::retune_loop_delay`] then caps
+/// `loop_delay` at whatever that reservation actually holds, so a request
+/// beyond this range degrades pitch accuracy rather than reading outside the
+/// delay line. 100 cents is a full semitone either way — far past
+/// `crate::unison`'s widest unison spread (±4 cents) — so headroom for the
+/// live parameter studio's per-string detune control never actually binds in
+/// practice; it exists so that is provable rather than assumed.
+pub const MAX_LIVE_DETUNE_CENTS: f32 = 100.0;
+
 /// Damping [`StringConfig::new`] uses when the caller does not choose one.
 pub const DEFAULT_DAMPING: f32 = 0.5;
 
@@ -126,10 +140,12 @@ pub struct PluckedString {
     dc_blocker: DcBlocker,
     rng: Xorshift32,
     /// Samples per cycle at this string's fixed frequency. `frequency`
-    /// itself is not live-adjustable — that would need the delay line to
-    /// grow — but `period` is kept so [`PluckedString::set_damping`] can
-    /// retune `loop_delay` after the loss filter's phase delay changes,
-    /// without needing the caller to pass the frequency back in.
+    /// itself is only live-adjustable within [`MAX_LIVE_DETUNE_CENTS`] of the
+    /// frequency `PluckedString::new` reserved delay-line headroom for (see
+    /// [`PluckedString::set_frequency`]) — but `period` is kept so
+    /// [`PluckedString::set_damping`] can retune `loop_delay` after the loss
+    /// filter's phase delay changes, without needing the caller to pass the
+    /// frequency back in.
     period: f32,
     loop_delay: f32,
     sustain: f32,
@@ -173,8 +189,16 @@ impl PluckedString {
             });
         }
 
+        // Sized for the lowest frequency a live `set_frequency` call is
+        // allowed to reach, not just the construction-time frequency —
+        // otherwise a downward live retune would need to grow the delay
+        // line, which the audio thread cannot do.
+        let lowest_live_frequency =
+            config.frequency.hertz() * math::powf(2.0, -MAX_LIVE_DETUNE_CENTS / 1200.0);
+        let max_live_period = sample_rate.hertz() / lowest_live_frequency;
+
         Ok(Self {
-            delay: DelayLine::with_capacity(period as usize + 4),
+            delay: DelayLine::with_capacity(max_live_period as usize + 4),
             loop_filter,
             dispersion,
             dc_blocker: DcBlocker::default(),
@@ -234,6 +258,23 @@ impl PluckedString {
     /// [`PluckedString::set_damping`] uses for the loss filter.
     pub fn set_inharmonicity(&mut self, inharmonicity: f32) {
         self.dispersion.set_inharmonicity(inharmonicity);
+        self.retune_loop_delay();
+    }
+
+    /// Retunes the string to `frequency`, without reallocating the delay
+    /// line.
+    ///
+    /// `frequency` is used exactly as given — [`Hz`] already guarantees a
+    /// finite, positive value, so unlike `damping`/`sustain` this has nothing
+    /// of its own to clamp. What *is* bounded is how far the resulting
+    /// `loop_delay` can move: [`PluckedString::new`] only reserved delay-line
+    /// headroom for [`MAX_LIVE_DETUNE_CENTS`] of downward detune, and
+    /// [`PluckedString::retune_loop_delay`]'s clamp caps `loop_delay` at
+    /// whatever that reservation actually holds, so a request beyond that
+    /// range degrades pitch accuracy rather than reading outside the delay
+    /// line.
+    pub fn set_frequency(&mut self, frequency: Hz) {
+        self.period = self.sample_rate / frequency.hertz();
         self.retune_loop_delay();
     }
 
@@ -449,20 +490,22 @@ impl PluckedString {
     }
 
     /// Recomputes `loop_delay` from `period` minus every filter's current
-    /// phase delay at DC, floored at [`MIN_LOOP_DELAY`] rather than going
-    /// negative. Shared by [`PluckedString::set_damping`] and
-    /// [`PluckedString::set_inharmonicity`], the two live controls whose
-    /// filters sit inside the tuned loop.
+    /// phase delay at DC, clamped into `[MIN_LOOP_DELAY, max_delay - 1]`
+    /// rather than going negative or reading outside the delay line. Shared
+    /// by [`PluckedString::set_damping`], [`PluckedString::set_inharmonicity`]
+    /// and [`PluckedString::set_frequency`] — every live control whose
+    /// change can move where in the tuned loop `loop_delay` needs to sit.
+    /// The upper bound only ever binds for `set_frequency`: damping and
+    /// inharmonicity move a filter's phase delay, which only ever shrinks
+    /// `loop_delay` below `period`, never grows it past what the delay line
+    /// was sized for.
     fn retune_loop_delay(&mut self) {
         let retuned = self.period
             - self.loop_filter.phase_delay_at_dc()
             - self.dispersion.phase_delay_at_dc()
             - 1.0;
-        self.loop_delay = if retuned < MIN_LOOP_DELAY {
-            MIN_LOOP_DELAY
-        } else {
-            retuned
-        };
+        let max_loop_delay = self.delay.max_delay() as f32 - 1.0;
+        self.loop_delay = math::clamp_or_low(retuned, MIN_LOOP_DELAY, max_loop_delay);
     }
 
     #[inline]

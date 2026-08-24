@@ -210,6 +210,42 @@ fn set_inharmonicity_never_produces_a_non_finite_or_unbounded_signal() {
 }
 
 #[test]
+fn set_frequency_retunes_within_reserved_headroom() {
+    let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
+    let base_frequency = Hz::new(220.0).expect("220 Hz is valid");
+    let mut string =
+        PluckedString::new(StringConfig::new(base_frequency), rate).expect("220 Hz is tunable");
+
+    // Detune down by the full reserved range — the lowest frequency
+    // `PluckedString::new` sized the delay line's headroom for.
+    let detuned_hertz = 220.0 * math::powf(2.0, -MAX_LIVE_DETUNE_CENTS / 1200.0);
+    let detuned = Hz::new(detuned_hertz).expect("detuned frequency stays positive");
+    string.set_frequency(detuned);
+
+    let period = rate.hertz() / detuned_hertz;
+    let total_delay = string.loop_delay()
+        + string.loop_filter.phase_delay_at_dc()
+        + string.dispersion.phase_delay_at_dc()
+        + 1.0;
+    assert!(
+        (total_delay - period).abs() < 1e-3,
+        "total delay {total_delay} drifted from the detuned period {period} — \
+         reserved headroom was insufficient"
+    );
+}
+
+#[test]
+fn set_frequency_to_the_same_pitch_does_not_move_loop_delay() {
+    let mut string = string_at(440.0);
+    let before = string.loop_delay();
+    string.set_frequency(Hz::new(440.0).expect("440 Hz is valid"));
+    assert!(
+        (string.loop_delay() - before).abs() < 1e-3,
+        "retuning to the same frequency should not move loop_delay"
+    );
+}
+
+#[test]
 fn set_sustain_does_not_change_loop_delay() {
     let mut string = string_at(440.0);
     let before = string.loop_delay();
@@ -338,6 +374,27 @@ proptest! {
         let mut string = string_at(220.0);
         string.pluck(1.0);
         string.set_inharmonicity(inharmonicity);
+        prop_assert!(string.loop_delay() >= MIN_LOOP_DELAY);
+        for _ in 0..1_000 {
+            let sample = string.process();
+            prop_assert!(sample.is_finite());
+        }
+    }
+
+    /// Whatever frequency is requested, live retuning never breaks the
+    /// string: loop_delay stays within the delay line's reserved capacity
+    /// and every subsequent sample stays finite. `hertz` values that fail
+    /// `Hz::new` (non-finite or non-positive) are skipped, since
+    /// `set_frequency` takes an already-validated `Hz` — this proptest is
+    /// about `set_frequency`'s own totality, not `Hz::new`'s, which
+    /// `units.rs` covers separately.
+    #[test]
+    fn set_frequency_is_total_for_any_hertz(hertz in proptest::num::f32::ANY) {
+        let mut string = string_at(220.0);
+        string.pluck(1.0);
+        if let Ok(frequency) = Hz::new(hertz) {
+            string.set_frequency(frequency);
+        }
         prop_assert!(string.loop_delay() >= MIN_LOOP_DELAY);
         for _ in 0..1_000 {
             let sample = string.process();

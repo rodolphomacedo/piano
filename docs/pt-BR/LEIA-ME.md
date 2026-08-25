@@ -50,8 +50,10 @@ um protótipo incompleto. Hoje você já pode:
 - Conectar um piano digital ou teclado MIDI de verdade por USB e tocar nele.
 - Renderizar uma nota para um arquivo de áudio (`.wav`).
 - Abrir uma versão simplificada direto no navegador, sem instalar nada.
+- Abrir uma página web local com o instrumento inteiro, tocar e ajustar ao
+  vivo qualquer parâmetro físico de qualquer corda ou tecla.
 
-Nada disso está "quase pronto" ou "em teste" — os quatro caminhos acima
+Nada disso está "quase pronto" ou "em teste" — os cinco caminhos acima
 funcionam de verdade, hoje, na versão atual do código.
 
 ## Antes de instalar: o que você precisa
@@ -149,6 +151,24 @@ cd crates/piano-wasm/www && python3 -m http.server 8080
 Depois abra `http://localhost:8080` no navegador, mexa no controle de
 frequência e clique em "Strike" (golpear).
 
+### 5. Estúdio de parâmetros: o instrumento inteiro, numa página web local
+
+Diferente do item 4 acima (que é uma demonstração em WebAssembly, de uma
+corda só), este é o programa de sempre com um servidor web local embutido —
+o piano inteiro, com as 88 teclas, acordes, e controles deslizantes para
+ajustar ao vivo qualquer parâmetro físico de qualquer corda:
+
+```sh
+echo '{}' > meu-piano.piano.json
+cargo run --release -p piano-cli -- studio --piano meu-piano.piano.json
+```
+
+Depois abra o endereço impresso no terminal (por padrão,
+`http://127.0.0.1:7878`). Dá para tocar direto na página (clicando ou pelo
+teclado do computador) e também conectar um teclado MIDI de verdade ao
+mesmo tempo, com `--midi`. Guia completo, com o erro mais comum explicado:
+[`docs/pt-BR/studio-como-usar.md`](studio-como-usar.md).
+
 ## Por que o projeto é construído do jeito que é
 
 Três ideias guiam basicamente toda decisão técnica deste projeto:
@@ -190,7 +210,10 @@ Três ideias guiam basicamente toda decisão técnica deste projeto:
   [`docs/pt-BR/COMO-FUNCIONA.pdf`](COMO-FUNCIONA.pdf).
 - Cada etapa do projeto (M5 a M8) tem seu próprio guia de "o que mudou e
   como testar" em `docs/pt-BR/` — bom para quem quer acompanhar a evolução
-  passo a passo.
+  passo a passo. O estúdio de parâmetros (item 5 acima) tem o seu próprio
+  guia à parte, [`docs/pt-BR/studio-como-usar.md`](studio-como-usar.md), por
+  não ser numerado como M5–M8 (é um recurso independente do roteiro de
+  milestones — veja `docs/PARAMETER-STUDIO.md`, em inglês).
 - Toda a documentação técnica detalhada (arquitetura, física, performance)
   está em inglês na pasta `docs/` e é referenciada pelo `README.md`
   principal, na raiz do projeto — não é necessária para usar o piano, só

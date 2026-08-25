@@ -256,6 +256,30 @@ alongside the local web server, and prints the URL
 (`http://localhost:7878` by default) rather than trying to launch a
 browser itself.
 
+### Implementation notes
+
+Where the shipped code (`crates/piano-cli/src/studio.rs`,
+`crates/piano-studio/www/`) settled differently than this section's
+original sketch, or adds detail it left unstated:
+
+- The port flag is `--web-port`, not `--port` — `--port` was already taken
+  by `piano midi`'s MIDI-port-name substring filter, which `studio` also
+  accepts.
+- `--piano <file>` must name a file that already exists; `studio` loads and
+  resolves it, it does not create one. The smallest valid file is `{}`
+  (every field falls back to a documented default).
+- The web server always starts, with or without `--midi` — a browser tab
+  is a full controller on its own, not only a companion to a MIDI keyboard.
+- `studio` needs a real interactive terminal, `--midi` or not: quitting on
+  `Esc`/`Ctrl+C` goes through the same raw-mode terminal reader `piano
+  midi` uses, so it must run attached to a terminal, not backgrounded.
+- The browser UI does not yet support naming and saving a new group from a
+  selection — the "groups panel" sketched under "Browser UI" above is
+  simplified to applying an edit to an ad hoc multi-key "selection"
+  (shift-click), which is not persisted as a named group. Turning a
+  selection into a saved, reusable group still means hand-editing the
+  file's `groups` array.
+
 ## Testing strategy
 
 - `piano-studio`'s file parsing and cascade-resolution logic: ordinary

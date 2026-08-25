@@ -74,8 +74,25 @@ const MIN_DECAY_SECONDS: f32 = 0.01;
 /// `filter::MAX_POLE` and `dispersion`'s `MAX_COEFFICIENT`.
 const MAX_RADIUS: f32 = 0.999_9;
 
+/// Lowest mode frequency [`Resonator::new`] accepts, so a live-set mode
+/// (`Soundboard::set_mode`) cannot feed a non-positive frequency into the
+/// resonator's phase calculation — the fixed [`MODES`] table never gets
+/// close to this bound, but a caller-supplied [`SoundboardMode`] now can.
+const MIN_MODE_FREQUENCY_HZ: f32 = 1.0;
+
+/// Highest mode frequency accepted, generously above the audible range
+/// (a real listener stops hearing well below this), so a live-set mode
+/// cannot alias the resonator's phase into a musically meaningless range.
+const MAX_MODE_FREQUENCY_HZ: f32 = 20_000.0;
+
+/// Highest relative gain accepted for one mode — several times the fixed
+/// [`MODES`] table's own loudest entry (`1.0`), enough headroom for live
+/// tuning without a caller driving one resonator's contribution to the mix
+/// arbitrarily loud.
+const MAX_MODE_GAIN: f32 = 4.0;
+
 /// One soundboard mode's physical parameters.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SoundboardMode {
     /// Mode frequency, in hertz.
     pub frequency_hz: f32,
@@ -142,19 +159,30 @@ struct Resonator {
 }
 
 impl Resonator {
+    /// Total for every field of `mode`, including `NaN` and infinities:
+    /// each is clamped into a finite, resonator-safe range before it can
+    /// reach a division, a trig function or the recursion's own gain —
+    /// necessary since [`Soundboard::set_mode`] now lets a caller supply
+    /// `mode` live, not just the fixed, already-sane [`MODES`] table.
     fn new(mode: SoundboardMode, sample_rate: f32) -> Self {
         let decay = math::clamp_or_low(mode.decay_seconds, MIN_DECAY_SECONDS, f32::MAX);
         let radius = math::clamp_or_low(math::exp(-1.0 / (decay * sample_rate)), 0.0, MAX_RADIUS);
-        let theta = core::f32::consts::TAU * mode.frequency_hz / sample_rate;
+        let frequency_hz = math::clamp_or_low(
+            mode.frequency_hz,
+            MIN_MODE_FREQUENCY_HZ,
+            MAX_MODE_FREQUENCY_HZ,
+        );
+        let gain = math::clamp_or_low(mode.gain, 0.0, MAX_MODE_GAIN);
+        let theta = core::f32::consts::TAU * frequency_hz / sample_rate;
         Self {
             two_r_cos_theta: 2.0 * radius * math::cos(theta),
             neg_r_squared: -(radius * radius),
             // Normalises the resonator's peak steady-state gain to roughly
-            // `mode.gain`, independent of how long the mode rings for —
-            // without the `(1 - r)` term a long-decaying (large `r`) mode
-            // would resonate far louder than a short one for the same
-            // `gain`, which is not what "gain" should mean to a caller.
-            input_gain: mode.gain * (1.0 - radius),
+            // `gain`, independent of how long the mode rings for — without
+            // the `(1 - r)` term a long-decaying (large `r`) mode would
+            // resonate far louder than a short one for the same `gain`,
+            // which is not what "gain" should mean to a caller.
+            input_gain: gain * (1.0 - radius),
             state1: 0.0,
             state2: 0.0,
         }
@@ -183,6 +211,9 @@ impl Resonator {
 #[derive(Debug, Clone)]
 pub struct Soundboard {
     resonators: [Resonator; MODE_COUNT],
+    /// Kept so [`Soundboard::set_mode`] can rebuild one resonator later
+    /// without the caller having to re-supply the sample rate.
+    sample_rate: f32,
 }
 
 impl Soundboard {
@@ -195,7 +226,27 @@ impl Soundboard {
         for (slot, mode) in resonators.iter_mut().zip(MODES) {
             *slot = Resonator::new(mode, hertz);
         }
-        Self { resonators }
+        Self {
+            resonators,
+            sample_rate: hertz,
+        }
+    }
+
+    /// Rebuilds mode `index` in place, live, from `mode` — the same
+    /// "replace the whole resonator" approach `dispersion::DispersionCascade`
+    /// does not need (it only ever changes one coefficient) but a mode
+    /// change does, since frequency, decay and gain all feed the
+    /// resonator's fixed coefficients at construction time.
+    ///
+    /// Total for any `index`: out of `[0, MODE_COUNT)` is silently a no-op,
+    /// the same "caller cannot crash the audio thread with a bad index"
+    /// contract as everywhere else in this crate — there is no per-mode
+    /// error to report on the audio thread, so silence, not a `Result`, is
+    /// the total answer here.
+    pub fn set_mode(&mut self, index: usize, mode: SoundboardMode) {
+        if let Some(slot) = self.resonators.get_mut(index) {
+            *slot = Resonator::new(mode, self.sample_rate);
+        }
     }
 
     /// Drives every mode with `driving_input` (typically the engine's
@@ -281,7 +332,68 @@ mod tests {
         }
     }
 
+    #[test]
+    fn set_mode_on_an_out_of_range_index_is_a_silent_no_op() {
+        let mut board = soundboard();
+        board.set_mode(
+            MODE_COUNT + 5,
+            SoundboardMode {
+                frequency_hz: 5_000.0,
+                decay_seconds: 2.0,
+                gain: 3.0,
+            },
+        );
+        board.process(1.0);
+        for _ in 0..1_000 {
+            assert!(board.process(0.0).is_finite());
+        }
+    }
+
+    #[test]
+    fn set_mode_changes_which_frequency_rings() {
+        let mut low = soundboard();
+        let mut high = soundboard();
+        high.set_mode(
+            0,
+            SoundboardMode {
+                frequency_hz: 10_000.0,
+                decay_seconds: 0.3,
+                gain: 1.0,
+            },
+        );
+        low.process(1.0);
+        high.process(1.0);
+        let low_tail: Vec<f32> = (0..256).map(|_| low.process(0.0)).collect();
+        let high_tail: Vec<f32> = (0..256).map(|_| high.process(0.0)).collect();
+        let difference: f32 = low_tail
+            .iter()
+            .zip(high_tail.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(
+            difference > 1e-3,
+            "retuning mode 0 did not change the ring: total diff {difference}"
+        );
+    }
+
     proptest! {
+        /// Whatever mode a caller live-sets, including NaN and +-infinity
+        /// fields and an out-of-range index, the board must stay finite.
+        #[test]
+        fn set_mode_is_total(
+            index in 0usize..MODE_COUNT + 2,
+            frequency_hz in proptest::num::f32::ANY,
+            decay_seconds in proptest::num::f32::ANY,
+            gain in proptest::num::f32::ANY,
+        ) {
+            let mut board = soundboard();
+            board.set_mode(index, SoundboardMode { frequency_hz, decay_seconds, gain });
+            board.process(1.0);
+            for _ in 0..256 {
+                prop_assert!(board.process(0.0).is_finite());
+            }
+        }
+
         /// Whatever input sequence a caller drives the soundboard with,
         /// including NaN and +-infinity, it must never panic or produce a
         /// non-finite value.

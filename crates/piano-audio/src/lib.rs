@@ -126,6 +126,43 @@ impl AudioSession {
         self.producer.push(Command::SetSustain { sustain }).is_ok()
     }
 
+    /// Queues rebuilding one of the soundboard's resonant modes live. See
+    /// [`piano_core::soundboard::Soundboard::set_mode`]. `index` outside
+    /// `0..piano_core::soundboard::MODE_COUNT` is silently ignored on the
+    /// audio thread. Same drop-not-block behaviour as
+    /// [`AudioSession::note_on`].
+    pub fn set_soundboard_mode(
+        &mut self,
+        index: usize,
+        mode: piano_core::soundboard::SoundboardMode,
+    ) -> bool {
+        self.producer
+            .push(Command::SetSoundboardMode { index, mode })
+            .is_ok()
+    }
+
+    /// Queues a new local (within-group) unison coupling gain for every
+    /// voice, live. See
+    /// [`piano_core::UnisonGroup::set_local_coupling_gain`]. `gain` is
+    /// clamped into `[0, 1]` on the audio thread. Same drop-not-block
+    /// behaviour as [`AudioSession::note_on`].
+    pub fn set_local_coupling_gain(&mut self, gain: f32) -> bool {
+        self.producer
+            .push(Command::SetLocalCouplingGain { gain })
+            .is_ok()
+    }
+
+    /// Queues a new global (cross-key, [`piano_core::BridgeBus`]) coupling
+    /// gain for every voice, live. See
+    /// [`piano_core::UnisonGroup::set_global_coupling_gain`]. `gain` is
+    /// clamped into `[0, 1]` on the audio thread. Same drop-not-block
+    /// behaviour as [`AudioSession::note_on`].
+    pub fn set_global_coupling_gain(&mut self, gain: f32) -> bool {
+        self.producer
+            .push(Command::SetGlobalCouplingGain { gain })
+            .is_ok()
+    }
+
     /// The sample rate the engine is tuned for: the output device's own
     /// rate, not necessarily 48 kHz.
     #[inline]

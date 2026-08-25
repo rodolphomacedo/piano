@@ -50,4 +50,27 @@ pub(crate) enum Command {
         /// `true` while the pedal is held down.
         down: bool,
     },
+    /// Rebuilds one of the soundboard's resonant modes live. See
+    /// [`piano_core::soundboard::Soundboard::set_mode`].
+    SetSoundboardMode {
+        /// Which mode, `0` to [`piano_core::soundboard::MODE_COUNT`] - 1;
+        /// any other index is silently ignored.
+        index: usize,
+        /// The mode's new frequency, decay time and gain.
+        mode: piano_core::soundboard::SoundboardMode,
+    },
+    /// Sets how strongly each voice's own unison strings couple to each
+    /// other, live, on every voice. See
+    /// [`piano_core::UnisonGroup::set_local_coupling_gain`].
+    SetLocalCouplingGain {
+        /// New local coupling gain, `0.0` to `1.0`.
+        gain: f32,
+    },
+    /// Sets how strongly each voice couples to the shared, cross-key
+    /// bridge bus, live, on every voice. See
+    /// [`piano_core::UnisonGroup::set_global_coupling_gain`].
+    SetGlobalCouplingGain {
+        /// New global coupling gain, `0.0` to `1.0`.
+        gain: f32,
+    },
 }

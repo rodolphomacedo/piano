@@ -71,7 +71,7 @@ pub const MAX_UNISON_STRINGS: usize = 3;
 /// this specific figure is a reasoned choice within that "weak coupling"
 /// order of magnitude, honestly labelled as such — the same pattern
 /// `piano_audio::voicing`'s `BASS_DAMPING`/`TREBLE_DAMPING` already use.
-const LOCAL_COUPLING_GAIN: f32 = 0.15;
+const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.15;
 
 /// Detuning, in cents, for a 2-string (bichord) unison group, symmetric
 /// around the nominal pitch.
@@ -98,6 +98,10 @@ const DETUNE_CENTS_TRICHORD: [f32; 3] = [-4.0, 0.0, 4.0];
 pub struct UnisonGroup {
     strings: [Option<PluckedString>; MAX_UNISON_STRINGS],
     count: usize,
+    /// See [`UnisonGroup::set_local_coupling_gain`].
+    local_coupling_gain: f32,
+    /// See [`UnisonGroup::set_global_coupling_gain`].
+    global_coupling_gain: f32,
 }
 
 impl UnisonGroup {
@@ -135,7 +139,12 @@ impl UnisonGroup {
             config.seed = reseed_for_string(base_config.seed, index);
             *slot = Some(PluckedString::new(config, sample_rate)?);
         }
-        Ok(Self { strings, count })
+        Ok(Self {
+            strings,
+            count,
+            local_coupling_gain: DEFAULT_LOCAL_COUPLING_GAIN,
+            global_coupling_gain: DEFAULT_GLOBAL_COUPLING_GAIN,
+        })
     }
 
     /// Strikes every string in the group at the same `velocity` — a real
@@ -175,6 +184,24 @@ impl UnisonGroup {
         for string in self.strings.iter_mut().flatten() {
             string.set_sustain(sustain);
         }
+    }
+
+    /// Adjusts how strongly this group's own strings couple to each other,
+    /// live — see [`DEFAULT_LOCAL_COUPLING_GAIN`] for the physical meaning.
+    /// Clamped into `[0, 1]`, the same range [`blend`] itself expects
+    /// (`blend` clamps too, so this is a defensive, redundant-by-design
+    /// second clamp — the same pattern [`crate::string::PluckedString::
+    /// set_damping`] already uses for its own pole coefficient).
+    pub fn set_local_coupling_gain(&mut self, gain: f32) {
+        self.local_coupling_gain = math::clamp_or_low(gain, 0.0, 1.0);
+    }
+
+    /// Adjusts how strongly this group blends with the shared, cross-key
+    /// bridge bus's readback, live — see [`DEFAULT_GLOBAL_COUPLING_GAIN`]
+    /// for the physical meaning. Clamped the same way as
+    /// [`UnisonGroup::set_local_coupling_gain`].
+    pub fn set_global_coupling_gain(&mut self, gain: f32) {
+        self.global_coupling_gain = math::clamp_or_low(gain, 0.0, 1.0);
     }
 
     /// Whether every string in the group has decayed below audibility.
@@ -280,9 +307,9 @@ impl UnisonGroup {
             };
             let mixed = if sample.receptive {
                 let local_mean = other_strings_mean(local_sum, sample.dispersed, receptive_count);
-                let locally_blended = blend(sample.dispersed, local_mean, LOCAL_COUPLING_GAIN);
+                let locally_blended = blend(sample.dispersed, local_mean, self.local_coupling_gain);
                 match global_readback {
-                    Some(readback) => blend(locally_blended, readback, GLOBAL_COUPLING_GAIN),
+                    Some(readback) => blend(locally_blended, readback, self.global_coupling_gain),
                     None => locally_blended,
                 }
             } else {
@@ -312,10 +339,10 @@ struct StringSample {
 /// write_mixed_feedback`]'s doc comment for why this weighting a *convex*
 /// combination (this module's [`blend`]) rather than an additive term is
 /// what makes any value in `[0, 1]` safe regardless of `sustain`. Kept
-/// smaller than [`LOCAL_COUPLING_GAIN`]: cross-key sympathetic resonance is
+/// smaller than [`DEFAULT_LOCAL_COUPLING_GAIN`]: cross-key sympathetic resonance is
 /// a subtler effect than one note's own unison beating — same
 /// literature-order-of-magnitude honesty note as that constant.
-const GLOBAL_COUPLING_GAIN: f32 = 0.08;
+const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
 
 /// The mean dispersed signal across this group's `receptive_count`
 /// receptive strings — `0.0` when none are (nothing to contribute; also
@@ -544,6 +571,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn set_local_coupling_gain_clamps_into_zero_one() {
+        let mut group = group_at(220.0, 3);
+        group.set_local_coupling_gain(-5.0);
+        assert_eq!(group.local_coupling_gain, 0.0);
+        group.set_local_coupling_gain(5.0);
+        assert_eq!(group.local_coupling_gain, 1.0);
+    }
+
+    #[test]
+    fn set_global_coupling_gain_clamps_into_zero_one() {
+        let mut group = group_at(220.0, 3);
+        group.set_global_coupling_gain(-5.0);
+        assert_eq!(group.global_coupling_gain, 0.0);
+        group.set_global_coupling_gain(5.0);
+        assert_eq!(group.global_coupling_gain, 1.0);
+    }
+
+    #[test]
+    fn changing_local_coupling_gain_measurably_changes_the_output() {
+        let mut coupled = group_at(220.0, 3);
+        let mut uncoupled = group_at(220.0, 3);
+        uncoupled.set_local_coupling_gain(0.0);
+        coupled.pluck(1.0);
+        uncoupled.pluck(1.0);
+        let difference: f32 = (0..2_000)
+            .map(|_| (coupled.process() - uncoupled.process()).abs())
+            .sum();
+        assert!(
+            difference > 1e-3,
+            "zeroing local_coupling_gain did not change the output: diff {difference}"
+        );
+    }
+
     proptest! {
         /// Whatever unison count and velocity, plucking and processing a
         /// group with local coupling active must stay finite and bounded —
@@ -558,6 +619,29 @@ mod tests {
             group.pluck(velocity);
             for _ in 0..2_000 {
                 let sample = group.process();
+                prop_assert!(sample.is_finite());
+                prop_assert!(sample.abs() < UNISON_BOUND, "sample {sample} escaped");
+            }
+        }
+
+        /// Whatever coupling gains a caller live-sets, including NaN and
+        /// +-infinity, the group must stay finite and within the same
+        /// bound as the default gains — `set_local_coupling_gain` and
+        /// `set_global_coupling_gain` clamp exactly like every other live
+        /// setter in this crate.
+        #[test]
+        fn any_coupling_gain_stays_bounded(
+            local_gain in proptest::num::f32::ANY,
+            global_gain in proptest::num::f32::ANY,
+        ) {
+            let mut group = group_at(220.0, 3);
+            group.set_local_coupling_gain(local_gain);
+            group.set_global_coupling_gain(global_gain);
+            let mut bridge = BridgeBus::with_capacity(128);
+            group.pluck(1.0);
+            bridge.begin_block();
+            for index in 0..128 {
+                let sample = group.process_with_bridge(&mut bridge, index);
                 prop_assert!(sample.is_finite());
                 prop_assert!(sample.abs() < UNISON_BOUND, "sample {sample} escaped");
             }

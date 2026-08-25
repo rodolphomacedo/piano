@@ -184,6 +184,107 @@ fn set_damping_out_of_range_never_panics() {
 }
 
 #[test]
+fn set_soundboard_mode_out_of_range_index_never_panics() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::SetSoundboardMode {
+            index: 999,
+            mode: SoundboardMode {
+                frequency_hz: f32::NAN,
+                decay_seconds: f32::NAN,
+                gain: f32::NAN,
+            },
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut buffer = [0.0f32; 32];
+    engine.process_block(&mut buffer);
+}
+
+#[test]
+fn set_soundboard_mode_measurably_changes_the_soundboard_tail() {
+    let mut quiet = engine();
+    let mut loud = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+
+    producer
+        .push(Command::SetSoundboardMode {
+            index: 0,
+            mode: SoundboardMode {
+                frequency_hz: 300.0,
+                decay_seconds: 2.0,
+                gain: 3.0,
+            },
+        })
+        .expect("queue has room");
+    loud.drain_commands(&mut consumer);
+
+    for engine in [&mut quiet, &mut loud] {
+        producer
+            .push(Command::NoteOn {
+                midi: 69,
+                velocity: 1.0,
+            })
+            .expect("queue has room");
+        engine.drain_commands(&mut consumer);
+    }
+
+    let mut quiet_out = [0.0f32; 512];
+    let mut loud_out = [0.0f32; 512];
+    quiet.process_block(&mut quiet_out);
+    loud.process_block(&mut loud_out);
+    assert_ne!(
+        quiet_out.to_vec(),
+        loud_out.to_vec(),
+        "SetSoundboardMode had no audible effect"
+    );
+}
+
+#[test]
+fn set_local_coupling_gain_reaches_an_already_ringing_voice() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::NoteOn {
+            midi: 69,
+            velocity: 1.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+
+    let mut before = [0.0f32; 512];
+    engine.process_block(&mut before);
+
+    producer
+        .push(Command::SetLocalCouplingGain { gain: 0.0 })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut after = [0.0f32; 512];
+    engine.process_block(&mut after);
+    assert_ne!(
+        before.to_vec(),
+        after.to_vec(),
+        "SetLocalCouplingGain had no audible effect on a ringing voice"
+    );
+}
+
+#[test]
+fn set_global_coupling_gain_out_of_range_never_panics() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::SetGlobalCouplingGain { gain: f32::NAN })
+        .expect("queue has room");
+    producer
+        .push(Command::SetLocalCouplingGain { gain: 50.0 })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut buffer = [0.0f32; 32];
+    engine.process_block(&mut buffer);
+}
+
+#[test]
 fn note_off_releases_a_ringing_voice_quickly() {
     let mut engine = engine();
     let (mut producer, mut consumer) = ring_buffer();

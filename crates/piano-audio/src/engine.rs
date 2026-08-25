@@ -38,6 +38,7 @@
 //! lifted — see [`UnisonGroup::is_receptive`] and
 //! [`Engine::process_chunk`]'s skip condition.
 
+use piano_core::soundboard::SoundboardMode;
 use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 use rtrb::Consumer;
@@ -182,6 +183,9 @@ impl Engine {
             Command::SetSustain { sustain } => self.set_sustain(sustain),
             Command::NoteOff { midi } => self.note_off(midi),
             Command::SustainPedal { down } => self.set_sustain_pedal(down),
+            Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
+            Command::SetLocalCouplingGain { gain } => self.set_local_coupling_gain(gain),
+            Command::SetGlobalCouplingGain { gain } => self.set_global_coupling_gain(gain),
         }
     }
 
@@ -319,6 +323,36 @@ impl Engine {
         for voice in &mut self.voices {
             if let Some(strings) = voice.strings.as_mut() {
                 strings.set_sustain(sustain);
+            }
+        }
+    }
+
+    /// Rebuilds soundboard mode `index` live. There is only ever one
+    /// [`Soundboard`], shared by every voice's post-mix output, so — unlike
+    /// [`Engine::set_damping`] — this reaches straight into
+    /// [`Engine::soundboard`] rather than broadcasting across
+    /// [`Engine::voices`].
+    fn set_soundboard_mode(&mut self, index: usize, mode: SoundboardMode) {
+        self.soundboard.set_mode(index, mode);
+    }
+
+    /// Applies a new local (within-group) coupling gain to every voice,
+    /// live. Same "one global knob" broadcast as [`Engine::set_damping`].
+    fn set_local_coupling_gain(&mut self, gain: f32) {
+        for voice in &mut self.voices {
+            if let Some(strings) = voice.strings.as_mut() {
+                strings.set_local_coupling_gain(gain);
+            }
+        }
+    }
+
+    /// Applies a new global (cross-key, [`BridgeBus`]) coupling gain to
+    /// every voice, live. Same "one global knob" broadcast as
+    /// [`Engine::set_damping`].
+    fn set_global_coupling_gain(&mut self, gain: f32) {
+        for voice in &mut self.voices {
+            if let Some(strings) = voice.strings.as_mut() {
+                strings.set_global_coupling_gain(gain);
             }
         }
     }

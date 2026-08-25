@@ -9,6 +9,7 @@
 
 use std::io;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -17,7 +18,7 @@ use crossterm::terminal;
 use piano_audio::AudioSession;
 use piano_midi::{MidiEvent, MidiListener};
 use piano_params::Tuning;
-use piano_studio::ResolvedPiano;
+use piano_studio::{LiveState, StudioCommand, StudioConfig};
 
 use crate::report_timing;
 
@@ -29,6 +30,16 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// MIDI events drained per tick, bounding one iteration of the control
 /// loop the same way `crate::midi::MAX_EVENTS_PER_TICK` does.
 const MAX_EVENTS_PER_TICK: usize = 256;
+
+/// [`StudioCommand`]s drained per tick. The same reasoning as
+/// `MAX_EVENTS_PER_TICK`: a browser reload floods well over a thousand at
+/// once, and this keeps one tick of the control loop bounded regardless.
+const MAX_COMMANDS_PER_TICK: usize = 256;
+
+/// `piano studio`'s default port. Nothing about it is special beyond being
+/// unlikely to already be taken — see `docs/PARAMETER-STUDIO.md`'s "CLI
+/// integration" section.
+const DEFAULT_PORT: u16 = 7878;
 
 /// Arguments for `piano studio`.
 #[derive(Debug, clap::Args)]
@@ -57,17 +68,23 @@ pub(crate) struct StudioArgs {
     /// Frequency of concert A, in hertz.
     #[arg(long, default_value_t = 440.0)]
     concert_a: f32,
+
+    /// TCP port for the studio's local web server.
+    #[arg(long, default_value_t = DEFAULT_PORT)]
+    web_port: u16,
 }
 
-/// Runs `piano studio` until Esc or Ctrl+C (when `--midi` is given), or
-/// until the file has been loaded, resolved and applied (otherwise).
+/// Runs `piano studio` until Esc or Ctrl+C: loads the file, starts the
+/// audio session and the local web server, connects to a MIDI controller
+/// when `--midi` is given, then services both MIDI and browser input until
+/// told to stop.
 ///
 /// # Errors
 ///
 /// Returns an error if the `.piano.json` file cannot be loaded, if the
 /// concert-A pitch is invalid, if no audio output device could be opened,
-/// or (with `--midi`) if no MIDI port matches or the terminal could not be
-/// put into raw mode.
+/// if the web server's port cannot be bound, or (with `--midi`) if no MIDI
+/// port matches or the terminal could not be put into raw mode.
 pub(crate) fn run(args: &StudioArgs) -> Result<()> {
     let file = piano_studio::load(&args.piano)
         .with_context(|| format!("could not load {}", args.piano.display()))?;
@@ -81,24 +98,41 @@ pub(crate) fn run(args: &StudioArgs) -> Result<()> {
     // and that rate is whatever the OS output device actually gave —
     // not necessarily 48 kHz — which is only known once the stream is
     // open.
-    let resolved = piano_studio::resolve(&file, tuning, session.sample_rate());
-    apply_resolved_piano(&mut session, &resolved);
+    let live = LiveState::from_file(&file, Some(&args.piano), tuning, session.sample_rate());
+    apply_commands(&mut session, &live.commands());
+    let snapshot = live.snapshot();
+    let string_count: usize = snapshot.keys.iter().map(|key| key.strings.len()).sum();
     println!(
-        "loaded {} — {} strings, {} soundboard mode override(s)",
+        "loaded {} — {} strings across {} keys",
         args.piano.display(),
-        resolved.strings.len(),
-        resolved.soundboard_modes.len(),
+        string_count,
+        snapshot.keys.len(),
     );
 
-    if !args.midi {
-        report_timing(&session);
-        return Ok(());
-    }
+    let (server, commands) = piano_studio::serve(
+        live,
+        StudioConfig {
+            port: args.web_port,
+            tuning,
+            sample_rate: session.sample_rate(),
+        },
+    )
+    .context("could not start the studio's web server")?;
+    println!("piano studio listening on {}", server.url());
+    println!("open that address in a browser to play and edit live.");
 
-    let mut listener = crate::midi::connect(args.port.as_deref(), args.wait)?;
-    print_instructions(listener.port_name());
+    let mut listener = if args.midi {
+        let listener = crate::midi::connect(args.port.as_deref(), args.wait)?;
+        print_instructions(listener.port_name());
+        Some(listener)
+    } else {
+        println!("no MIDI controller requested — play from the browser instead.");
+        None
+    };
+    println!("Esc or Ctrl+C (in this terminal) to quit.\n");
+
     let raw_mode = RawModeGuard::enable().context("could not enable terminal raw mode")?;
-    let outcome = play_until_quit(&mut session, &mut listener);
+    let outcome = run_until_quit(&mut session, listener.as_mut(), &commands);
     drop(raw_mode);
     outcome?;
 
@@ -106,27 +140,98 @@ pub(crate) fn run(args: &StudioArgs) -> Result<()> {
     Ok(())
 }
 
-/// Queues every one of `resolved`'s per-string and instrument-wide
-/// settings onto `session`, applied before the first note plays.
-fn apply_resolved_piano(session: &mut AudioSession, resolved: &ResolvedPiano) {
-    for string in &resolved.strings {
-        session.set_string_damping(string.midi, string.string_index, string.damping);
-        session.set_string_sustain(string.midi, string.string_index, string.sustain);
-        session.set_string_inharmonicity(string.midi, string.string_index, string.inharmonicity);
-        session.set_string_detune(string.midi, string.string_index, string.detune_cents);
-        session.set_string_seed(string.midi, string.string_index, string.seed);
-        session.set_string_hammer(string.midi, string.string_index, string.hammer);
+/// Applies every command in `commands`, in order. Used both for the
+/// commands a freshly loaded [`LiveState`] emits and for the ones arriving
+/// live from the web server — one translation from wire command to engine
+/// setter, for both sources.
+fn apply_commands(session: &mut AudioSession, commands: &[StudioCommand]) {
+    for command in commands {
+        apply_command(session, *command);
     }
-    for (index, mode) in resolved.soundboard_modes.iter().enumerate() {
-        session.set_soundboard_mode(index, *mode);
-    }
-    session.set_local_coupling_gain(resolved.local_coupling_gain);
-    session.set_global_coupling_gain(resolved.global_coupling_gain);
 }
 
-fn play_until_quit(session: &mut AudioSession, listener: &mut MidiListener) -> Result<()> {
+/// Translates one [`StudioCommand`] into the matching
+/// [`AudioSession`] setter call.
+fn apply_command(session: &mut AudioSession, command: StudioCommand) {
+    match command {
+        StudioCommand::NoteOn { midi, velocity } => {
+            session.note_on(midi, velocity);
+        }
+        StudioCommand::NoteOff { midi } => {
+            session.note_off(midi);
+        }
+        StudioCommand::AllNotesOff => {
+            session.all_notes_off();
+        }
+        StudioCommand::SustainPedal { down } => {
+            session.set_sustain_pedal(down);
+        }
+        StudioCommand::SetStringDamping {
+            midi,
+            string_index,
+            damping,
+        } => {
+            session.set_string_damping(midi, string_index, damping);
+        }
+        StudioCommand::SetStringSustain {
+            midi,
+            string_index,
+            sustain,
+        } => {
+            session.set_string_sustain(midi, string_index, sustain);
+        }
+        StudioCommand::SetStringInharmonicity {
+            midi,
+            string_index,
+            inharmonicity,
+        } => {
+            session.set_string_inharmonicity(midi, string_index, inharmonicity);
+        }
+        StudioCommand::SetStringDetune {
+            midi,
+            string_index,
+            cents,
+        } => {
+            session.set_string_detune(midi, string_index, cents);
+        }
+        StudioCommand::SetStringSeed {
+            midi,
+            string_index,
+            seed,
+        } => {
+            session.set_string_seed(midi, string_index, seed);
+        }
+        StudioCommand::SetStringHammer {
+            midi,
+            string_index,
+            hammer,
+        } => {
+            session.set_string_hammer(midi, string_index, hammer);
+        }
+        StudioCommand::SetSoundboardMode { index, mode } => {
+            session.set_soundboard_mode(index, mode);
+        }
+        StudioCommand::SetLocalCouplingGain { gain } => {
+            session.set_local_coupling_gain(gain);
+        }
+        StudioCommand::SetGlobalCouplingGain { gain } => {
+            session.set_global_coupling_gain(gain);
+        }
+    }
+}
+
+/// Services MIDI (when connected) and the web server's command channel
+/// until Esc or Ctrl+C is pressed in this terminal.
+fn run_until_quit(
+    session: &mut AudioSession,
+    mut listener: Option<&mut MidiListener>,
+    commands: &Receiver<StudioCommand>,
+) -> Result<()> {
     loop {
-        drain_midi(session, listener);
+        if let Some(listener) = listener.as_deref_mut() {
+            drain_midi(session, listener);
+        }
+        drain_studio_commands(session, commands);
         if !event::poll(POLL_INTERVAL)? {
             continue;
         }
@@ -136,6 +241,18 @@ fn play_until_quit(session: &mut AudioSession, listener: &mut MidiListener) -> R
         if key.kind != KeyEventKind::Release && should_quit(&key) {
             return Ok(());
         }
+    }
+}
+
+/// Drains commands the web server has queued, bounding one tick's work the
+/// same way [`drain_midi`] bounds MIDI: a browser reload floods well over a
+/// thousand commands at once.
+fn drain_studio_commands(session: &mut AudioSession, commands: &Receiver<StudioCommand>) {
+    for _ in 0..MAX_COMMANDS_PER_TICK {
+        let Ok(command) = commands.try_recv() else {
+            break;
+        };
+        apply_command(session, command);
     }
 }
 
@@ -169,8 +286,7 @@ fn apply_midi_event(session: &mut AudioSession, event: MidiEvent) {
 
 fn print_instructions(port_name: &str) {
     println!("piano studio — connected to \"{port_name}\".");
-    println!("play your MIDI controller; nothing is written to disk.");
-    println!("Esc or Ctrl+C (in this terminal) to quit.\n");
+    println!("play your MIDI controller alongside the browser.");
 }
 
 /// Ensures raw mode is always disabled on the way out, including on error

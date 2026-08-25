@@ -19,6 +19,7 @@ piano-params = { workspace = true, features = ["std"] }
 piano-render = { workspace = true }
 piano-audio = { workspace = true }
 piano-midi = { workspace = true }
+piano-studio = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }

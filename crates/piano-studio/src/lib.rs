@@ -7,25 +7,45 @@
 //! and saving are both explicit ([`load`], [`save`]); nothing here
 //! autosaves, per the design's own "Persistence" section.
 //!
+//! On top of that sits the live control surface: [`LiveState`] holds what
+//! the running instrument is *currently* set to, [`Edit`] is one change
+//! arriving from a browser, [`StudioCommand`] is what comes back out, and
+//! [`serve`] puts an HTTP server in front of all three.
+//!
 //! This crate never touches the audio thread directly — it sits where
 //! `piano-render` and `piano-cli` already do, on the allocating,
-//! file-touching side of `docs/ARCHITECTURE.md`'s split. Turning a
-//! [`ResolvedPiano`] into a running instrument's live state is the next
-//! layer up (`piano-cli`'s `studio` subcommand).
+//! file-touching side of `docs/ARCHITECTURE.md`'s split. Whoever owns the
+//! `piano_audio::AudioSession` drains [`serve`]'s channel and does the
+//! talking to the engine; that is `piano-cli`'s `studio` subcommand.
 
+mod command;
+mod edit;
 mod error;
 mod format;
+mod live;
 mod resolve;
+mod server;
+mod snapshot;
 
 use std::fs;
 use std::path::Path;
 
+pub use command::StudioCommand;
+pub use edit::{
+    BridgeParameter, Edit, ModeParameter, ParameterRange, STRING_PARAMETERS, StringParameter,
+};
 pub use error::StudioError;
 pub use format::{
     BridgeOverrides, Group, HammerOverrides, Instrument, ParameterOverrides, PianoFile,
     RegisterAnchor, Registers, SoundboardModeOverride, StringOverride, StringRef,
 };
+pub use live::LiveState;
 pub use resolve::{ResolvedPiano, ResolvedString, resolve};
+pub use server::{StudioConfig, StudioServer, serve};
+pub use snapshot::{
+    BridgeRanges, BridgeSnapshot, KeySnapshot, ModeRanges, ModeSnapshot, PianoSnapshot, Ranges,
+    StringRanges, StringSnapshot,
+};
 
 /// Reads and parses a `.piano.json` file.
 ///

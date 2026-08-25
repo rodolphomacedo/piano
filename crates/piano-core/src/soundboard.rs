@@ -35,7 +35,7 @@
 //!
 //! # Honesty about the specific numbers
 //!
-//! [`MODES`]' frequencies, decay times and gains are representative,
+//! [`DEFAULT_MODES`]' frequencies, decay times and gains are representative,
 //! literature-informed order-of-magnitude values (grand-piano soundboards'
 //! lowest structural modes cluster roughly 80-400 Hz per Wogram and Suzuki
 //! above, with higher, more heavily damped modes filling in above that) —
@@ -76,7 +76,7 @@ const MAX_RADIUS: f32 = 0.999_9;
 
 /// Lowest mode frequency [`Resonator::new`] accepts, so a live-set mode
 /// (`Soundboard::set_mode`) cannot feed a non-positive frequency into the
-/// resonator's phase calculation — the fixed [`MODES`] table never gets
+/// resonator's phase calculation — the fixed [`DEFAULT_MODES`] table never gets
 /// close to this bound, but a caller-supplied [`SoundboardMode`] now can.
 const MIN_MODE_FREQUENCY_HZ: f32 = 1.0;
 
@@ -86,7 +86,7 @@ const MIN_MODE_FREQUENCY_HZ: f32 = 1.0;
 const MAX_MODE_FREQUENCY_HZ: f32 = 20_000.0;
 
 /// Highest relative gain accepted for one mode — several times the fixed
-/// [`MODES`] table's own loudest entry (`1.0`), enough headroom for live
+/// [`DEFAULT_MODES`] table's own loudest entry (`1.0`), enough headroom for live
 /// tuning without a caller driving one resonator's contribution to the mix
 /// arbitrarily loud.
 const MAX_MODE_GAIN: f32 = 4.0;
@@ -102,9 +102,16 @@ pub struct SoundboardMode {
     pub gain: f32,
 }
 
-/// The bank's fixed modal table. See the module docs' honesty note on where
-/// these numbers come from and what they are not.
-const MODES: [SoundboardMode; MODE_COUNT] = [
+/// The bank's default modal table — what [`Soundboard::new`] starts every
+/// board from, before any live [`Soundboard::set_mode`] call replaces an
+/// entry. See the module docs' honesty note on where these numbers come
+/// from and what they are not.
+///
+/// Public because a control surface offering live mode editing has to show
+/// what the running board started at, and a [`Resonator`]'s parameters
+/// cannot be read back out of its coefficients — the starting table is the
+/// only truthful thing such a surface can display.
+pub const DEFAULT_MODES: [SoundboardMode; MODE_COUNT] = [
     SoundboardMode {
         frequency_hz: 80.0,
         decay_seconds: 1.2,
@@ -163,7 +170,7 @@ impl Resonator {
     /// each is clamped into a finite, resonator-safe range before it can
     /// reach a division, a trig function or the recursion's own gain —
     /// necessary since [`Soundboard::set_mode`] now lets a caller supply
-    /// `mode` live, not just the fixed, already-sane [`MODES`] table.
+    /// `mode` live, not just the fixed, already-sane [`DEFAULT_MODES`] table.
     fn new(mode: SoundboardMode, sample_rate: f32) -> Self {
         let decay = math::clamp_or_low(mode.decay_seconds, MIN_DECAY_SECONDS, f32::MAX);
         let radius = math::clamp_or_low(math::exp(-1.0 / (decay * sample_rate)), 0.0, MAX_RADIUS);
@@ -218,12 +225,12 @@ pub struct Soundboard {
 
 impl Soundboard {
     /// Builds a soundboard tuned for `sample_rate`, from the fixed
-    /// [`MODES`] table.
+    /// [`DEFAULT_MODES`] table.
     #[must_use]
     pub fn new(sample_rate: SampleRate) -> Self {
         let hertz = sample_rate.hertz();
         let mut resonators = [Resonator::default(); MODE_COUNT];
-        for (slot, mode) in resonators.iter_mut().zip(MODES) {
+        for (slot, mode) in resonators.iter_mut().zip(DEFAULT_MODES) {
             *slot = Resonator::new(mode, hertz);
         }
         Self {

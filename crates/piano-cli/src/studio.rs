@@ -49,6 +49,11 @@ pub(crate) struct StudioArgs {
     #[arg(short, long)]
     port: Option<String>,
 
+    /// How many seconds to wait for a MIDI port to appear before giving up.
+    /// Zero fails immediately if nothing is plugged in.
+    #[arg(long, default_value_t = crate::midi::DEFAULT_WAIT_SECONDS)]
+    wait: f32,
+
     /// Frequency of concert A, in hertz.
     #[arg(long, default_value_t = 440.0)]
     concert_a: f32,
@@ -90,8 +95,7 @@ pub(crate) fn run(args: &StudioArgs) -> Result<()> {
         return Ok(());
     }
 
-    let mut listener = MidiListener::connect(args.port.as_deref())
-        .context("could not connect to a MIDI input port")?;
+    let mut listener = crate::midi::connect(args.port.as_deref(), args.wait)?;
     print_instructions(listener.port_name());
     let raw_mode = RawModeGuard::enable().context("could not enable terminal raw mode")?;
     let outcome = play_until_quit(&mut session, &mut listener);
@@ -185,5 +189,51 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    /// `StudioArgs` alone is not parseable — `clap::Args` describes a set of
+    /// arguments, not a command line. This wraps it in the smallest parser
+    /// that can be handed one.
+    #[derive(Debug, clap::Parser)]
+    struct OnlyStudioArgs {
+        #[command(flatten)]
+        studio: StudioArgs,
+    }
+
+    fn parse(arguments: &[&str]) -> StudioArgs {
+        OnlyStudioArgs::parse_from(arguments).studio
+    }
+
+    #[test]
+    fn studio_waits_for_a_late_instrument_by_default_just_like_piano_midi() {
+        // Both subcommands look for the same instrument in the same way, so
+        // a player who learns `piano midi`'s behaviour must not be met with
+        // a different one here.
+        let args = parse(&["piano-studio", "--piano", "x.json"]);
+        assert_eq!(
+            crate::midi::wait_duration(args.wait),
+            crate::midi::wait_duration(crate::midi::DEFAULT_WAIT_SECONDS)
+        );
+    }
+
+    #[test]
+    fn the_wait_can_be_turned_off_for_a_fail_fast_run() {
+        let args = parse(&["piano-studio", "--piano", "x.json", "--wait", "0"]);
+        assert_eq!(crate::midi::wait_duration(args.wait), Duration::ZERO);
+    }
+
+    #[test]
+    fn loading_a_file_without_midi_needs_no_port_at_all() {
+        // The no-`--midi` path must never reach `connect`, so validating a
+        // `.piano.json` still works with nothing plugged in.
+        let args = parse(&["piano-studio", "--piano", "x.json"]);
+        assert!(!args.midi);
     }
 }

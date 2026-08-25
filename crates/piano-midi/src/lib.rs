@@ -18,6 +18,9 @@
 //! `piano_audio::AudioSession::note_off`/`set_sustain_pedal` calls (M5),
 //! since acting on them is `piano-audio`'s job, not this crate's.
 
+use std::thread;
+use std::time::Duration;
+
 use midir::{MidiInput, MidiInputPort};
 use rtrb::{Consumer, Producer, RingBuffer};
 
@@ -30,6 +33,12 @@ pub use event::MidiEvent;
 /// How many decoded events the queue holds before new ones are dropped
 /// rather than blocking the driver's callback thread.
 const EVENT_QUEUE_CAPACITY: usize = 256;
+
+/// How long [`MidiListener::connect_within`] waits between enumeration
+/// attempts. Short enough that switching the instrument on feels like it
+/// worked immediately, long enough that a whole `MidiInput` client is not
+/// created and torn down in a tight spin.
+const PORT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// A live connection to one MIDI input port.
 ///
@@ -68,6 +77,37 @@ impl MidiListener {
             consumer,
             port_name,
         })
+    }
+
+    /// Connects to a MIDI input port, waiting up to `timeout` for one to
+    /// appear before giving up.
+    ///
+    /// [`MidiListener::connect`] samples the port list exactly once, which
+    /// makes it a coin toss whenever the instrument is not already awake:
+    /// the player switches the piano on and runs the command, and whichever
+    /// of the two wins the race decides whether it works. That is the whole
+    /// of the "MIDI stopped working" report this exists to answer — the
+    /// enumeration was never wrong, it was just asked once, at the wrong
+    /// moment. Waiting turns the race into a wait.
+    ///
+    /// Only [`MidiError::is_port_absent`] failures are retried; a backend
+    /// that refuses to start does not start on the ninth attempt either.
+    /// Each attempt builds a fresh [`MidiInput`] rather than re-reading one
+    /// long-lived client, because a device that appears *after* a backend
+    /// handle was made is not guaranteed to show up in that handle on every
+    /// platform.
+    ///
+    /// # Errors
+    ///
+    /// Returns the last [`MidiError`] seen: [`MidiError::NoPortsAvailable`]
+    /// or [`MidiError::NoMatchingPort`] if nothing suitable ever appeared,
+    /// or immediately whatever non-absence error occurred.
+    pub fn connect_within(name_filter: Option<&str>, timeout: Duration) -> Result<Self, MidiError> {
+        retry_while_absent(
+            attempts_for(timeout),
+            || Self::connect(name_filter),
+            || thread::sleep(PORT_POLL_INTERVAL),
+        )
     }
 
     /// The name of the connected port, for status messages.
@@ -116,24 +156,79 @@ fn matches_filter(port_name: &str, filter: Option<&str>) -> bool {
     filter.is_none_or(|filter| port_name.to_lowercase().contains(&filter.to_lowercase()))
 }
 
-/// Walks the backend's ports looking for one [`matches_filter`] accepts.
+/// Which of `port_names` [`MidiListener::connect`] would pick — pure, so
+/// the rule that decides between "nothing is plugged in" and "the filter
+/// matched nothing" is unit-tested without a MIDI backend, which no CI
+/// machine has.
+fn select_index(port_names: &[String], filter: Option<&str>) -> Result<usize, MidiError> {
+    if port_names.is_empty() {
+        return Err(MidiError::NoPortsAvailable);
+    }
+    let Some(filter) = filter else {
+        return Ok(0);
+    };
+    port_names
+        .iter()
+        .position(|name| matches_filter(name, Some(filter)))
+        .ok_or_else(|| MidiError::NoMatchingPort {
+            filter: filter.to_owned(),
+            available: port_names.to_vec(),
+        })
+}
+
+/// Reads every port's name, then hands the choice to [`select_index`].
 fn select_port(
     input: &MidiInput,
     name_filter: Option<&str>,
 ) -> Result<(MidiInputPort, String), MidiError> {
     let ports = input.ports();
-    let mut available = Vec::with_capacity(ports.len());
+    let mut names = Vec::with_capacity(ports.len());
     for port in &ports {
-        let name = input.port_name(port)?;
-        if matches_filter(&name, name_filter) {
-            return Ok((port.clone(), name));
-        }
-        available.push(name);
+        names.push(input.port_name(port)?);
     }
-    Err(MidiError::NoMatchingPort {
-        filter: name_filter.map(str::to_owned),
-        available,
-    })
+    let index = select_index(&names, name_filter)?;
+    let (Some(port), Some(name)) = (ports.get(index), names.get(index)) else {
+        // `select_index` only ever returns an index into the slice it was
+        // handed, so this is unreachable — expressed as a value rather than
+        // an `expect`, which production code may not use.
+        return Err(MidiError::NoPortsAvailable);
+    };
+    Ok((port.clone(), name.clone()))
+}
+
+/// How many enumeration attempts fit in `timeout`, never fewer than one, so
+/// a zero timeout still probes once: waiting is strictly added to the old
+/// behaviour rather than replacing it. Saturating, so an absurd timeout
+/// yields `u32::MAX` attempts instead of overflowing.
+fn attempts_for(timeout: Duration) -> u32 {
+    let interval = PORT_POLL_INTERVAL.as_millis().max(1);
+    let attempts = timeout.as_millis() / interval + 1;
+    u32::try_from(attempts).unwrap_or(u32::MAX)
+}
+
+/// Runs `attempt` until it succeeds, fails for a reason waiting cannot fix,
+/// or has run `attempts` times — calling `wait` between tries but never
+/// after the last one.
+///
+/// Generic over both so the retry policy is tested against a fake that
+/// counts calls, rather than against real hardware and a real clock.
+fn retry_while_absent<T>(
+    attempts: u32,
+    mut attempt: impl FnMut() -> Result<T, MidiError>,
+    mut wait: impl FnMut(),
+) -> Result<T, MidiError> {
+    let mut last_error = MidiError::NoPortsAvailable;
+    for remaining in (0..attempts).rev() {
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(error) if !error.is_port_absent() => return Err(error),
+            Err(error) => last_error = error,
+        }
+        if remaining > 0 {
+            wait();
+        }
+    }
+    Err(last_error)
 }
 
 /// Runs on the MIDI backend's own callback thread. Decodes one message and
@@ -149,6 +244,8 @@ fn on_midi_message(_timestamp_micros: u64, message: &[u8], producer: &mut Produc
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
 
     #[test]
@@ -175,5 +272,143 @@ mod tests {
     #[test]
     fn midi_error_is_send_and_sync_on_every_platform() {
         assert_send_sync::<MidiError>();
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn an_empty_port_list_is_an_absent_instrument_not_an_unmatched_filter() {
+        // The distinction the "MIDI stopped working" report turned on: the
+        // player needs to be told the instrument is missing, not shown an
+        // empty list.
+        let error = select_index(&names(&[]), None).expect_err("no ports means no choice");
+        assert!(matches!(error, MidiError::NoPortsAvailable));
+
+        let error = select_index(&names(&[]), Some("yamaha")).expect_err("still no choice");
+        assert!(
+            matches!(error, MidiError::NoPortsAvailable),
+            "a filter does not turn a missing instrument into a filter problem"
+        );
+    }
+
+    #[test]
+    fn without_a_filter_the_first_port_wins() {
+        let ports = names(&["Digital Piano", "IAC Driver Bus 1"]);
+        assert_eq!(select_index(&ports, None).expect("a port exists"), 0);
+    }
+
+    #[test]
+    fn a_filter_picks_the_first_port_whose_name_contains_it() {
+        let ports = names(&["IAC Driver Bus 1", "Digital Piano", "Digital Piano 2"]);
+        assert_eq!(
+            select_index(&ports, Some("digital")).expect("one port matches"),
+            1
+        );
+    }
+
+    #[test]
+    fn an_unmatched_filter_reports_the_filter_and_the_ports_that_were_there() {
+        let ports = names(&["Digital Piano"]);
+        let error = select_index(&ports, Some("roland")).expect_err("nothing matches");
+        let MidiError::NoMatchingPort { filter, available } = error else {
+            panic!("expected an unmatched filter, got a different failure");
+        };
+        assert_eq!(filter, "roland");
+        assert_eq!(available, ports);
+    }
+
+    #[test]
+    fn a_zero_timeout_still_probes_once() {
+        assert_eq!(attempts_for(Duration::ZERO), 1);
+        assert_eq!(attempts_for(Duration::from_millis(1)), 1);
+    }
+
+    #[test]
+    fn a_timeout_becomes_one_attempt_per_interval_plus_the_immediate_one() {
+        assert_eq!(attempts_for(Duration::from_secs(5)), 21);
+        assert_eq!(attempts_for(PORT_POLL_INTERVAL), 2);
+    }
+
+    #[test]
+    fn an_absurd_timeout_saturates_rather_than_overflowing() {
+        assert_eq!(attempts_for(Duration::MAX), u32::MAX);
+    }
+
+    /// Drives [`retry_while_absent`] with a scripted sequence of outcomes,
+    /// counting attempts and waits — no hardware, no sleeping.
+    fn run_retry(attempts: u32, script: Vec<Result<&'static str, MidiError>>) -> Retry {
+        let mut remaining = script.into_iter();
+        let mut tries = 0;
+        let mut waits = 0;
+        let outcome = retry_while_absent(
+            attempts,
+            || {
+                tries += 1;
+                remaining.next().unwrap_or(Err(MidiError::NoPortsAvailable))
+            },
+            || waits += 1,
+        );
+        Retry {
+            connected: outcome.is_ok(),
+            tries,
+            waits,
+        }
+    }
+
+    struct Retry {
+        connected: bool,
+        tries: u32,
+        waits: u32,
+    }
+
+    #[test]
+    fn an_instrument_already_there_is_never_waited_for() {
+        let retry = run_retry(21, vec![Ok("Digital Piano")]);
+        assert!(retry.connected);
+        assert_eq!(retry.tries, 1);
+        assert_eq!(retry.waits, 0, "waited despite connecting immediately");
+    }
+
+    #[test]
+    fn an_instrument_switched_on_late_is_picked_up_without_a_rerun() {
+        // The exact scenario behind the report: the port is not there for
+        // the first two enumerations and then appears.
+        let retry = run_retry(
+            21,
+            vec![
+                Err(MidiError::NoPortsAvailable),
+                Err(MidiError::NoPortsAvailable),
+                Ok("Digital Piano"),
+            ],
+        );
+        assert!(retry.connected, "gave up on an instrument that showed up");
+        assert_eq!(retry.tries, 3);
+        assert_eq!(retry.waits, 2, "one wait between each pair of attempts");
+    }
+
+    #[test]
+    fn an_instrument_that_never_appears_gives_up_after_the_last_attempt() {
+        let retry = run_retry(4, vec![]);
+        assert!(!retry.connected);
+        assert_eq!(retry.tries, 4);
+        assert_eq!(retry.waits, 3, "must not sleep after the final attempt");
+    }
+
+    #[test]
+    fn a_failure_waiting_cannot_fix_is_not_waited_out() {
+        let retry = run_retry(21, vec![Err(MidiError::Connect("port busy".to_owned()))]);
+        assert!(!retry.connected);
+        assert_eq!(retry.tries, 1, "retried a connection the port refused");
+        assert_eq!(retry.waits, 0);
+    }
+
+    #[test]
+    fn zero_attempts_fails_without_touching_the_backend() {
+        let retry = run_retry(0, vec![Ok("Digital Piano")]);
+        assert!(!retry.connected);
+        assert_eq!(retry.tries, 0);
+        assert_eq!(retry.waits, 0);
     }
 }

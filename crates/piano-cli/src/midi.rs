@@ -19,6 +19,19 @@ use crate::report_timing;
 /// How long `event::poll` waits before re-checking for a reason to stop.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// How long to wait for a MIDI port to appear, by default.
+///
+/// Not zero, because the previous behaviour — enumerate once, fail — turned
+/// "switch the piano on, then run the command" into a race the player loses
+/// silently. Long enough for a USB instrument to finish announcing itself,
+/// short enough that a genuinely absent instrument is reported while the
+/// player is still looking at the terminal.
+pub(crate) const DEFAULT_WAIT_SECONDS: f32 = 5.0;
+
+/// What to check when no MIDI port is there. Every line names something the
+/// player can actually look at; an empty list on its own named nothing.
+const PORT_TROUBLESHOOTING: &str = "  - is the instrument powered on, with its cable connected?\n  - is its USB port set to send MIDI, rather than audio only?\n  - on macOS, does it show up in Audio MIDI Setup > MIDI Studio?";
+
 /// MIDI events drained per tick: bounded so a flooded queue cannot make one
 /// iteration of the control loop run unboundedly long.
 const MAX_EVENTS_PER_TICK: usize = 256;
@@ -59,9 +72,14 @@ pub(crate) struct MidiArgs {
     port: Option<String>,
 
     /// List available MIDI input ports and exit, without opening audio
-    /// output.
+    /// output. Reports what is there right now; it does not wait.
     #[arg(long)]
     list: bool,
+
+    /// How many seconds to wait for a MIDI port to appear before giving up.
+    /// Zero fails immediately if nothing is plugged in.
+    #[arg(long, default_value_t = DEFAULT_WAIT_SECONDS)]
+    wait: f32,
 
     /// Frequency of concert A, in hertz.
     #[arg(long, default_value_t = 440.0)]
@@ -83,8 +101,7 @@ pub(crate) fn run(args: &MidiArgs) -> Result<()> {
     let tuning = Tuning::with_concert_a(args.concert_a)
         .with_context(|| format!("invalid concert A: {}", args.concert_a))?;
     let mut session = AudioSession::start(tuning).context("could not start audio playback")?;
-    let mut listener = MidiListener::connect(args.port.as_deref())
-        .context("could not connect to a MIDI input port")?;
+    let mut listener = connect(args.port.as_deref(), args.wait)?;
 
     print_instructions(listener.port_name());
     let raw_mode = RawModeGuard::enable().context("could not enable terminal raw mode")?;
@@ -98,15 +115,46 @@ pub(crate) fn run(args: &MidiArgs) -> Result<()> {
 
 fn list_ports() -> Result<()> {
     let ports = MidiListener::available_ports().context("could not list MIDI input ports")?;
-    if ports.is_empty() {
-        println!("no MIDI input ports found");
-        return Ok(());
-    }
-    println!("available MIDI input ports:");
-    for name in ports {
-        println!("  {name}");
-    }
+    println!("{}", format_port_list(&ports));
     Ok(())
+}
+
+/// What `--list` prints, built as a value rather than a run of `println!`s
+/// so that what the player is told when nothing is plugged in is covered by
+/// a test instead of only ever seen in a terminal.
+pub(crate) fn format_port_list(ports: &[String]) -> String {
+    if ports.is_empty() {
+        return format!("no MIDI input port found.\n{PORT_TROUBLESHOOTING}");
+    }
+    let mut listing = String::from("available MIDI input ports:");
+    for name in ports {
+        listing.push_str("\n  ");
+        listing.push_str(name);
+    }
+    listing
+}
+
+/// Opens a MIDI port, waiting `wait_seconds` for one to appear — shared with
+/// `crate::studio`, which has exactly the same instrument to find.
+pub(crate) fn connect(port: Option<&str>, wait_seconds: f32) -> Result<MidiListener> {
+    let wait = wait_duration(wait_seconds);
+    if !wait.is_zero() {
+        println!(
+            "looking for a MIDI input port (waiting up to {:.0}s if none is there yet)...",
+            wait.as_secs_f32()
+        );
+    }
+    MidiListener::connect_within(port, wait).context("could not connect to a MIDI input port")
+}
+
+/// Turns a `--wait` value in seconds into a duration, treating anything that
+/// is not a representable positive number — negative, `NaN`, infinite,
+/// beyond `Duration`'s range — as "do not wait".
+///
+/// Total by construction: `Duration::try_from_secs_f32` rejects exactly
+/// those cases, so no value the player can type reaches a panic.
+pub(crate) fn wait_duration(seconds: f32) -> Duration {
+    Duration::try_from_secs_f32(seconds).unwrap_or(Duration::ZERO)
 }
 
 fn play_until_quit(session: &mut AudioSession, listener: &mut MidiListener) -> Result<()> {
@@ -189,5 +237,66 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn an_empty_listing_says_what_to_check() {
+        // The report this fixes was three runs of `--list` printing "no
+        // MIDI input ports found" and nothing else, which left the player
+        // with no next move.
+        let listing = format_port_list(&names(&[]));
+        assert!(listing.contains("powered on"), "unhelpful: {listing}");
+        assert!(listing.contains("audio only"), "unhelpful: {listing}");
+        assert!(
+            listing.contains("Audio MIDI Setup"),
+            "no way to confirm the system sees it: {listing}"
+        );
+    }
+
+    #[test]
+    fn a_listing_shows_every_port_one_per_line() {
+        let listing = format_port_list(&names(&["Digital Piano", "IAC Driver Bus 1"]));
+        assert_eq!(
+            listing,
+            "available MIDI input ports:\n  Digital Piano\n  IAC Driver Bus 1"
+        );
+    }
+
+    #[test]
+    fn the_default_wait_gives_a_usb_instrument_time_to_announce_itself() {
+        assert_eq!(
+            wait_duration(DEFAULT_WAIT_SECONDS),
+            Duration::from_secs_f32(5.0)
+        );
+    }
+
+    #[test]
+    fn zero_seconds_keeps_the_old_fail_immediately_behaviour() {
+        assert_eq!(wait_duration(0.0), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_wait_that_is_not_a_positive_number_is_no_wait_at_all() {
+        for seconds in [-1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MAX] {
+            assert_eq!(
+                wait_duration(seconds),
+                Duration::ZERO,
+                "--wait {seconds} should not wait, and must never panic"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fractional_wait_is_kept_rather_than_rounded_away() {
+        assert_eq!(wait_duration(0.5), Duration::from_millis(500));
     }
 }

@@ -460,7 +460,7 @@ fn voice_for_key(key_index: usize, sample_rate: SampleRate, tuning: Tuning) -> V
             pending_pedal_release: false,
         };
     };
-    let config = voicing::config_for_key(key, tuning);
+    let config = voicing::config_for_key(key, tuning, sample_rate);
     let unison_count = voicing::unison_count_for_key(key);
     Voice {
         strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),

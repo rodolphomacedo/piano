@@ -74,6 +74,10 @@ mod tests {
 
     use super::*;
 
+    fn sample_rate() -> piano_core::SampleRate {
+        piano_core::SampleRate::new(48_000.0).expect("48 kHz is valid")
+    }
+
     fn find(piano: &ResolvedPiano, midi: u8, string_index: u8) -> &ResolvedString {
         piano
             .strings
@@ -85,7 +89,7 @@ mod tests {
     #[test]
     fn a_default_file_resolves_every_string_to_the_register_baseline() {
         let file = PianoFile::default();
-        let piano = resolve(&file, Tuning::default());
+        let piano = resolve(&file, Tuning::default(), sample_rate());
         assert_eq!(
             piano.strings.len(),
             222,
@@ -95,6 +99,7 @@ mod tests {
         let expected = piano_audio::voicing::voicing_for_key(
             piano_params::PianoKey::from_midi(69).expect("A4 is a real key"),
             Tuning::default(),
+            sample_rate(),
         );
         assert_eq!(a4_string0.damping, expected.damping);
         assert_eq!(a4_string0.hammer, DEFAULT_HAMMER);
@@ -114,7 +119,7 @@ mod tests {
             },
         });
 
-        let piano = resolve(&file, Tuning::default());
+        let piano = resolve(&file, Tuning::default(), sample_rate());
         let overridden = find(&piano, 69, 1);
         assert_eq!(overridden.detune_cents, 3.0);
         assert_eq!(overridden.seed, 12_345);
@@ -152,7 +157,7 @@ mod tests {
             },
         });
 
-        let piano = resolve(&file, Tuning::default());
+        let piano = resolve(&file, Tuning::default(), sample_rate());
         assert_eq!(find(&piano, 60, 0).damping, 0.7);
         assert_eq!(find(&piano, 61, 1).damping, 0.7);
         // A string on key 61 but not the named index is untouched.
@@ -182,7 +187,7 @@ mod tests {
             },
         });
 
-        let piano = resolve(&file, Tuning::default());
+        let piano = resolve(&file, Tuning::default(), sample_rate());
         assert_eq!(find(&piano, 69, 0).damping, 0.2);
     }
 
@@ -192,7 +197,7 @@ mod tests {
         file.defaults.damping = Some(0.99); // overridden by the register tier
         file.defaults.seed = Some(999); // not touched by the register tier
 
-        let piano = resolve(&file, Tuning::default());
+        let piano = resolve(&file, Tuning::default(), sample_rate());
         let string = find(&piano, 69, 0);
         assert_ne!(
             string.damping, 0.99,
@@ -207,7 +212,7 @@ mod tests {
     #[test]
     fn missing_defaults_fall_back_to_piano_core_s_own_defaults() {
         let file = PianoFile::default();
-        let piano = resolve(&file, Tuning::default());
+        let piano = resolve(&file, Tuning::default(), sample_rate());
         // `sustain`/`damping` at A4 come entirely from the register tier
         // in this test, so this just proves the two default constants
         // compile in — the direct check below is `hammer`, which nothing
@@ -220,7 +225,7 @@ mod tests {
     #[test]
     fn instrument_wide_settings_fall_back_to_documented_defaults() {
         let file = PianoFile::default();
-        let piano = resolve(&file, Tuning::default());
+        let piano = resolve(&file, Tuning::default(), sample_rate());
         assert!(piano.soundboard_modes.is_empty());
         assert_eq!(piano.local_coupling_gain, 0.15);
         assert_eq!(piano.global_coupling_gain, 0.08);
@@ -280,7 +285,7 @@ mod tests {
         assert_eq!(file.groups.len(), 1);
         assert_eq!(file.strings.len(), 1);
         assert_eq!(file.instrument.soundboard_modes.len(), 1);
-        let _ = resolve(&file, Tuning::default());
+        let _ = resolve(&file, Tuning::default(), sample_rate());
     }
 
     #[test]

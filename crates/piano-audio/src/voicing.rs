@@ -16,8 +16,9 @@
 //! fit, never an unexplained literal).
 
 use piano_core::dispersion::MAX_INHARMONICITY;
-use piano_core::math;
+use piano_core::filter::LoopFilter;
 use piano_core::string::{SILENCE_THRESHOLD, StringConfig};
+use piano_core::{SampleRate, math};
 use piano_params::{CONCERT_A_KEY, HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
 /// Target ring-out time at A0, the middle of `docs/PHYSICS.md`'s "Typical
@@ -83,9 +84,14 @@ pub fn unison_count_for_key(key: PianoKey) -> usize {
     piano_core::unison::unison_count_for_key_index(key.key_index())
 }
 
-/// Computes `key`'s baseline voicing under `tuning`.
+/// Computes `key`'s baseline voicing under `tuning`, for a string that
+/// will run at `sample_rate`.
+///
+/// `sample_rate` only feeds [`sustain_for_decay_seconds`]'s loop-filter
+/// correction (see that function's docs) — every other computation here
+/// is sample-rate-independent.
 #[must_use]
-pub fn voicing_for_key(key: PianoKey, tuning: Tuning) -> KeyVoicing {
+pub fn voicing_for_key(key: PianoKey, tuning: Tuning, sample_rate: SampleRate) -> KeyVoicing {
     let frequency = key.frequency(tuning).hertz();
     let bass_hz = anchor_hz(LOWEST_PIANO_KEY, tuning);
     let mid_hz = anchor_hz(CONCERT_A_KEY, tuning);
@@ -109,7 +115,7 @@ pub fn voicing_for_key(key: PianoKey, tuning: Tuning) -> KeyVoicing {
 
     KeyVoicing {
         damping,
-        sustain: sustain_for_decay_seconds(decay_seconds, frequency),
+        sustain: sustain_for_decay_seconds(decay_seconds, frequency, damping, sample_rate),
         inharmonicity,
     }
 }
@@ -118,8 +124,8 @@ pub fn voicing_for_key(key: PianoKey, tuning: Tuning) -> KeyVoicing {
 /// set from [`voicing_for_key`] rather than left at
 /// [`StringConfig::new`]'s single global default.
 #[must_use]
-pub fn config_for_key(key: PianoKey, tuning: Tuning) -> StringConfig {
-    let voicing = voicing_for_key(key, tuning);
+pub fn config_for_key(key: PianoKey, tuning: Tuning, sample_rate: SampleRate) -> StringConfig {
+    let voicing = voicing_for_key(key, tuning, sample_rate);
     let mut config = StringConfig::new(key.frequency(tuning));
     config.damping = voicing.damping;
     config.sustain = voicing.sustain;
@@ -177,17 +183,43 @@ fn interpolate_two_segments(
 }
 
 /// Converts a target ring-out time into the broadband per-round-trip loop
-/// gain ([`StringConfig::sustain`]) that produces it at `frequency`.
+/// gain ([`StringConfig::sustain`]) that produces it at `frequency`, for a
+/// string voiced with `damping` and running at `sample_rate`.
 ///
 /// Derived from the waveguide loop's own geometry: after `n` round trips
-/// the envelope has shrunk by `sustain^n`, and a string completes
-/// `frequency * decay_seconds` round trips in `decay_seconds`. Solving
-/// `sustain^(frequency * decay_seconds) = SILENCE_THRESHOLD` for `sustain`
-/// gives the closed form below — a real derivation from this project's own
-/// loop model, not a fitted or invented constant.
-fn sustain_for_decay_seconds(decay_seconds: f32, frequency: f32) -> f32 {
+/// the envelope has shrunk by `(sustain·g)^n`, where `g` is
+/// [`LoopFilter::magnitude_at`]'s own loss at `frequency` — the loop's
+/// *total* round-trip gain, not `sustain` alone. A string completes
+/// `frequency * decay_seconds` round trips in `decay_seconds`, so solving
+/// `(sustain·g)^(frequency * decay_seconds) = SILENCE_THRESHOLD` for
+/// `sustain` gives the closed form below, then dividing out `g`.
+///
+/// # The bug this replaced
+///
+/// The previous version solved `sustain^n = SILENCE_THRESHOLD` directly —
+/// correct only if the loop filter were perfectly transparent at
+/// `frequency`, which it is not: even a modest, mid-register `damping`
+/// loses a small fraction of the fundamental's own amplitude every round
+/// trip, and that loss compounds over the thousands of round trips a note
+/// rings for. The result was every voiced note decaying several times
+/// faster than `decay_seconds` actually called for — audibly a dry,
+/// percussive "knock" rather than a sustained tone, worst in the
+/// mid-register where `damping` sits furthest from either extreme.
+fn sustain_for_decay_seconds(
+    decay_seconds: f32,
+    frequency: f32,
+    damping: f32,
+    sample_rate: SampleRate,
+) -> f32 {
     let round_trips = (frequency * decay_seconds).max(1.0);
-    let sustain = math::exp(math::ln(SILENCE_THRESHOLD) / round_trips);
+    let total_gain_needed = math::exp(math::ln(SILENCE_THRESHOLD) / round_trips);
+    let filter_gain = LoopFilter::new(damping).magnitude_at(frequency, sample_rate.hertz());
+    // `filter_gain` is total and clamped into `[0, 1]` by construction
+    // (`LoopFilter::magnitude_at`'s own contract), but a pathologically
+    // small value would still blow `sustain` up past 1 here — floor it so
+    // this division can never produce more gain than the loop itself
+    // provides.
+    let sustain = total_gain_needed / filter_gain.max(total_gain_needed);
     math::clamp_or_low(sustain, 0.0, 1.0)
 }
 
@@ -195,15 +227,21 @@ fn sustain_for_decay_seconds(decay_seconds: f32, frequency: f32) -> f32 {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
 
+    use piano_core::string::PluckedString;
+
     use super::*;
+
+    fn sample_rate() -> SampleRate {
+        SampleRate::new(48_000.0).expect("48 kHz is valid")
+    }
 
     #[test]
     fn bass_keys_get_more_inharmonicity_than_default_and_treble_keys_more_still() {
         let tuning = Tuning::default();
         let bass = PianoKey::from_midi(LOWEST_PIANO_KEY).expect("A0 is on the keyboard");
         let treble = PianoKey::from_midi(HIGHEST_PIANO_KEY).expect("C8 is on the keyboard");
-        let bass_voicing = voicing_for_key(bass, tuning);
-        let treble_voicing = voicing_for_key(treble, tuning);
+        let bass_voicing = voicing_for_key(bass, tuning, sample_rate());
+        let treble_voicing = voicing_for_key(treble, tuning, sample_rate());
         assert!(bass_voicing.inharmonicity < treble_voicing.inharmonicity);
     }
 
@@ -212,7 +250,7 @@ mod tests {
         let tuning = Tuning::default();
         for midi in LOWEST_PIANO_KEY..=HIGHEST_PIANO_KEY {
             let key = PianoKey::from_midi(midi).expect("key is on the keyboard");
-            let voicing = voicing_for_key(key, tuning);
+            let voicing = voicing_for_key(key, tuning, sample_rate());
             assert!(voicing.damping.is_finite() && (0.0..=1.0).contains(&voicing.damping));
             assert!(voicing.sustain.is_finite() && (0.0..=1.0).contains(&voicing.sustain));
             assert!(
@@ -233,8 +271,8 @@ mod tests {
         let tuning = Tuning::default();
         let bass = PianoKey::from_midi(LOWEST_PIANO_KEY).expect("A0 is on the keyboard");
         let treble = PianoKey::from_midi(HIGHEST_PIANO_KEY).expect("C8 is on the keyboard");
-        let bass_voicing = voicing_for_key(bass, tuning);
-        let treble_voicing = voicing_for_key(treble, tuning);
+        let bass_voicing = voicing_for_key(bass, tuning, sample_rate());
+        let treble_voicing = voicing_for_key(treble, tuning, sample_rate());
 
         let bass_round_trips = math::ln(SILENCE_THRESHOLD) / math::ln(bass_voicing.sustain);
         let treble_round_trips = math::ln(SILENCE_THRESHOLD) / math::ln(treble_voicing.sustain);
@@ -251,10 +289,10 @@ mod tests {
     fn config_for_key_uses_the_computed_voicing_not_the_global_default() {
         let tuning = Tuning::default();
         let treble = PianoKey::from_midi(HIGHEST_PIANO_KEY).expect("C8 is on the keyboard");
-        let config = config_for_key(treble, tuning);
+        let config = config_for_key(treble, tuning, sample_rate());
         assert_eq!(
             config.inharmonicity,
-            voicing_for_key(treble, tuning).inharmonicity
+            voicing_for_key(treble, tuning, sample_rate()).inharmonicity
         );
     }
 
@@ -274,10 +312,85 @@ mod tests {
         let tuning = Tuning::with_concert_a(220.0).expect("220 Hz is a valid tuning");
         for midi in LOWEST_PIANO_KEY..=HIGHEST_PIANO_KEY {
             let key = PianoKey::from_midi(midi).expect("key is on the keyboard");
-            let voicing = voicing_for_key(key, tuning);
+            let voicing = voicing_for_key(key, tuning, sample_rate());
             assert!(voicing.damping.is_finite());
             assert!(voicing.sustain.is_finite());
             assert!(voicing.inharmonicity.is_finite());
         }
+    }
+
+    /// Renders a real, fully-built `PluckedString` (the same
+    /// `config_for_key` path `Engine` uses) and returns how many seconds
+    /// it actually takes to decay to `SILENCE_THRESHOLD`. Samples elapsed,
+    /// not round trips, is the right unit: `PluckedString::is_silent`
+    /// tracks a fast, sample-rate-scaled envelope meant for voice
+    /// reclaiming, not a physics measurement, so converting its own
+    /// per-sample updates back to seconds is what makes this honest.
+    fn measured_decay_seconds(sustain: f32) -> f32 {
+        let mut config = config_for_key(
+            PianoKey::from_midi(CONCERT_A_KEY).expect("A4 is on the keyboard"),
+            Tuning::default(),
+            sample_rate(),
+        );
+        config.sustain = sustain;
+        let mut string = PluckedString::new(config, sample_rate()).expect("A4 is tunable");
+        string.pluck(1.0);
+
+        let sample_count_cap = (sample_rate().hertz() * MID_DECAY_SECONDS * 3.0) as u32;
+        let mut samples_elapsed = 0u32;
+        while !string.is_silent() && samples_elapsed < sample_count_cap {
+            let _ = string.process();
+            samples_elapsed += 1;
+        }
+        samples_elapsed as f32 / sample_rate().hertz()
+    }
+
+    /// The regression test for the bug this module's `sustain_for_decay_
+    /// seconds` fix closes: a real, fully-built A4 voiced through the
+    /// *corrected* formula must ring measurably longer than the same
+    /// string voiced through the *uncorrected* one — proof the loop
+    /// filter's own, previously-ignored round-trip loss now actually gets
+    /// compensated for, not just that the formula changed on paper.
+    ///
+    /// Not asserted here: that the corrected decay reaches
+    /// `MID_DECAY_SECONDS` (11 s) itself. At `A4`'s interpolated damping,
+    /// the loop filter's own loss at the fundamental is large enough that
+    /// `sustain` alone cannot fully cancel it out even at its `1.0`
+    /// ceiling — closing that remaining gap needs the anchor `damping`
+    /// values themselves recalibrated against `LoopFilter::magnitude_at`,
+    /// a separate, follow-up change from this fix. This test's honest
+    /// claim is "closer, not identical" — see the module docs on
+    /// `sustain_for_decay_seconds` for the full accounting.
+    #[test]
+    fn correcting_for_the_loop_filter_rings_measurably_longer() {
+        let tuning = Tuning::default();
+        let a4 = PianoKey::from_midi(CONCERT_A_KEY).expect("A4 is on the keyboard");
+        let uncorrected_sustain = math::exp(
+            math::ln(SILENCE_THRESHOLD) / (a4.frequency(tuning).hertz() * MID_DECAY_SECONDS),
+        );
+        let corrected_sustain = voicing_for_key(a4, tuning, sample_rate()).sustain;
+
+        let uncorrected_seconds = measured_decay_seconds(uncorrected_sustain);
+        let corrected_seconds = measured_decay_seconds(corrected_sustain);
+
+        assert!(
+            corrected_seconds > uncorrected_seconds * 1.3,
+            "corrected {corrected_seconds}s should ring noticeably longer than \
+             uncorrected {uncorrected_seconds}s"
+        );
+    }
+
+    /// A cheap, fast-running sanity check that the correction actually
+    /// moves `sustain` closer to 1 (less loss) than the naive formula
+    /// would, for a damping value where the loop filter has a real effect
+    /// — proving the fix engages, without paying for a full render.
+    #[test]
+    fn the_loop_filter_correction_raises_sustain_above_the_naive_value() {
+        let naive = math::exp(math::ln(SILENCE_THRESHOLD) / (440.0 * MID_DECAY_SECONDS));
+        let corrected = sustain_for_decay_seconds(MID_DECAY_SECONDS, 440.0, 0.5, sample_rate());
+        assert!(
+            corrected > naive,
+            "corrected sustain {corrected} should exceed the naive {naive}"
+        );
     }
 }

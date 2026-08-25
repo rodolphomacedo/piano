@@ -88,6 +88,43 @@ impl LoopFilter {
         self.state = 0.0;
         self.last_input = 0.0;
     }
+
+    /// How much of `frequency_hz`'s amplitude survives one round trip
+    /// through this filter alone, for a signal sampled at
+    /// `sample_rate_hz` — the filter's magnitude response,
+    /// `|H(e^{jω})|` for `H(z) = (1-pole)·(1+z⁻¹)/2 / (1-pole·z⁻¹)`.
+    ///
+    /// Exists because `piano_audio::voicing`'s decay-time-to-`sustain`
+    /// derivation used to treat `sustain` as the *entire* round-trip
+    /// loss, silently ignoring this filter's own contribution — for a
+    /// mid-register `damping` the fundamental itself loses a small but
+    /// non-negligible fraction of its amplitude every round trip here,
+    /// which compounds over the thousands of round trips a note rings
+    /// for into a real note dying several times faster than the target
+    /// decay time. Dividing the intended round-trip gain by this value is
+    /// the fix.
+    ///
+    /// Total for every input: a non-finite or non-positive
+    /// `sample_rate_hz`, or a non-finite `frequency_hz`, falls back to
+    /// unity gain (no correction) rather than feeding a `NaN` angular
+    /// frequency into `cos`.
+    #[must_use]
+    pub fn magnitude_at(&self, frequency_hz: f32, sample_rate_hz: f32) -> f32 {
+        if !sample_rate_hz.is_finite() || sample_rate_hz <= 0.0 || !frequency_hz.is_finite() {
+            return 1.0;
+        }
+        let omega = core::f32::consts::TAU * frequency_hz / sample_rate_hz;
+        let zero_gain = math::abs(math::cos(omega / 2.0));
+        let pole_term = 1.0 - 2.0 * self.pole * math::cos(omega) + self.pole * self.pole;
+        // `pole` is always in `[0, MAX_POLE]` (clamped in `new`/`set_pole`),
+        // so `pole_term >= (1.0 - MAX_POLE).powi(2) > 0.0` for every real
+        // `omega` — this guard is defence in depth, not a reachable branch.
+        if pole_term <= 0.0 {
+            return 1.0;
+        }
+        let pole_gain = (1.0 - self.pole) / math::sqrt(pole_term);
+        math::clamp_or_low(zero_gain * pole_gain, 0.0, 1.0)
+    }
 }
 
 /// A one-pole highpass that removes the DC offset a feedback loop accumulates.
@@ -208,6 +245,42 @@ mod tests {
         assert_eq!(filter.phase_delay_at_dc(), 0.5);
     }
 
+    #[test]
+    fn magnitude_at_dc_is_unity_regardless_of_pole() {
+        for pole in [0.0f32, 0.3, 0.6, 0.9, 0.99] {
+            let filter = LoopFilter::new(pole);
+            assert!(
+                (filter.magnitude_at(0.0, 48_000.0) - 1.0).abs() < 1e-4,
+                "pole {pole} gave DC gain {}",
+                filter.magnitude_at(0.0, 48_000.0)
+            );
+        }
+    }
+
+    #[test]
+    fn magnitude_at_a_mid_register_fundamental_is_measurably_below_unity() {
+        // The exact case this method exists to correct for: at
+        // `DEFAULT_DAMPING`-ish poles, even a low, sub-Nyquist fundamental
+        // like A4 loses real amplitude every round trip — small per trip,
+        // but not the ~1.0 a "lowpass barely touches low frequencies"
+        // intuition would suggest.
+        let filter = LoopFilter::new(0.5);
+        let gain = filter.magnitude_at(440.0, 48_000.0);
+        assert!(
+            (0.99..0.998).contains(&gain),
+            "expected a small but real loss at A4, got {gain}"
+        );
+    }
+
+    #[test]
+    fn magnitude_at_falls_back_to_unity_for_a_degenerate_sample_rate() {
+        let filter = LoopFilter::new(0.5);
+        assert_eq!(filter.magnitude_at(440.0, 0.0), 1.0);
+        assert_eq!(filter.magnitude_at(440.0, -48_000.0), 1.0);
+        assert_eq!(filter.magnitude_at(440.0, f32::NAN), 1.0);
+        assert_eq!(filter.magnitude_at(f32::NAN, 48_000.0), 1.0);
+    }
+
     proptest! {
         /// The loss filter must stay bounded for every reachable pole and input.
         #[test]
@@ -219,6 +292,22 @@ mod tests {
             }
             prop_assert!(output.is_finite());
             prop_assert!(output.abs() <= 1.0 + 1e-3, "output {output} exceeded input bound");
+        }
+
+        /// Whatever pole, frequency and sample rate, including `NaN` and
+        /// +-infinity, `magnitude_at` must return a finite value in
+        /// `[0, 1]` — never panic, never divide by zero, never leak a
+        /// `NaN` into the caller's `sustain` correction.
+        #[test]
+        fn magnitude_at_is_total(
+            pole in proptest::num::f32::ANY,
+            frequency_hz in proptest::num::f32::ANY,
+            sample_rate_hz in proptest::num::f32::ANY,
+        ) {
+            let filter = LoopFilter::new(pole);
+            let gain = filter.magnitude_at(frequency_hz, sample_rate_hz);
+            prop_assert!(gain.is_finite());
+            prop_assert!((0.0..=1.0).contains(&gain), "gain {gain} outside [0, 1]");
         }
     }
 }

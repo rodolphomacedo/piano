@@ -68,9 +68,15 @@ pub(crate) fn run(args: &StudioArgs) -> Result<()> {
         .with_context(|| format!("could not load {}", args.piano.display()))?;
     let tuning = Tuning::with_concert_a(args.concert_a)
         .with_context(|| format!("invalid concert A: {}", args.concert_a))?;
-    let resolved = piano_studio::resolve(&file, tuning);
 
     let mut session = AudioSession::start(tuning).context("could not start audio playback")?;
+    // Resolved after the session opens, not before: `resolve`'s register
+    // tier needs the real output sample rate to compute a correct
+    // `sustain` (see `piano_audio::voicing::sustain_for_decay_seconds`),
+    // and that rate is whatever the OS output device actually gave —
+    // not necessarily 48 kHz — which is only known once the stream is
+    // open.
+    let resolved = piano_studio::resolve(&file, tuning, session.sample_rate());
     apply_resolved_piano(&mut session, &resolved);
     println!(
         "loaded {} — {} strings, {} soundboard mode override(s)",

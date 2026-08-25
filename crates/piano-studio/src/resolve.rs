@@ -3,6 +3,7 @@
 //! `docs/PARAMETER-STUDIO.md`'s cascade, resolved once.
 
 use piano_audio::voicing::{unison_count_for_key, voicing_for_key};
+use piano_core::SampleRate;
 use piano_core::dispersion::DEFAULT_INHARMONICITY;
 use piano_core::hammer::{DEFAULT_HAMMER, HammerConfig};
 use piano_core::soundboard::SoundboardMode;
@@ -82,18 +83,33 @@ struct Resolved {
     hammer: HammerConfig,
 }
 
-/// Resolves `file` into a flat per-string table under `tuning` — the
-/// cascade `docs/PARAMETER-STUDIO.md` describes: `defaults` < `registers`
-/// < `groups` < `strings`, most specific wins.
+/// Resolves `file` into a flat per-string table under `tuning`, for
+/// strings that will run at `sample_rate` — the cascade
+/// `docs/PARAMETER-STUDIO.md` describes: `defaults` < `registers` <
+/// `groups` < `strings`, most specific wins.
+///
+/// `sample_rate` matters here because the register tier
+/// (`piano_audio::voicing::voicing_for_key`) computes `sustain` from a
+/// target decay time *and* the sample rate — see that function's docs.
+/// Passing the wrong sample rate (e.g. a hardcoded `48_000.0` when the
+/// engine actually opened at `44_100.0`) would silently mistune every
+/// string's decay, the same class of bug this function's sibling fix in
+/// `piano-audio` closes.
 #[must_use]
-pub fn resolve(file: &PianoFile, tuning: Tuning) -> ResolvedPiano {
+pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> ResolvedPiano {
     let mut strings = Vec::new();
     for midi in LOWEST_PIANO_KEY..=HIGHEST_PIANO_KEY {
         let Ok(key) = PianoKey::from_midi(midi) else {
             continue;
         };
         for string_index in 0..unison_count_for_key(key) {
-            strings.push(resolve_string(file, key, tuning, string_index as u8));
+            strings.push(resolve_string(
+                file,
+                key,
+                tuning,
+                sample_rate,
+                string_index as u8,
+            ));
         }
     }
     ResolvedPiano {
@@ -127,6 +143,7 @@ fn resolve_string(
     file: &PianoFile,
     key: PianoKey,
     tuning: Tuning,
+    sample_rate: SampleRate,
     string_index: u8,
 ) -> ResolvedString {
     let midi = key.midi_number();
@@ -143,7 +160,7 @@ fn resolve_string(
     // fields `voicing_for_key` computes — see the module docs' honesty
     // note on why this reuses that fixed interpolation rather than the
     // file's own (currently unused) `registers` block.
-    let voicing = voicing_for_key(key, tuning);
+    let voicing = voicing_for_key(key, tuning, sample_rate);
     resolved.damping = voicing.damping;
     resolved.sustain = voicing.sustain;
     resolved.inharmonicity = voicing.inharmonicity;

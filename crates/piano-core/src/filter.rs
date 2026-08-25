@@ -127,6 +127,59 @@ impl LoopFilter {
     }
 }
 
+/// A one-pole lowpass specified by its -3 dB corner rather than by a raw
+/// pole coefficient.
+///
+/// Distinct from [`LoopFilter`] on purpose: that one lives *inside* the
+/// waveguide loop, is parameterised by pole because what matters there is
+/// per-round-trip loss, and carries an averaging zero. This one runs once,
+/// outside any loop, over the hammer excitation
+/// ([`PluckedString::pluck`](crate::string::PluckedString::pluck)), where
+/// the meaningful quantity is a cutoff frequency in hertz derived from the
+/// felt-contact duration — see [`crate::hammer::excitation_cutoff_hz`].
+///
+/// Unity gain at DC, so partials below the cutoff come through at exactly
+/// the level they had: this removes the excitation's above-the-corner
+/// energy without quietening the note it produces.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OnePoleLowpass {
+    pole: f32,
+    state: f32,
+}
+
+impl OnePoleLowpass {
+    /// Builds a lowpass with its -3 dB corner at `cutoff_hz`, for a signal
+    /// sampled at `sample_rate_hz`.
+    ///
+    /// The pole is `e^(-2π·f_c/f_s)`, the impulse-invariant mapping of a
+    /// first-order RC lowpass, then clamped into `[0, MAX_POLE]` so the
+    /// filter is stable by construction for any input — including a `NaN`,
+    /// zero or negative cutoff or sample rate, which
+    /// [`math::clamp_or_low`] maps to the low bound of the frequency ratio
+    /// and so to a pole of `e^0 = 1`, clamped to `MAX_POLE`: fully closed,
+    /// never divergent.
+    #[must_use]
+    pub fn from_cutoff(cutoff_hz: f32, sample_rate_hz: f32) -> Self {
+        let ratio = math::clamp_or_low(cutoff_hz / sample_rate_hz, 0.0, 1.0);
+        Self {
+            pole: math::clamp_or_low(math::exp(-core::f32::consts::TAU * ratio), 0.0, MAX_POLE),
+            state: 0.0,
+        }
+    }
+
+    /// Processes one sample.
+    #[inline]
+    pub fn process(&mut self, input: f32) -> f32 {
+        self.state = math::flush_denormal((1.0 - self.pole) * input + self.pole * self.state);
+        self.state
+    }
+
+    /// Clears the filter memory.
+    pub fn reset(&mut self) {
+        self.state = 0.0;
+    }
+}
+
 /// A one-pole highpass that removes the DC offset a feedback loop accumulates.
 ///
 /// Without it, an asymmetric excitation leaves a constant term circulating
@@ -309,5 +362,91 @@ mod tests {
             prop_assert!(gain.is_finite());
             prop_assert!((0.0..=1.0).contains(&gain), "gain {gain} outside [0, 1]");
         }
+
+        /// `OnePoleLowpass` runs over the hammer excitation on the audio
+        /// thread with a cutoff derived from live-settable hammer physics,
+        /// so no cutoff, sample rate or input a slider can produce may
+        /// panic or return a non-finite sample. Bounded by the input's own
+        /// magnitude because a lowpass with unity DC gain and a
+        /// non-negative pole can never amplify.
+        #[test]
+        fn one_pole_lowpass_is_total(
+            cutoff_hz in proptest::num::f32::ANY,
+            sample_rate_hz in proptest::num::f32::ANY,
+            input in -4.0f32..4.0,
+        ) {
+            let mut filter = OnePoleLowpass::from_cutoff(cutoff_hz, sample_rate_hz);
+            for _ in 0..64 {
+                let output = filter.process(input);
+                prop_assert!(output.is_finite(), "output {output} is not finite");
+                prop_assert!(
+                    output.abs() <= input.abs() + 1e-3,
+                    "output {output} exceeded input {input}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_cutoff_at_or_above_the_sample_rate_passes_everything_through() {
+        // Not a realistic setting, but `excitation_cutoff_hz`'s bright bound
+        // sits well under Nyquist precisely so this case stays unreachable;
+        // if it ever is reached, transparency is the safe behaviour.
+        let mut filter = OnePoleLowpass::from_cutoff(48_000.0, 48_000.0);
+        let output = filter.process(0.5);
+        assert!(
+            (output - 0.5).abs() < 1e-2,
+            "a corner at the sample rate should be transparent, got {output}"
+        );
+    }
+
+    #[test]
+    fn a_lower_cutoff_removes_more_of_a_nyquist_rate_signal() {
+        // The alternating +-1 sequence is Nyquist itself: whatever survives
+        // it is exactly what the excitation's click is made of.
+        let survives = |cutoff_hz: f32| {
+            let mut filter = OnePoleLowpass::from_cutoff(cutoff_hz, 48_000.0);
+            let mut worst = 0.0f32;
+            for index in 0..256 {
+                let alternating = if index % 2 == 0 { 1.0 } else { -1.0 };
+                worst = worst.max(filter.process(alternating).abs());
+            }
+            worst
+        };
+        let dark = survives(500.0);
+        let bright = survives(8_000.0);
+        assert!(
+            dark < bright,
+            "a 500 Hz corner let through {dark}, an 8 kHz one {bright}"
+        );
+        assert!(
+            dark < 0.1,
+            "a 500 Hz corner should nearly kill Nyquist, got {dark}"
+        );
+    }
+
+    #[test]
+    fn resetting_clears_what_the_filter_remembers() {
+        let mut filter = OnePoleLowpass::from_cutoff(1_000.0, 48_000.0);
+        for _ in 0..128 {
+            filter.process(1.0);
+        }
+        filter.reset();
+        assert!(
+            filter.process(0.0) == 0.0,
+            "a reset filter still remembered its previous input"
+        );
+    }
+
+    #[test]
+    fn a_steady_input_reaches_it_unattenuated_however_dark_the_corner() {
+        // Unity DC gain is what lets the excitation filter remove the click
+        // without quietening the note: partials well below the corner come
+        // through at the level they had.
+        let mut filter = OnePoleLowpass::from_cutoff(500.0, 48_000.0);
+        for _ in 0..8_192 {
+            filter.process(0.6);
+        }
+        assert!((filter.process(0.6) - 0.6).abs() < 1e-3);
     }
 }

@@ -20,7 +20,7 @@ use crate::{
     delay::DelayLine,
     dispersion::DispersionCascade,
     error::ParamError,
-    filter::{DcBlocker, LoopFilter},
+    filter::{DcBlocker, LoopFilter, OnePoleLowpass},
     hammer, math,
     noise::Xorshift32,
     units::{Hz, SampleRate},
@@ -31,6 +31,14 @@ use crate::{
 /// Below two samples the delay line no longer represents a travelling wave and
 /// the pitch is meaningless.
 const MIN_LOOP_DELAY: f32 = 2.0;
+
+/// How many identical one-pole sections shape the hammer excitation's
+/// spectrum in [`PluckedString::write_excitation`].
+///
+/// Two, for 12 dB/octave. One is measurably too gentle (see that method);
+/// three and beyond start eating the attack's audible transient along with
+/// the click, and cost another multiply-add per burst sample for it.
+const EXCITATION_POLES: usize = 2;
 
 /// How fast the envelope follower forgets, per sample, for a held note.
 const ENVELOPE_DECAY: f32 = 0.999_5;
@@ -325,17 +333,52 @@ impl PluckedString {
         // engaged no longer applies to the new note.
         self.damper_engaged = false;
 
+        self.write_excitation(velocity);
+    }
+
+    /// Fills the delay line with one strike's worth of excitation: white
+    /// noise, shaped in *time* by the felt-contact force envelope and in
+    /// *frequency* by a lowpass whose corner that same contact duration
+    /// sets.
+    ///
+    /// Both halves are needed and neither substitutes for the other. The
+    /// envelope alone leaves the burst spectrally flat to Nyquist however
+    /// hard the key was struck — an enveloped white noise burst has a flat
+    /// expected power spectrum regardless of the envelope's shape — which is
+    /// heard as a full-band click, wood on wood, rather than as felt. See
+    /// [`hammer::excitation_cutoff_hz`] for the measurement and the physics.
+    ///
+    /// The lowpass is [`EXCITATION_POLES`] identical one-pole sections in
+    /// series, not one: a single 6 dB/octave section leaves so much of the
+    /// band above its corner intact that the strike still measures as
+    /// broadband (8.5 kHz of spectral centroid against a 4 kHz corner, at
+    /// 48 kHz — because a magnitude falling as `1/f` contributes equally to
+    /// the centroid from every octave above the corner). Cascading identical
+    /// sections is also the shape the physics suggests: the felt's finite
+    /// contact width and the force pulse's own smoothness are two separate
+    /// rolloffs, not one.
+    ///
+    /// Entries of `contact_force` at or past the contact's end are already
+    /// `0.0`, so the burst goes silent on its own once the hammer has left
+    /// the string; the rest of the delay line is filled with that silence,
+    /// filtered, rather than left untouched.
+    ///
+    /// The filters are built per strike and live on the stack: no
+    /// allocation, and no state carried between notes for a later strike to
+    /// inherit.
+    fn write_excitation(&mut self, velocity: f32) {
         let (contact_force, contact_samples) =
             hammer::simulate_contact(velocity, self.sample_rate, self.hammer);
+        let cutoff_hz = hammer::excitation_cutoff_hz(contact_samples, self.sample_rate);
+        let mut felt = [OnePoleLowpass::from_cutoff(cutoff_hz, self.sample_rate); EXCITATION_POLES];
         let burst_length = self.loop_delay as usize + 1;
         for index in 0..burst_length {
-            let shape = if index < contact_samples {
-                contact_force.get(index).copied().unwrap_or(0.0)
-            } else {
-                0.0
-            };
-            let sample = self.rng.next_bipolar() * velocity * shape;
-            self.delay.write(sample);
+            let shape = contact_force.get(index).copied().unwrap_or(0.0);
+            let excitation = self.rng.next_bipolar() * velocity * shape;
+            let shaped = felt
+                .iter_mut()
+                .fold(excitation, |sample, stage| stage.process(sample));
+            self.delay.write(shaped);
         }
     }
 

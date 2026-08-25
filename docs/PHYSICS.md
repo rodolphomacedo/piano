@@ -68,10 +68,66 @@ the effective spring stiffer, which makes contact both shorter *and* higher
 in peak force — exactly the two effects that make a hard-struck note brighter
 rather than merely louder. The string's own motion is not solved
 simultaneously (that full coupled problem is `PERF-007`'s harder,
-not-yet-built form); this shapes the existing excitation noise's envelope
-rather than replacing it, which keeps every partial excited (still noise
-under the hood) while making the envelope's *shape* — and so the excitation's
-spectral balance — a function of strike velocity.
+not-yet-built form); this shapes the existing excitation noise rather than
+replacing it, which keeps every partial excited (still noise under the hood)
+while making the excitation's spectral balance a function of strike velocity.
+
+### Why the envelope alone was not enough
+
+The paragraph above was, for one milestone, only half true, and the missing
+half was audible as a hard dry knock — one piece of wood hitting another —
+in front of every note. Worth recording, because the mistake is a natural one
+to make again.
+
+The contact force envelope reaches the excitation by *multiplication*: the
+delay line is filled with `white_noise · velocity · force[n]`. Multiplying in
+time is convolution in frequency, and convolving a flat spectrum with
+anything at all leaves it flat. The expected power spectrum of an enveloped
+white noise burst is `σ²·Σw[n]²` — it depends on the window's total energy,
+never on its shape. So the envelope changed *how much* energy a strike
+injected and *when*, but not *where in the spectrum*, and every strike at
+every velocity injected flat energy density all the way to Nyquist. Measured
+on A4: a spectral centroid of 11.8 kHz at velocity 0.1 against 12.7 kHz at
+velocity 1.0, either side of the 12 kHz a perfectly flat spectrum gives at
+48 kHz. A 7% spread across the whole dynamic range, where the document
+claimed that spread *was* the brightness.
+
+The fix is to band-limit the excitation as well as envelope it. A real
+hammer's contact force is a smooth pulse of duration `τ`, and a pulse of
+duration `τ` is band-limited on the order of `1/τ`; the felt's finite contact
+width along the string adds a second rolloff (Van Duyne & Smith,
+"Developments for the Commuted Piano", ICMC 1995, use exactly such a
+hammer-width lowpass on the excitation). `hammer::excitation_cutoff_hz`
+derives a corner from the contact duration `simulate_contact` already
+computes, and `PluckedString::write_excitation` runs the burst through two
+one-pole sections at that corner. The same nonlinearity that shortens contact
+at higher velocity now raises the corner too, so *harder is brighter* is
+finally a property of the output rather than of this document.
+
+The proportionality constant between `1/τ` and the corner is calibrated, not
+derived, and the reason is the simplification stated above: a real strike's
+energy well above `1/τ` comes largely from the string pushing back on the
+hammer during contact, and that back-reaction is precisely what this model
+does not solve. Taking the force pulse's own corner literally would put a
+*fortissimo* strike near 300 Hz and mute the instrument.
+
+Measured on A4 at velocity 0.8, before and after, over the first 5 ms:
+spectral centroid 11.2 kHz → 5.9 kHz, peak 1.97 → 0.65. The second number
+matters as much as the first: the old attack sat 17 dB above the body of its
+own note *and* above full scale, so live playback clipped it into something
+harsher still.
+
+### What the hammer still gets wrong
+
+`PluckedString::pluck` writes exactly one loop length of excitation, so a
+note whose period is shorter than the felt's contact has its contact envelope
+truncated. E2's period is 12.1 ms and holds the whole 3.5-6.5 ms contact;
+A4's is 2.27 ms and holds about a third of it; C6's is 1 ms and holds a
+seventh. Two consequences: velocity's effect on the attack is weakest exactly
+where the truncation is worst, and the top octave is markedly quieter than
+the rest of the keyboard. A real hammer stays in contact while the wave makes
+several round trips, adding force to a string that is already moving — the
+same back-reaction problem, seen from the other side.
 
 ## Why upper partials sit sharp (M4)
 

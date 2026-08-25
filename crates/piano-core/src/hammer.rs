@@ -14,6 +14,17 @@
 //!   energy over a wider band — more high-frequency content, not just more
 //!   amplitude.
 //!
+//! Both are produced here, and they need two separate mechanisms rather than
+//! one. [`simulate_contact`] gives the strike its force envelope, which is
+//! the *when*; [`excitation_cutoff_hz`] gives it a bandwidth, which is the
+//! *where in the spectrum*. Applying only the first — as this module did
+//! until the excitation's spectrum was actually measured — leaves every
+//! strike spectrally flat to Nyquist at every velocity, because the envelope
+//! reaches the excitation by multiplying white noise and an enveloped white
+//! noise burst has a flat expected power spectrum whatever the envelope's
+//! shape. That is heard as a hard, dry knock rather than as felt. See
+//! [`excitation_cutoff_hz`] for the measurement and the correction.
+//!
 //! # The simplification this makes, stated plainly
 //!
 //! A full simultaneous hammer/string solve is an implicit problem — the
@@ -23,12 +34,18 @@
 //! why it must stay bounded. This module instead solves only the hammer's
 //! side of the contact (the string is treated as immobile during the
 //! ~1-4 ms contact window, i.e. no back-reaction), producing a
-//! velocity-shaped force envelope that scales the existing excitation noise
-//! rather than replacing it. That keeps the excitation broadband — every
-//! partial still gets excited, which is what makes a delay-line loop ring at
-//! all — while making its *shape*, and therefore its brightness, a function
-//! of how hard the key was struck, which scaling a flat-amplitude burst can
-//! never achieve regardless of the scale factor.
+//! velocity-shaped force envelope and a bandwidth that together shape the
+//! existing excitation noise rather than replacing it. The excitation stays
+//! broadband enough that every partial the string can hold still gets
+//! excited — which is what makes a delay-line loop ring at all — while its
+//! *shape*, and therefore its brightness, becomes a function of how hard the
+//! key was struck, which scaling a flat-amplitude burst can never achieve
+//! regardless of the scale factor.
+//!
+//! Omitting the back-reaction is also why [`EXCITATION_BANDWIDTH_FACTOR`]
+//! has to be calibrated rather than derived: a real strike's energy well
+//! above `1/τ` comes largely from the string pushing back during contact,
+//! which is exactly the term this module does not solve.
 //!
 //! The contact simulation itself is a bounded explicit (semi-implicit Euler)
 //! integration, capped at [`MAX_CONTACT_SAMPLES`] steps — a compile-time
@@ -191,6 +208,100 @@ const MAX_SAMPLE_RATE_HZ: f32 = 10_000_000.0;
 /// `[MIN_SAMPLE_RATE_HZ, MAX_SAMPLE_RATE_HZ]`.
 const FALLBACK_SAMPLE_RATE_HZ: f32 = 48_000.0;
 
+/// `sample_rate_hz` if it is usable, [`FALLBACK_SAMPLE_RATE_HZ`] otherwise.
+///
+/// Shared by [`simulate_contact`] and [`excitation_cutoff_hz`] so the two
+/// cannot disagree about what rate a strike happened at — the second
+/// interprets a duration the first measured, and a mismatch would mistune
+/// the cutoff by the ratio between them.
+fn usable_sample_rate(sample_rate_hz: f32) -> f32 {
+    if sample_rate_hz.is_finite()
+        && (MIN_SAMPLE_RATE_HZ..=MAX_SAMPLE_RATE_HZ).contains(&sample_rate_hz)
+    {
+        sample_rate_hz
+    } else {
+        FALLBACK_SAMPLE_RATE_HZ
+    }
+}
+
+/// How many times above `1/contact_duration` the excitation's lowpass corner
+/// sits.
+///
+/// Calibrated by measurement, the same way [`CONTACT_STIFFNESS`] was, and
+/// for the same reason it cannot be derived here: this model deliberately
+/// omits the string's back-reaction on the hammer (see the module docs), and
+/// that back-reaction is a large part of where a real strike's energy above
+/// `1/τ` comes from. Taking the force pulse's own corner literally — a
+/// factor of 1 — would put a *fortissimo* strike's excitation corner near
+/// 300 Hz and make the whole instrument sound like it was played through a
+/// blanket. 15 puts a hard strike near 4.5 kHz and a soft one near 2 kHz,
+/// which is a plausible spread for felt and, unlike the flat excitation it
+/// replaces, is actually audible as brightness rather than only documented
+/// as such.
+const EXCITATION_BANDWIDTH_FACTOR: f32 = 15.0;
+
+/// Darkest excitation this model produces, in hertz. Below roughly this the
+/// corner sits under the fundamental of much of the keyboard and the strike
+/// stops being audible as an attack at all.
+const MIN_EXCITATION_CUTOFF_HZ: f32 = 500.0;
+
+/// Brightest excitation this model produces, in hertz.
+///
+/// The point of the filter is that the excitation is *not* flat to Nyquist;
+/// an unbounded corner (which an arbitrarily stiff live-set
+/// [`HammerConfig`] can ask for, since stiffness shortens contact) would
+/// hand back exactly the full-band click this exists to remove.
+const MAX_EXCITATION_CUTOFF_HZ: f32 = 8_000.0;
+
+/// The lowpass corner, in hertz, for an excitation shaped by a contact
+/// lasting `contact_samples` at `sample_rate_hz` — the second half of the
+/// hammer model, and the half that makes strike velocity audible as
+/// brightness.
+///
+/// # Why a filter is needed at all, given the force envelope
+///
+/// [`simulate_contact`]'s envelope is applied to the excitation by
+/// *multiplication*
+/// ([`PluckedString::pluck`](crate::string::PluckedString::pluck)), and the
+/// excitation underneath it is white noise. Multiplying in time is
+/// convolution in frequency, and convolving a flat spectrum with anything at
+/// all leaves it flat: the expected power spectrum of an enveloped white
+/// noise burst is `σ²·Σw[n]²` — a function of the window's *energy*, not of
+/// its shape. So the envelope alone changes how much energy a strike injects
+/// and when, but not where in the spectrum it lands, and every strike at
+/// every velocity injects the same flat energy density all the way to
+/// Nyquist. Measured before this function existed: a spectral centroid of
+/// 11.8 kHz at velocity 0.1 against 12.7 kHz at velocity 1.0, either side of
+/// the 12 kHz a perfectly flat spectrum gives at 48 kHz — a 7% spread across
+/// the entire dynamic range, and audible as a full-band click rather than as
+/// a hammer.
+///
+/// A real hammer does no such thing. Its contact force is a smooth pulse of
+/// duration `τ`, and a pulse of duration `τ` is band-limited on the order of
+/// `1/τ` (Chaigne & Askenfelt 1994, §II; the felt's finite contact width
+/// adds further rolloff — Van Duyne & Smith, "Developments for the Commuted
+/// Piano", ICMC 1995, use exactly such a hammer-width lowpass on the
+/// excitation). Shorter contact, higher corner: the *same* nonlinearity that
+/// already shortens contact at higher velocity now brightens it too, which
+/// is what "harder is brighter, not merely louder" was always supposed to
+/// mean.
+///
+/// Total: any `contact_samples` (including `0` and `usize::MAX`) and any
+/// `sample_rate_hz` (including `NaN`, `±∞` and zero) yield a finite result
+/// in `[MIN_EXCITATION_CUTOFF_HZ, MAX_EXCITATION_CUTOFF_HZ]`.
+#[must_use]
+pub fn excitation_cutoff_hz(contact_samples: usize, sample_rate_hz: f32) -> f32 {
+    // A zero-length contact has no duration to derive a corner from; one
+    // sample is the shortest that does, and lands on the bright bound anyway.
+    let samples = contact_samples.max(1) as f32;
+    let seconds = samples / usable_sample_rate(sample_rate_hz);
+    math::clamp_or_low(
+        EXCITATION_BANDWIDTH_FACTOR / seconds,
+        MIN_EXCITATION_CUTOFF_HZ,
+        MAX_EXCITATION_CUTOFF_HZ,
+    )
+}
+
 /// Simulates one hammer-felt contact and returns a peak-normalised force
 /// envelope plus how many of its samples are active.
 ///
@@ -222,13 +333,7 @@ pub fn simulate_contact(
     hammer: HammerConfig,
 ) -> ([f32; MAX_CONTACT_SAMPLES], usize) {
     let velocity = math::clamp_or_low(velocity, 0.0, 1.0);
-    let sample_rate_hz = if sample_rate_hz.is_finite()
-        && (MIN_SAMPLE_RATE_HZ..=MAX_SAMPLE_RATE_HZ).contains(&sample_rate_hz)
-    {
-        sample_rate_hz
-    } else {
-        FALLBACK_SAMPLE_RATE_HZ
-    };
+    let sample_rate_hz = usable_sample_rate(sample_rate_hz);
     let hammer = sanitize_hammer(hammer);
     let strike_mps = MIN_STRIKE_MPS + velocity * (MAX_STRIKE_MPS - MIN_STRIKE_MPS);
     let dt = 1.0 / sample_rate_hz;
@@ -327,7 +432,99 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_harder_strike_gets_a_brighter_excitation() {
+        // The whole point: the nonlinearity that already shortens contact at
+        // higher velocity now has to make the strike brighter too, which the
+        // force envelope alone never did (see `excitation_cutoff_hz`).
+        let cutoff = |velocity: f32| {
+            let (_, active) = simulate_contact(velocity, 48_000.0, DEFAULT_HAMMER);
+            excitation_cutoff_hz(active, 48_000.0)
+        };
+        let soft = cutoff(0.1);
+        let hard = cutoff(1.0);
+        assert!(
+            hard > soft,
+            "hard {hard} Hz was not brighter than soft {soft} Hz"
+        );
+        assert!(
+            hard - soft > 1_000.0,
+            "only {} Hz separates the softest strike from the hardest; \
+             that is not audible as brightness",
+            hard - soft
+        );
+    }
+
+    #[test]
+    fn a_stiffer_hammer_gets_a_brighter_excitation_than_a_softer_one() {
+        // Stiffness is live-settable per string from a `.piano.json`, and
+        // the audible consequence of turning it up must be "brighter", the
+        // same way it is on a real instrument whose hammers were hardened.
+        let cutoff = |stiffness: f32| {
+            let hammer = HammerConfig {
+                stiffness,
+                ..DEFAULT_HAMMER
+            };
+            let (_, active) = simulate_contact(0.7, 48_000.0, hammer);
+            excitation_cutoff_hz(active, 48_000.0)
+        };
+        assert!(cutoff(MAX_STIFFNESS) > cutoff(MIN_STIFFNESS));
+    }
+
+    #[test]
+    fn the_default_hammer_lands_between_a_dull_thud_and_a_click() {
+        // Guards the calibration of `EXCITATION_BANDWIDTH_FACTOR`: below
+        // roughly 1 kHz the attack disappears into the note, and above
+        // roughly 6 kHz it starts measuring as the broadband click this
+        // whole mechanism exists to remove.
+        for velocity in [0.0, 0.5, 1.0] {
+            let (_, active) = simulate_contact(velocity, 48_000.0, DEFAULT_HAMMER);
+            let cutoff = excitation_cutoff_hz(active, 48_000.0);
+            assert!(
+                (1_000.0..6_000.0).contains(&cutoff),
+                "velocity {velocity}: a {cutoff} Hz corner is not felt"
+            );
+        }
+    }
+
+    #[test]
+    fn a_contact_the_simulation_could_not_measure_still_yields_a_usable_corner() {
+        let cutoff = excitation_cutoff_hz(0, 48_000.0);
+        assert!(cutoff.is_finite());
+        assert!((MIN_EXCITATION_CUTOFF_HZ..=MAX_EXCITATION_CUTOFF_HZ).contains(&cutoff));
+    }
+
+    #[test]
+    fn the_corner_follows_the_sample_rate_a_strike_was_measured_at() {
+        // `contact_samples` is a count, not a duration: reading it at the
+        // wrong rate mistunes the corner by the ratio between the two, which
+        // is why both functions share `usable_sample_rate`.
+        let at_48k = excitation_cutoff_hz(200, 48_000.0);
+        let at_96k = excitation_cutoff_hz(400, 96_000.0);
+        assert!(
+            (at_48k - at_96k).abs() < 1.0,
+            "the same 4.2 ms contact gave {at_48k} Hz at 48 kHz and {at_96k} Hz at 96 kHz"
+        );
+    }
+
     proptest! {
+        /// Every `contact_samples` and `sample_rate_hz` — including zero,
+        /// `usize::MAX`, `NaN` and +-infinity — must yield a finite corner
+        /// inside the model's own bounds. This value builds a recursive
+        /// filter on the audio thread; a `NaN` here poisons a whole strike.
+        #[test]
+        fn excitation_cutoff_is_total(
+            contact_samples in proptest::num::usize::ANY,
+            sample_rate_hz in proptest::num::f32::ANY,
+        ) {
+            let cutoff = excitation_cutoff_hz(contact_samples, sample_rate_hz);
+            prop_assert!(cutoff.is_finite());
+            prop_assert!(
+                (MIN_EXCITATION_CUTOFF_HZ..=MAX_EXCITATION_CUTOFF_HZ).contains(&cutoff),
+                "cutoff {cutoff} outside the model's bounds"
+            );
+        }
+
         /// The contact simulation must never panic, loop unboundedly or
         /// produce a non-finite value, for every reachable velocity, sample
         /// rate and hammer configuration — including NaN, +-infinity and

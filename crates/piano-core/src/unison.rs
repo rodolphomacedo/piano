@@ -48,7 +48,7 @@
 use crate::{
     bridge::BridgeBus,
     error::ParamError,
-    math,
+    hammer, math,
     string::{PluckedString, StringConfig},
     units::{Hz, SampleRate},
 };
@@ -102,6 +102,10 @@ pub struct UnisonGroup {
     local_coupling_gain: f32,
     /// See [`UnisonGroup::set_global_coupling_gain`].
     global_coupling_gain: f32,
+    /// `base_config.frequency` as given to [`UnisonGroup::new`], before any
+    /// per-string detuning — the reference [`UnisonGroup::set_string_detune`]
+    /// computes an absolute retuned frequency from.
+    base_frequency: Hz,
 }
 
 impl UnisonGroup {
@@ -144,6 +148,7 @@ impl UnisonGroup {
             count,
             local_coupling_gain: DEFAULT_LOCAL_COUPLING_GAIN,
             global_coupling_gain: DEFAULT_GLOBAL_COUPLING_GAIN,
+            base_frequency: base_config.frequency,
         })
     }
 
@@ -202,6 +207,66 @@ impl UnisonGroup {
     /// [`UnisonGroup::set_local_coupling_gain`].
     pub fn set_global_coupling_gain(&mut self, gain: f32) {
         self.global_coupling_gain = math::clamp_or_low(gain, 0.0, 1.0);
+    }
+
+    /// Adjusts one string's damping, live, leaving its unison siblings
+    /// untouched. `string_index` outside the group's active string count
+    /// is silently ignored — the same "no error channel on the audio
+    /// thread" contract every other live setter in this crate uses.
+    pub fn set_string_damping(&mut self, string_index: usize, damping: f32) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_damping(damping);
+    }
+
+    /// Adjusts one string's sustain, live. See
+    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
+    pub fn set_string_sustain(&mut self, string_index: usize, sustain: f32) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_sustain(sustain);
+    }
+
+    /// Adjusts one string's inharmonicity coefficient, live. See
+    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
+    pub fn set_string_inharmonicity(&mut self, string_index: usize, inharmonicity: f32) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_inharmonicity(inharmonicity);
+    }
+
+    /// Reseeds one string's excitation noise, for its *next* strike. See
+    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
+    pub fn set_string_seed(&mut self, string_index: usize, seed: u32) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_seed(seed);
+    }
+
+    /// Changes one string's felt-contact physics, for its *next* strike.
+    /// See [`UnisonGroup::set_string_damping`] for the out-of-range
+    /// contract.
+    pub fn set_string_hammer(&mut self, string_index: usize, hammer: hammer::HammerConfig) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_hammer(hammer);
+    }
+
+    /// Retunes one string to `cents` away from the group's own
+    /// [`UnisonGroup::base_frequency`] — an absolute retune from the
+    /// group's reference pitch, not additive to whatever detune the
+    /// string already carries from [`UnisonGroup::new`]. See
+    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
+    pub fn set_string_detune(&mut self, string_index: usize, cents: f32) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_frequency(detune(self.base_frequency, cents));
     }
 
     /// Whether every string in the group has decayed below audibility.
@@ -463,6 +528,48 @@ mod tests {
         UnisonGroup::new(config, count, rate).expect("frequency is representable at 48 kHz")
     }
 
+    /// Renders `len` samples straight from one constituent string, bypassing
+    /// [`UnisonGroup`]'s own mixing and coupling entirely — the per-string
+    /// setter tests below use this to observe exactly one string's output
+    /// in isolation, which is the only way to prove a sibling string's
+    /// output is bit-for-bit unaffected.
+    fn string_output(group: &mut UnisonGroup, string_index: usize, len: usize) -> Vec<f32> {
+        let string = group
+            .strings
+            .get_mut(string_index)
+            .and_then(Option::as_mut)
+            .expect("string_index is within this test's group");
+        let mut buffer = vec![0.0f32; len];
+        string.process_block_add(&mut buffer);
+        buffer
+    }
+
+    /// Asserts that calling `apply` (a per-string setter) on string `1` of a
+    /// freshly-plucked trichord changes string `1`'s own future output but
+    /// leaves strings `0` and `2`'s bit-for-bit identical to an unmutated
+    /// clone — the "done when" criterion every `set_string_*` setter test
+    /// below shares.
+    fn assert_targets_only_string_one(apply: impl FnOnce(&mut UnisonGroup)) {
+        let mut group = group_at(220.0, 3);
+        group.pluck(1.0);
+        let mut reference = group.clone();
+
+        apply(&mut group);
+
+        for index in 0..3 {
+            let changed = string_output(&mut group, index, 512);
+            let unchanged = string_output(&mut reference, index, 512);
+            if index == 1 {
+                assert_ne!(changed, unchanged, "string 1's own output did not change");
+            } else {
+                assert_eq!(
+                    changed, unchanged,
+                    "sibling string {index}'s output changed"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_single_string_group_needs_no_detuning() {
         assert_eq!(detune_cents(1, 0), 0.0);
@@ -603,6 +710,95 @@ mod tests {
             difference > 1e-3,
             "zeroing local_coupling_gain did not change the output: diff {difference}"
         );
+    }
+
+    #[test]
+    fn set_string_damping_changes_only_the_targeted_string() {
+        assert_targets_only_string_one(|group| group.set_string_damping(1, 0.95));
+    }
+
+    #[test]
+    fn set_string_sustain_changes_only_the_targeted_string() {
+        assert_targets_only_string_one(|group| group.set_string_sustain(1, 0.02));
+    }
+
+    #[test]
+    fn set_string_inharmonicity_changes_only_the_targeted_string() {
+        assert_targets_only_string_one(|group| group.set_string_inharmonicity(1, 0.05));
+    }
+
+    #[test]
+    fn set_string_detune_changes_only_the_targeted_string() {
+        assert_targets_only_string_one(|group| group.set_string_detune(1, 35.0));
+    }
+
+    /// [`UnisonGroup::set_string_seed`] and [`UnisonGroup::set_string_hammer`]
+    /// only take effect on a string's *next* strike (see their own doc
+    /// comments), so — unlike the other four per-string setters — this
+    /// re-plucks string 1 alone (not the whole group, which would also
+    /// disturb strings 0 and 2's RNG state) before comparing.
+    fn assert_targets_only_string_one_on_next_pluck(apply: impl FnOnce(&mut UnisonGroup)) {
+        let mut group = group_at(220.0, 3);
+        group.pluck(1.0);
+        let mut reference = group.clone();
+
+        apply(&mut group);
+        group
+            .strings
+            .get_mut(1)
+            .and_then(Option::as_mut)
+            .expect("index 1 exists in a trichord")
+            .pluck(1.0);
+
+        for index in 0..3 {
+            let changed = string_output(&mut group, index, 512);
+            let unchanged = string_output(&mut reference, index, 512);
+            if index == 1 {
+                assert_ne!(
+                    changed, unchanged,
+                    "string 1's output did not change on its next pluck"
+                );
+            } else {
+                assert_eq!(
+                    changed, unchanged,
+                    "sibling string {index}'s output changed"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn set_string_seed_changes_only_the_targeted_strings_next_pluck() {
+        assert_targets_only_string_one_on_next_pluck(|group| group.set_string_seed(1, 0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn set_string_hammer_changes_only_the_targeted_strings_next_pluck() {
+        assert_targets_only_string_one_on_next_pluck(|group| {
+            group.set_string_hammer(
+                1,
+                hammer::HammerConfig {
+                    contact_exponent: 6.0,
+                    stiffness: 1.0e8,
+                    mass: 20.0,
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn per_string_setters_on_an_out_of_range_index_are_a_silent_no_op() {
+        let mut group = group_at(220.0, 3);
+        group.pluck(1.0);
+        group.set_string_damping(9, 0.5);
+        group.set_string_sustain(9, 0.5);
+        group.set_string_inharmonicity(9, 0.01);
+        group.set_string_seed(9, 42);
+        group.set_string_hammer(9, hammer::DEFAULT_HAMMER);
+        group.set_string_detune(9, 10.0);
+        for _ in 0..512 {
+            assert!(group.process().is_finite());
+        }
     }
 
     proptest! {

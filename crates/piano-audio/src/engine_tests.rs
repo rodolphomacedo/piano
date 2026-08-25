@@ -270,6 +270,233 @@ fn set_local_coupling_gain_reaches_an_already_ringing_voice() {
 }
 
 #[test]
+fn set_string_damping_reaches_an_already_ringing_voice() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::NoteOn {
+            midi: 69,
+            velocity: 1.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+
+    let mut before = [0.0f32; 512];
+    engine.process_block(&mut before);
+
+    producer
+        .push(Command::SetStringDamping {
+            midi: 69,
+            string_index: 0,
+            damping: 0.99,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut after = [0.0f32; 512];
+    engine.process_block(&mut after);
+    assert_ne!(
+        before.to_vec(),
+        after.to_vec(),
+        "SetStringDamping had no audible effect"
+    );
+}
+
+#[test]
+fn set_string_sustain_reaches_an_already_ringing_voice() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::NoteOn {
+            midi: 69,
+            velocity: 1.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+
+    let mut before = [0.0f32; 512];
+    engine.process_block(&mut before);
+
+    producer
+        .push(Command::SetStringSustain {
+            midi: 69,
+            string_index: 0,
+            sustain: 0.01,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut after = [0.0f32; 512];
+    engine.process_block(&mut after);
+    assert_ne!(
+        before.to_vec(),
+        after.to_vec(),
+        "SetStringSustain had no audible effect"
+    );
+}
+
+#[test]
+fn set_string_inharmonicity_reaches_an_already_ringing_voice() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::NoteOn {
+            midi: 69,
+            velocity: 1.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+
+    let mut before = [0.0f32; 512];
+    engine.process_block(&mut before);
+
+    producer
+        .push(Command::SetStringInharmonicity {
+            midi: 69,
+            string_index: 0,
+            inharmonicity: 0.05,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut after = [0.0f32; 512];
+    engine.process_block(&mut after);
+    assert_ne!(
+        before.to_vec(),
+        after.to_vec(),
+        "SetStringInharmonicity had no audible effect"
+    );
+}
+
+#[test]
+fn set_string_detune_reaches_an_already_ringing_voice() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::NoteOn {
+            midi: 69,
+            velocity: 1.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+
+    let mut before = [0.0f32; 512];
+    engine.process_block(&mut before);
+
+    producer
+        .push(Command::SetStringDetune {
+            midi: 69,
+            string_index: 0,
+            cents: 40.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut after = [0.0f32; 512];
+    engine.process_block(&mut after);
+    assert_ne!(
+        before.to_vec(),
+        after.to_vec(),
+        "SetStringDetune had no audible effect"
+    );
+}
+
+#[test]
+fn set_string_seed_changes_the_next_strike() {
+    let mut baseline = engine();
+    let mut reseeded = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+
+    producer
+        .push(Command::SetStringSeed {
+            midi: 69,
+            string_index: 0,
+            seed: 0xDEAD_BEEF,
+        })
+        .expect("queue has room");
+    reseeded.drain_commands(&mut consumer);
+
+    for engine in [&mut baseline, &mut reseeded] {
+        producer
+            .push(Command::NoteOn {
+                midi: 69,
+                velocity: 1.0,
+            })
+            .expect("queue has room");
+        engine.drain_commands(&mut consumer);
+    }
+
+    let mut baseline_out = [0.0f32; 512];
+    let mut reseeded_out = [0.0f32; 512];
+    baseline.process_block(&mut baseline_out);
+    reseeded.process_block(&mut reseeded_out);
+    assert_ne!(
+        baseline_out.to_vec(),
+        reseeded_out.to_vec(),
+        "SetStringSeed had no effect on the next strike"
+    );
+}
+
+#[test]
+fn set_string_hammer_changes_the_next_strike() {
+    let mut baseline = engine();
+    let mut retuned = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+
+    producer
+        .push(Command::SetStringHammer {
+            midi: 69,
+            string_index: 0,
+            hammer: piano_core::hammer::HammerConfig {
+                contact_exponent: 6.0,
+                stiffness: 1.0e8,
+                mass: 20.0,
+            },
+        })
+        .expect("queue has room");
+    retuned.drain_commands(&mut consumer);
+
+    for engine in [&mut baseline, &mut retuned] {
+        producer
+            .push(Command::NoteOn {
+                midi: 69,
+                velocity: 1.0,
+            })
+            .expect("queue has room");
+        engine.drain_commands(&mut consumer);
+    }
+
+    let mut baseline_out = [0.0f32; 512];
+    let mut retuned_out = [0.0f32; 512];
+    baseline.process_block(&mut baseline_out);
+    retuned.process_block(&mut retuned_out);
+    assert_ne!(
+        baseline_out.to_vec(),
+        retuned_out.to_vec(),
+        "SetStringHammer had no effect on the next strike"
+    );
+}
+
+#[test]
+fn per_string_commands_with_an_unrecognised_midi_note_never_panic() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::SetStringDamping {
+            midi: 255,
+            string_index: 0,
+            damping: 0.5,
+        })
+        .expect("queue has room");
+    producer
+        .push(Command::SetStringDetune {
+            midi: 69,
+            string_index: 250,
+            cents: 10.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut buffer = [0.0f32; 32];
+    engine.process_block(&mut buffer);
+}
+
+#[test]
 fn set_global_coupling_gain_out_of_range_never_panics() {
     let mut engine = engine();
     let (mut producer, mut consumer) = ring_buffer();

@@ -73,4 +73,64 @@ pub(crate) enum Command {
         /// New global coupling gain, `0.0` to `1.0`.
         gain: f32,
     },
+    /// Sets one string's damping, live. See
+    /// [`piano_core::UnisonGroup::set_string_damping`].
+    SetStringDamping {
+        /// MIDI note number of the key whose unison this string belongs to.
+        midi: u8,
+        /// Which string within that key's unison, `0`-based.
+        string_index: u8,
+        /// New damping, `0.0` to `1.0`.
+        damping: f32,
+    },
+    /// Sets one string's sustain, live. See
+    /// [`piano_core::UnisonGroup::set_string_sustain`].
+    SetStringSustain {
+        /// MIDI note number of the key whose unison this string belongs to.
+        midi: u8,
+        /// Which string within that key's unison, `0`-based.
+        string_index: u8,
+        /// New sustain, `0.0` to `1.0`.
+        sustain: f32,
+    },
+    /// Sets one string's inharmonicity coefficient, live. See
+    /// [`piano_core::UnisonGroup::set_string_inharmonicity`].
+    SetStringInharmonicity {
+        /// MIDI note number of the key whose unison this string belongs to.
+        midi: u8,
+        /// Which string within that key's unison, `0`-based.
+        string_index: u8,
+        /// New inharmonicity coefficient `B`.
+        inharmonicity: f32,
+    },
+    /// Retunes one string to `cents` away from its unison's base
+    /// frequency, live. See [`piano_core::UnisonGroup::set_string_detune`].
+    SetStringDetune {
+        /// MIDI note number of the key whose unison this string belongs to.
+        midi: u8,
+        /// Which string within that key's unison, `0`-based.
+        string_index: u8,
+        /// Detune from the unison's base frequency, in cents.
+        cents: f32,
+    },
+    /// Reseeds one string's excitation noise for its *next* strike. See
+    /// [`piano_core::UnisonGroup::set_string_seed`].
+    SetStringSeed {
+        /// MIDI note number of the key whose unison this string belongs to.
+        midi: u8,
+        /// Which string within that key's unison, `0`-based.
+        string_index: u8,
+        /// New RNG seed.
+        seed: u32,
+    },
+    /// Changes one string's felt-contact physics for its *next* strike.
+    /// See [`piano_core::UnisonGroup::set_string_hammer`].
+    SetStringHammer {
+        /// MIDI note number of the key whose unison this string belongs to.
+        midi: u8,
+        /// Which string within that key's unison, `0`-based.
+        string_index: u8,
+        /// The string's new hammer contact physics.
+        hammer: piano_core::hammer::HammerConfig,
+    },
 }

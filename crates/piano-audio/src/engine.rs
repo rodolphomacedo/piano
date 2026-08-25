@@ -39,7 +39,7 @@
 //! [`Engine::process_chunk`]'s skip condition.
 
 use piano_core::soundboard::SoundboardMode;
-use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup};
+use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 use rtrb::Consumer;
 
@@ -186,6 +186,36 @@ impl Engine {
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetLocalCouplingGain { gain } => self.set_local_coupling_gain(gain),
             Command::SetGlobalCouplingGain { gain } => self.set_global_coupling_gain(gain),
+            Command::SetStringDamping {
+                midi,
+                string_index,
+                damping,
+            } => self.set_string_damping(midi, string_index, damping),
+            Command::SetStringSustain {
+                midi,
+                string_index,
+                sustain,
+            } => self.set_string_sustain(midi, string_index, sustain),
+            Command::SetStringInharmonicity {
+                midi,
+                string_index,
+                inharmonicity,
+            } => self.set_string_inharmonicity(midi, string_index, inharmonicity),
+            Command::SetStringDetune {
+                midi,
+                string_index,
+                cents,
+            } => self.set_string_detune(midi, string_index, cents),
+            Command::SetStringSeed {
+                midi,
+                string_index,
+                seed,
+            } => self.set_string_seed(midi, string_index, seed),
+            Command::SetStringHammer {
+                midi,
+                string_index,
+                hammer,
+            } => self.set_string_hammer(midi, string_index, hammer),
         }
     }
 
@@ -289,6 +319,14 @@ impl Engine {
         self.voices.get_mut(usize::from(key.key_index()))
     }
 
+    /// Looks up `midi`'s [`UnisonGroup`], if the note names a real piano key
+    /// and that key was tunable at construction. Shared by every per-string
+    /// command handler, which all need exactly this same
+    /// `voice_for_midi` + `strings.as_mut()` chain.
+    fn unison_for_midi(&mut self, midi: u8) -> Option<&mut UnisonGroup> {
+        self.voice_for_midi(midi)?.strings.as_mut()
+    }
+
     /// Zero-velocity pluck silences a voice using the same allocation-free
     /// path as a normal strike, then immediately re-engages the damper —
     /// "all notes off" should leave every voice damped, not sympathetically
@@ -354,6 +392,56 @@ impl Engine {
             if let Some(strings) = voice.strings.as_mut() {
                 strings.set_global_coupling_gain(gain);
             }
+        }
+    }
+
+    /// Sets one string's damping, live. See
+    /// [`UnisonGroup::set_string_damping`] for the out-of-range
+    /// `string_index` contract; an unrecognised `midi` is silently ignored
+    /// the same way [`Engine::note_on`] already ignores one.
+    fn set_string_damping(&mut self, midi: u8, string_index: u8, damping: f32) {
+        if let Some(strings) = self.unison_for_midi(midi) {
+            strings.set_string_damping(usize::from(string_index), damping);
+        }
+    }
+
+    /// Sets one string's sustain, live. See [`Engine::set_string_damping`]
+    /// for the out-of-range contract.
+    fn set_string_sustain(&mut self, midi: u8, string_index: u8, sustain: f32) {
+        if let Some(strings) = self.unison_for_midi(midi) {
+            strings.set_string_sustain(usize::from(string_index), sustain);
+        }
+    }
+
+    /// Sets one string's inharmonicity coefficient, live. See
+    /// [`Engine::set_string_damping`] for the out-of-range contract.
+    fn set_string_inharmonicity(&mut self, midi: u8, string_index: u8, inharmonicity: f32) {
+        if let Some(strings) = self.unison_for_midi(midi) {
+            strings.set_string_inharmonicity(usize::from(string_index), inharmonicity);
+        }
+    }
+
+    /// Retunes one string, live. See [`Engine::set_string_damping`] for the
+    /// out-of-range contract.
+    fn set_string_detune(&mut self, midi: u8, string_index: u8, cents: f32) {
+        if let Some(strings) = self.unison_for_midi(midi) {
+            strings.set_string_detune(usize::from(string_index), cents);
+        }
+    }
+
+    /// Reseeds one string's excitation noise for its next strike. See
+    /// [`Engine::set_string_damping`] for the out-of-range contract.
+    fn set_string_seed(&mut self, midi: u8, string_index: u8, seed: u32) {
+        if let Some(strings) = self.unison_for_midi(midi) {
+            strings.set_string_seed(usize::from(string_index), seed);
+        }
+    }
+
+    /// Changes one string's felt-contact physics for its next strike. See
+    /// [`Engine::set_string_damping`] for the out-of-range contract.
+    fn set_string_hammer(&mut self, midi: u8, string_index: u8, hammer: hammer::HammerConfig) {
+        if let Some(strings) = self.unison_for_midi(midi) {
+            strings.set_string_hammer(usize::from(string_index), hammer);
         }
     }
 }

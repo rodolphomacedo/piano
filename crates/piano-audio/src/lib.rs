@@ -163,6 +163,102 @@ impl AudioSession {
             .is_ok()
     }
 
+    /// Queues a new damping for one string within `midi`'s unison, live.
+    /// See [`piano_core::UnisonGroup::set_string_damping`]. An
+    /// unrecognised `midi` or an out-of-range `string_index` is silently
+    /// ignored on the audio thread. Same drop-not-block behaviour as
+    /// [`AudioSession::note_on`].
+    pub fn set_string_damping(&mut self, midi: u8, string_index: u8, damping: f32) -> bool {
+        self.producer
+            .push(Command::SetStringDamping {
+                midi,
+                string_index,
+                damping,
+            })
+            .is_ok()
+    }
+
+    /// Queues a new sustain for one string within `midi`'s unison, live.
+    /// See [`piano_core::UnisonGroup::set_string_sustain`]. Same
+    /// out-of-range and drop-not-block behaviour as
+    /// [`AudioSession::set_string_damping`].
+    pub fn set_string_sustain(&mut self, midi: u8, string_index: u8, sustain: f32) -> bool {
+        self.producer
+            .push(Command::SetStringSustain {
+                midi,
+                string_index,
+                sustain,
+            })
+            .is_ok()
+    }
+
+    /// Queues a new inharmonicity coefficient for one string within
+    /// `midi`'s unison, live. See
+    /// [`piano_core::UnisonGroup::set_string_inharmonicity`]. Same
+    /// out-of-range and drop-not-block behaviour as
+    /// [`AudioSession::set_string_damping`].
+    pub fn set_string_inharmonicity(
+        &mut self,
+        midi: u8,
+        string_index: u8,
+        inharmonicity: f32,
+    ) -> bool {
+        self.producer
+            .push(Command::SetStringInharmonicity {
+                midi,
+                string_index,
+                inharmonicity,
+            })
+            .is_ok()
+    }
+
+    /// Queues retuning one string within `midi`'s unison to `cents` away
+    /// from that unison's base frequency, live. See
+    /// [`piano_core::UnisonGroup::set_string_detune`]. Same out-of-range
+    /// and drop-not-block behaviour as [`AudioSession::set_string_damping`].
+    pub fn set_string_detune(&mut self, midi: u8, string_index: u8, cents: f32) -> bool {
+        self.producer
+            .push(Command::SetStringDetune {
+                midi,
+                string_index,
+                cents,
+            })
+            .is_ok()
+    }
+
+    /// Queues reseeding one string's excitation noise for its *next*
+    /// strike. See [`piano_core::UnisonGroup::set_string_seed`]. Same
+    /// out-of-range and drop-not-block behaviour as
+    /// [`AudioSession::set_string_damping`].
+    pub fn set_string_seed(&mut self, midi: u8, string_index: u8, seed: u32) -> bool {
+        self.producer
+            .push(Command::SetStringSeed {
+                midi,
+                string_index,
+                seed,
+            })
+            .is_ok()
+    }
+
+    /// Queues changing one string's felt-contact physics for its *next*
+    /// strike. See [`piano_core::UnisonGroup::set_string_hammer`]. Same
+    /// out-of-range and drop-not-block behaviour as
+    /// [`AudioSession::set_string_damping`].
+    pub fn set_string_hammer(
+        &mut self,
+        midi: u8,
+        string_index: u8,
+        hammer: piano_core::hammer::HammerConfig,
+    ) -> bool {
+        self.producer
+            .push(Command::SetStringHammer {
+                midi,
+                string_index,
+                hammer,
+            })
+            .is_ok()
+    }
+
     /// The sample rate the engine is tuned for: the output device's own
     /// rate, not necessarily 48 kHz.
     #[inline]

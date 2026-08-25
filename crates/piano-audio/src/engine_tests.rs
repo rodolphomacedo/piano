@@ -39,6 +39,60 @@ fn a_note_on_command_produces_sound() {
     assert!(buffer.iter().any(|sample| sample.abs() > 1e-3));
 }
 
+/// Renders `blocks` blocks of 512 samples and returns the RMS of the last
+/// quarter of them — the tail, where any per-round-trip loss has compounded
+/// enough to dominate the attack transient.
+fn tail_rms(engine: &mut Engine, blocks: usize) -> f32 {
+    let mut rendered = Vec::with_capacity(blocks * 512);
+    for _ in 0..blocks {
+        let mut buffer = [0.0f32; 512];
+        engine.process_block(&mut buffer);
+        rendered.extend_from_slice(&buffer);
+    }
+    let tail = rendered.split_off(rendered.len() - rendered.len() / 4);
+    let mean_square = tail.iter().map(|s| s * s).sum::<f32>() / tail.len() as f32;
+    mean_square.sqrt()
+}
+
+fn press(engine: &mut Engine, midi: u8) {
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::NoteOn {
+            midi,
+            velocity: 0.8,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+}
+
+/// The bug this coupling rework exists for, at the level a player hears it:
+/// hold one key down, strike a second, and the second must sound as long as
+/// it would have alone. It did not — the shared bridge's convex blend shed
+/// part of every voice's own amplitude per round trip, in proportion to how
+/// many voices were contributing, so the first note of a phrase rang and
+/// everything after it sounded dry. See
+/// `piano_core::string::PluckedString::write_mixed_feedback`.
+#[test]
+fn holding_one_key_does_not_shorten_the_next_note_struck() {
+    let mut alone = engine();
+    press(&mut alone, 60);
+    let solo_tail = tail_rms(&mut alone, 200);
+
+    let mut accompanied = engine();
+    press(&mut accompanied, 69);
+    let _ = tail_rms(&mut accompanied, 100); // let A4 ring first
+    press(&mut accompanied, 60);
+    let polyphonic_tail = tail_rms(&mut accompanied, 200);
+
+    // The held A4 still sounds into the same buffer, so the mix can only be
+    // *louder* than C4 alone. A tail quieter than C4's own means C4 itself
+    // was drained.
+    assert!(
+        polyphonic_tail > solo_tail * 0.9,
+        "C4's tail collapsed to {polyphonic_tail:e} against {solo_tail:e} played alone"
+    );
+}
+
 #[test]
 fn an_out_of_range_note_is_ignored_without_panicking() {
     let mut engine = engine();

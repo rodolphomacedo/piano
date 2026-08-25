@@ -540,6 +540,28 @@ budget) is markedly higher than the mean this entry's own aggregate number
 implied, though still comfortably inside the 2.67 ms deadline; exactly the
 "averages hide it" concern this document's own metrics table names.
 
+*Correctness note (not a performance change)*: the `O(N)` shared-bus
+topology this entry specified was right; the **mixing law** its first
+consumer used to read the bus back was not, and the two are easy to conflate
+because the bug presented as a coupling-strength problem. Every voice blended
+*towards* the readback by a convex combination, which gives the string's own
+signal a coefficient of `1 − gain` rather than `1`. Since the readback is a
+whole block old (the latency trade this entry accepted) and is a *mean over
+contributors* (the boundedness fix above), it is neither equal to nor
+correlated with the string's own signal — so each voice shed roughly
+`gain·(1 − 1/N)` of its own amplitude every round trip: an unmodelled loss
+that grew with polyphony, sitting in the one place `sustain` is meant to be
+the only authority. Measured at the default gain, a note sounding *alone*
+lost 11× its level by 0.5 s against the same note off the bus, and an
+already-inaudible second key cost a freshly-struck note a further 40×. The
+readback is now driven in **additively**, scaled by the string's own
+round-trip loss (`1 − loop_gain`, which is what bridge admittance physically
+*is*), so an idle bus costs nothing and the loop stays bounded by
+`1 − (1 − loop_gain)²` for any gain in `[0, 1]`. Cost is unchanged — the same
+one `add_and_read` per voice per sample, plus one extra multiply-add inside
+`write_mixed_feedback` — so none of the numbers above are invalidated. See
+`piano_core::string::PluckedString::write_mixed_feedback`.
+
 ---
 
 ### PERF-009

@@ -78,6 +78,44 @@ fn output_stays_bounded_for_a_full_second() {
     }
 }
 
+/// Driving the loop with nothing must be indistinguishable from not passing
+/// a coupling term at all — the property that makes an idle bridge free, and
+/// the one the old convex blend could not have: blending towards `0.0` was a
+/// loss, not a no-op.
+#[test]
+fn zero_coupling_writes_back_exactly_the_uncoupled_signal() {
+    let mut coupled = string_at(220.0);
+    let mut plain = string_at(220.0);
+    coupled.pluck(1.0);
+    plain.pluck(1.0);
+    for index in 0..4_800 {
+        let tap = coupled.read_bridge_tap();
+        let dispersed = coupled.disperse(tap);
+        let driven = coupled.write_mixed_feedback(tap, dispersed, 0.0);
+        assert_eq!(driven, plain.process(), "diverged at sample {index}");
+    }
+}
+
+/// Coupling is scaled by `1 - loop_gain`, so a string that loses nothing per
+/// round trip receives nothing through the bridge — the limit that makes the
+/// additive term unconditionally stable rather than merely small.
+#[test]
+fn a_lossless_string_takes_nothing_from_the_bridge() {
+    let mut string = string_at(220.0);
+    string.set_sustain(1.0);
+    string.pluck(1.0);
+    let tap = string.read_bridge_tap();
+    let dispersed = string.disperse(tap);
+    let mut reference = string.clone();
+    string.write_mixed_feedback(tap, dispersed, 1000.0);
+    reference.write_mixed_feedback(tap, dispersed, 0.0);
+    assert_eq!(
+        string.read_bridge_tap(),
+        reference.read_bridge_tap(),
+        "a lossless string was moved by the bridge"
+    );
+}
+
 #[test]
 fn energy_decays_after_the_attack() {
     let mut string = string_at(440.0);
@@ -352,6 +390,49 @@ fn re_plucking_after_release_lifts_the_damper_again() {
 }
 
 proptest! {
+    /// The stability claim `write_mixed_feedback` makes, checked rather
+    /// than argued: for *any* `sustain` and *any* coupling weight in
+    /// `[0, 1]`, feeding the loop back into itself through the coupling
+    /// term — the worst case, a bridge perfectly correlated with the string
+    /// driving it — stays bounded, because the resulting loop gain is
+    /// `loop_gain·(1 + 1 - loop_gain) = 1 - (1 - loop_gain)^2 <= 1`.
+    ///
+    /// This is the failure mode the *previous* additive coupling had, when
+    /// it scaled the external term by `loop_gain` instead: there the same
+    /// worst case gives `loop_gain·(1 + weight)`, which exceeds 1 and
+    /// diverges as soon as `sustain` approaches 1.
+    #[test]
+    fn any_coupling_and_sustain_stays_bounded(
+        sustain in 0.0f32..=1.0,
+        weight in 0.0f32..=1.0,
+    ) {
+        let mut string = string_at(220.0);
+        string.set_sustain(sustain);
+        string.pluck(1.0);
+        let mut fed_back = 0.0f32;
+        for _ in 0..48_000 {
+            let tap = string.read_bridge_tap();
+            let dispersed = string.disperse(tap);
+            fed_back = string.write_mixed_feedback(tap, dispersed, weight * fed_back);
+            prop_assert!(fed_back.is_finite());
+            prop_assert!(fed_back.abs() < 4.0, "sample {fed_back} escaped");
+        }
+    }
+
+    /// Totality (`CLAUDE.md` rule 5) for the coupling term specifically:
+    /// whatever a caller drives in — NaN, +-infinity, `f32::MAX` — the
+    /// string must keep producing a value rather than panicking.
+    #[test]
+    fn any_coupling_value_never_panics(coupling in proptest::num::f32::ANY) {
+        let mut string = string_at(220.0);
+        string.pluck(1.0);
+        for _ in 0..256 {
+            let tap = string.read_bridge_tap();
+            let dispersed = string.disperse(tap);
+            let _ = string.write_mixed_feedback(tap, dispersed, coupling);
+        }
+    }
+
     /// Whatever damping is requested, live retuning never produces a
     /// loop shorter than the minimum representable delay, and the
     /// string never blows up.

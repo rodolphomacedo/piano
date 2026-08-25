@@ -394,7 +394,7 @@ impl PluckedString {
     pub fn process(&mut self) -> f32 {
         let tap = self.read_bridge_tap();
         let dispersed = self.disperse(tap);
-        self.write_mixed_feedback(tap, dispersed)
+        self.write_mixed_feedback(tap, dispersed, 0.0)
     }
 
     /// Reads this sample's bridge-end travelling-wave value, without yet
@@ -428,46 +428,90 @@ impl PluckedString {
 
     /// Completes the sample [`PluckedString::read_bridge_tap`] and
     /// [`PluckedString::disperse`] started: applies this string's own
-    /// round-trip loss to `mixed` and writes it back, returning the
+    /// round-trip loss to `mixed` plus whatever `coupling` a shared bridge
+    /// is driving into it, and writes the result back, returning the
     /// DC-blocked output sample read from `tap`.
     ///
     /// `mixed` is normally exactly [`PluckedString::disperse`]'s own
     /// result (as [`PluckedString::process`] passes), optionally blended
-    /// with other strings' dispersed signal first by a **convex**
-    /// combination — `crate::unison::UnisonGroup` is what builds that
-    /// blend, gated so a damped string (`damper_engaged`) is never blended
-    /// with anything, only ever writing back its own signal, since a real
-    /// felt damper blocks vibration regardless of where energy is trying
-    /// to come from.
+    /// with this note's *own* unison strings' dispersed signal first by a
+    /// **convex** combination — `crate::unison::UnisonGroup` is what builds
+    /// that blend, gated so a damped string (`damper_engaged`) is never
+    /// blended with anything, only ever writing back its own signal, since
+    /// a real felt damper blocks vibration regardless of where energy is
+    /// trying to come from.
     ///
-    /// Convex, not additive, is a load-bearing choice: an earlier version
-    /// of this method took an *additive* `external_input` term scaled by
-    /// `loop_gain` alongside the string's own signal. That is only stable
-    /// while `loop_gain` is comfortably below 1 — a group of `N` coupled,
-    /// *near-lossless* strings (`sustain` close to 1, the common case for
-    /// a freshly-struck note) has a "common mode" (every string moving
-    /// together) whose effective gain is `loop_gain·(1 + coupling·(N-1))`,
+    /// # Why `mixed` is convex but `coupling` is additive
+    ///
+    /// These are two different physical situations needing two different
+    /// mixing laws. This project got it wrong in both directions before
+    /// measuring its way to the split.
+    ///
+    /// **The convex half.** An early version took the cross-string term
+    /// *additively*, scaled by `loop_gain`. That is only stable while
+    /// `loop_gain` is comfortably below 1: a group of `N` coupled,
+    /// near-lossless strings (`sustain` close to 1, the common case for a
+    /// freshly-struck note) has a "common mode" — every string moving
+    /// together — whose effective gain is `loop_gain·(1 + coupling·(N−1))`,
     /// which exceeds 1, and so grows without bound, for any positive
-    /// additive coupling once `loop_gain` is close enough to 1 — caught by
+    /// additive coupling once `loop_gain` is close enough to 1.
     /// `unison::tests::output_stays_bounded_for_a_full_second_with_local_
-    /// coupling` diverging during development, not by inspection. A convex
-    /// combination cannot have this failure mode: its result is always
-    /// between the smallest and largest of its inputs, for *any* mixing
-    /// weight and *any* `loop_gain`, so `write_mixed_feedback`'s own
-    /// `loop_gain < 1` contraction is the only thing responsible for decay,
-    /// exactly as it is for an uncoupled string. This is the digital
-    /// equivalent of a passive scattering junction, whose mixing never
-    /// creates energy and whose losses are applied strictly after
-    /// scattering (J. O. Smith III, *Physical Audio Signal Processing*,
-    /// "Scattering at an Impedance Discontinuity").
+    /// coupling` caught that diverging. A convex combination cannot have
+    /// that failure mode: its result always lies between the smallest and
+    /// largest of its inputs, for any weight and any `loop_gain`.
+    ///
+    /// **Why convex is nonetheless wrong for the shared bus.** A convex
+    /// combination `own + w·(other − own)` gives the string's own signal a
+    /// coefficient of `1 − w` instead of `1`. That is harmless exactly when
+    /// `other ≈ own`, which is what makes it right for a note's own unison
+    /// strings: same note, coupled with no latency, so the difference term
+    /// is genuinely small and what survives of it *is* the beating this
+    /// project wants. It is wrong for [`crate::bridge::BridgeBus`], whose
+    /// readback is neither. It is a whole block old (`PERF-008`), so it is
+    /// decorrelated from `own` at audio rates; and it is a *mean over every
+    /// contributing voice*, so it shrinks towards `own/N` as polyphony
+    /// rises. The string's own amplitude was therefore multiplied by about
+    /// `1 − w·(1 − 1/N)` every round trip — an unmodelled,
+    /// polyphony-dependent loss sitting in the one place `sustain` is meant
+    /// to be the only authority. Measured at the default weight: a note
+    /// sounded *alone* lost 11× its level by 0.5 s against the same note
+    /// with the bus disabled, and a second key already decayed to
+    /// inaudibility still cost a freshly-struck note a further 40×. A
+    /// silent string resting on a bridge does not drain its neighbour, so
+    /// that was never physics — it was the mixing law.
+    ///
+    /// **The additive half, and why it is stable.** `coupling` is added on
+    /// top instead, leaving the string's own signal at coefficient `1`, so
+    /// a bus driving nothing costs nothing — exactly the property that
+    /// failed above. Stability comes from scaling it by `1 − loop_gain`
+    /// rather than by `loop_gain`, which is what the earlier additive
+    /// version did. That is not a fudge factor: `1 − loop_gain` *is* this
+    /// string's round-trip energy loss, and Weinreich (1977) has
+    /// cross-string coupling strength set by the bridge admittance, which
+    /// is the very thing that loss represents — a string that barely gives
+    /// energy to the bridge barely receives any back through it. It also
+    /// makes the loop unconditionally bounded: the worst case is a bus
+    /// perfectly correlated with the string itself, giving a loop gain of
+    /// `loop_gain·(1 + 1 − loop_gain) = 1 − (1 − loop_gain)²`, which is
+    /// `≤ 1` for every `loop_gain` in `[0, 1]` and every coupling weight in
+    /// `[0, 1]` — checked by `string_tests::any_coupling_and_sustain_stays_
+    /// bounded`, not argued.
+    ///
+    /// Both halves together are still the digital passive scattering
+    /// junction this method has always modelled: mixing that never creates
+    /// energy, with losses applied strictly after scattering (J. O. Smith
+    /// III, *Physical Audio Signal Processing*, "Scattering at an Impedance
+    /// Discontinuity").
     #[inline]
-    pub fn write_mixed_feedback(&mut self, tap: f32, mixed: f32) -> f32 {
+    pub fn write_mixed_feedback(&mut self, tap: f32, mixed: f32, coupling: f32) -> f32 {
         let loop_gain = if self.damper_engaged {
             self.sustain * RELEASE_LOSS_MULTIPLIER
         } else {
             self.sustain
         };
-        let reflected = mixed * loop_gain;
+        let bridge_admittance = 1.0 - loop_gain;
+        let driven = mixed + coupling * bridge_admittance;
+        let reflected = driven * loop_gain;
         self.delay.write(math::flush_denormal(reflected));
 
         let output = self.dc_blocker.process(tap);

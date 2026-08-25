@@ -19,8 +19,9 @@
 //! [`BridgeBus::add_and_read`] returns the *mean* of everything contributed
 //! last block, not the raw total. An earlier version returned the raw sum.
 //! Each individual string's own mixing step
-//! ([`crate::string::PluckedString::write_mixed_feedback`]) is a convex
-//! combination, which is bounded by construction for any single string in
+//! ([`crate::string::PluckedString::write_mixed_feedback`]) scales whatever
+//! it is handed by that string's own round-trip loss, which is bounded by
+//! construction for any single string in
 //! isolation — but a *raw sum* shared by up to 88 keys is not itself bounded
 //! by any single string's own signal: as more voices become receptive
 //! (e.g. every idle voice, the moment the sustain pedal goes down — see
@@ -33,10 +34,20 @@
 //! running the test, not predicted from the design. Dividing by how many
 //! voices actually contributed turns the readback back into a **bounded
 //! average**: whatever its size, it can never exceed the largest individual
-//! contribution, so mixing it into any one string via a convex combination
-//! stays bounded by that string's own signal and everyone else's, exactly
-//! as the single-voice case already was. Tracking "how many contributed"
-//! costs one counter alongside the running total, not a second `O(N)` pass.
+//! contribution, so driving any one string with it stays bounded by that
+//! string's own signal and everyone else's, exactly as the single-voice
+//! case already was. Tracking "how many contributed" costs one counter
+//! alongside the running total, not a second `O(N)` pass.
+//!
+//! Averaging keeps the bus bounded; it does **not** make the bus free to
+//! read. Dividing by the contributor count means a voice reading back its
+//! own contribution alongside `N-1` others gets `1/N` of what it put in, so
+//! any mixing law that treats the readback as a *replacement* for the
+//! string's own signal charges each voice for its neighbours' silence. That
+//! is a real bug this bus's first consumer had, and why
+//! [`crate::string::PluckedString::write_mixed_feedback`] now drives the
+//! readback in **additively** — see its doc comment for the measurement and
+//! the stability argument.
 //!
 //! # Why this bus is one block of latency, not sample-accurate
 //!

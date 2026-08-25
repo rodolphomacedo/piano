@@ -1097,6 +1097,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "piano-studio"
+version = "0.1.0"
+dependencies = [
+ "piano-audio",
+ "piano-core",
+ "piano-params",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "piano-wasm"
 version = "0.1.0"
 dependencies = [

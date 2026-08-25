@@ -24,7 +24,7 @@ mod stream;
 #[cfg(test)]
 mod tests_no_allocation;
 mod timing;
-mod voicing;
+pub mod voicing;
 
 use std::sync::Arc;
 

@@ -1,0 +1,21 @@
+[package]
+name = "piano-studio"
+description = "Cascading .piano.json parameter file format and resolver for the live parameter studio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+piano-core = { workspace = true, features = ["std"] }
+piano-params = { workspace = true, features = ["std"] }
+piano-audio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

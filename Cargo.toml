@@ -19,11 +19,14 @@ piano-render = { path = "crates/piano-render", version = "0.1.0" }
 piano-audio = { path = "crates/piano-audio", version = "0.1.0" }
 piano-midi = { path = "crates/piano-midi", version = "0.1.0" }
 piano-wasm = { path = "crates/piano-wasm", version = "0.1.0" }
+piano-studio = { path = "crates/piano-studio", version = "0.1.0" }
 libm = "0.2"
 hound = "3.5"
 anyhow = "1"
 thiserror = { version = "2", default-features = false }
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 criterion = "0.5"
 proptest = "1"
 rustfft = "6"

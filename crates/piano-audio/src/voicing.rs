@@ -55,13 +55,18 @@ const TREBLE_DAMPING: f32 = 0.4;
 
 /// A key's computed baseline voicing, ready to drop into
 /// [`StringConfig`]'s matching fields.
-pub(crate) struct KeyVoicing {
+///
+/// `pub`, not `pub(crate)`: `piano-studio`'s cascade resolver
+/// (`docs/PARAMETER-STUDIO.md`) reuses this as its "registers" tier rather
+/// than reimplementing the same three-anchor interpolation.
+#[derive(Debug, Clone, Copy)]
+pub struct KeyVoicing {
     /// See [`StringConfig::damping`].
-    pub(crate) damping: f32,
+    pub damping: f32,
     /// See [`StringConfig::sustain`].
-    pub(crate) sustain: f32,
+    pub sustain: f32,
     /// See [`StringConfig::inharmonicity`].
-    pub(crate) inharmonicity: f32,
+    pub inharmonicity: f32,
 }
 
 /// How many physical strings `key` is struck by (M6, `docs/ROADMAP.md`).
@@ -74,12 +79,13 @@ pub(crate) struct KeyVoicing {
 /// zero-based index that function expects, the same shape every other
 /// function in this module already uses `key.key_index()` for.
 #[must_use]
-pub(crate) fn unison_count_for_key(key: PianoKey) -> usize {
+pub fn unison_count_for_key(key: PianoKey) -> usize {
     piano_core::unison::unison_count_for_key_index(key.key_index())
 }
 
 /// Computes `key`'s baseline voicing under `tuning`.
-pub(crate) fn voicing_for_key(key: PianoKey, tuning: Tuning) -> KeyVoicing {
+#[must_use]
+pub fn voicing_for_key(key: PianoKey, tuning: Tuning) -> KeyVoicing {
     let frequency = key.frequency(tuning).hertz();
     let bass_hz = anchor_hz(LOWEST_PIANO_KEY, tuning);
     let mid_hz = anchor_hz(CONCERT_A_KEY, tuning);
@@ -111,7 +117,8 @@ pub(crate) fn voicing_for_key(key: PianoKey, tuning: Tuning) -> KeyVoicing {
 /// Builds a [`StringConfig`] for `key` under `tuning`, its voicing fields
 /// set from [`voicing_for_key`] rather than left at
 /// [`StringConfig::new`]'s single global default.
-pub(crate) fn config_for_key(key: PianoKey, tuning: Tuning) -> StringConfig {
+#[must_use]
+pub fn config_for_key(key: PianoKey, tuning: Tuning) -> StringConfig {
     let voicing = voicing_for_key(key, tuning);
     let mut config = StringConfig::new(key.frequency(tuning));
     config.damping = voicing.damping;

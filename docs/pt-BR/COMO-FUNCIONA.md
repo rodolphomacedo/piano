@@ -34,8 +34,9 @@ Desenvolvimento patrocinado pela [Grabatus Labs](https://grabatus.com).
 15. [Por que o programa nunca pode travar](#15-por-que-o-programa-nunca-pode-travar)
 16. [Como as peças do projeto se encaixam](#16-como-as-peças-do-projeto-se-encaixam)
 17. [O que ainda falta para chegar perto de um piano de verdade](#17-o-que-ainda-falta-para-chegar-perto-de-um-piano-de-verdade)
-18. [Glossário completo](#18-glossário-completo)
-19. [Para saber mais](#19-para-saber-mais)
+18. [Tocando de verdade: como o MIDI leva sua martelada até o código](#18-tocando-de-verdade-como-o-midi-leva-sua-martelada-até-o-código)
+19. [Glossário completo](#19-glossário-completo)
+20. [Para saber mais](#20-para-saber-mais)
 
 ---
 
@@ -1077,7 +1078,185 @@ comportamento real do programa que você pode compilar e tocar agora mesmo
 
 ---
 
-## 18. Glossário completo
+## 18. Tocando de verdade: como o MIDI leva sua martelada até o código
+
+Tudo que os capítulos anteriores descreveram — a fila de espera, o filtro,
+a martelada de feltro — precisa de uma entrada: alguém precisa dizer ao
+programa *qual* tecla foi tocada, *com que força*, e *quando*. Este
+capítulo explica como essa informação chega até o código, usando
+exatamente o protocolo que qualquer piano digital ou teclado controlador
+de verdade fala: o **MIDI**.
+
+### MIDI não é som — é uma partitura tocada em tempo real
+
+> 📖 **MIDI** (*Musical Instrument Digital Interface*): um protocolo de
+> 1983 para instrumentos musicais eletrônicos conversarem entre si,
+> transportando *eventos de performance* — "esta tecla foi pressionada",
+> "esta tecla foi solta", "este pedal desceu" — e nunca áudio propriamente
+> dito. É a diferença entre uma partitura (o que tocar, quando, com que
+> intensidade) e uma gravação (o som já pronto): MIDI é sempre a
+> partitura, nunca a gravação.
+
+Isso importa duas vezes para este projeto: primeiro, é assim que uma
+martelada real, tocada num teclado de verdade, chega até
+`piano_core::hammer::simulate_contact` (capítulo 11); segundo, explica por
+que o teclado físico plugado por USB pode ser de qualquer marca — ele só
+precisa falar essa mesma língua comum, definida em 1983 e praticamente
+inalterada desde então em todo teclado musical fabricado hoje.
+
+### As três mensagens que este projeto entende
+
+O código que decodifica MIDI neste projeto (`piano_midi::event::parse`)
+reconhece só três tipos de mensagem — deliberadamente, porque só três são
+necessários para o que o instrumento faz hoje:
+
+| Mensagem MIDI | O que dispara no código | Onde |
+|---|---|---|
+| Note On | `AudioSession::note_on(nota, velocidade)` | tecla pressionada |
+| Note Off | `AudioSession::note_off(nota)` | tecla solta |
+| Control Change (CC) | muda um parâmetro ao vivo | knob, pedal, roda |
+
+Dentro de "Control Change", três números de controlador específicos já
+têm um significado neste projeto (`piano-cli/src/midi.rs`):
+
+| CC | Nome padrão MIDI | O que faz aqui |
+|---|---|---|
+| 74 | Brightness | `damping`, invertido: girar para cima escurece |
+| 1 | Modulation wheel | `sustain` (capítulo 8) |
+| 64 | Sustain (hold) pedal | segura toda nota solta até o pedal subir |
+
+> 📖 **Por que CC74 e CC1, e não algo dedicado:** o padrão MIDI define um
+> número fixo de controladores "com nome" (*brightness*, *modulation
+> wheel*…), mas nenhum deles se chama "quanto uma corda física decai".
+> Este projeto reaproveita o controlador padrão mais parecido em intenção
+> — CC74 já é, por convenção, o "deixa mais brilhante ou mais escuro" de
+> quase todo sintetizador — em vez de inventar um número de controlador só
+> seu, que nenhum teclado físico teria um knob já mapeado para controlar.
+
+### Por que a velocidade é sempre um número entre 0 e 127
+
+Toda vez que este projeto normaliza uma velocidade ou um valor de CC, ele
+divide por 127 (`event::normalize`). Esse 127 não é um limite deste
+projeto — é um limite do **protocolo MIDI em si**: cada mensagem carrega o
+dado de velocidade num único byte de 7 bits, e 7 bits contam de 0 a
+2⁷ − 1 = 127. Não existe, no MIDI 1.0 (o que `piano-midi` fala, via a
+biblioteca `midir`), um jeito de mandar "velocidade 200" ou "velocidade
+128,5" — o teto é sempre exatamente 128 valores possíveis, não importa
+quão caro ou sofisticado seja o teclado do outro lado do cabo.
+
+> 📖 **Honestidade sobre o MIDI 2.0:** existe uma versão mais nova do
+> protocolo, MIDI 2.0 (2020), que permite velocidade de até 32 bits por
+> nota — bilhões de valores, não 128. Praticamente nenhum piano digital no
+> mercado (incluindo o deste capítulo) fala MIDI 2.0 hoje, e `piano-midi`
+> também não — então, na prática, o teto de 128 continua sendo o que
+> qualquer combinação de hardware e software deste projeto realmente usa.
+
+### Exemplo prático: o alcance de um piano digital convencional
+
+Para tornar isso concreto em vez de abstrato, vale examinar um piano
+digital real, de entrada de linha, e ver exatamente onde ele para: o
+**Yamaha P-125**, um dos pianos digitais de 88 teclas mais vendidos do
+mundo nessa faixa de preço.
+
+O P-125 usa a ação **GHS** (*Graded Hammer Standard*) da Yamaha: 88 teclas
+com peso graduado — mais pesadas nas graves, mais leves nas agudas,
+imitando a distribuição de peso dos martelos reais de um piano acústico —
+construída com **dois sensores por tecla** (a diferença de tempo entre os
+dois sensores é o que o firmware do teclado usa para calcular a
+velocidade que sai como MIDI), sem mecanismo de escapamento e sem teclas
+de madeira. O teclado ainda oferece quatro curvas de sensibilidade ao
+toque (desligada, suave, média, forte) — que *remapeiam* os mesmos 128
+valores possíveis em curvas diferentes, não aumentam quantos valores
+existem.
+
+#### "Pianos mais caros têm mecanismos mais precisos para enviar MIDI? Isso é verdade?"
+
+Sim — mas não do jeito que a pergunta sugere à primeira vista. O número
+que sai pelo cabo **nunca** passa de 128 valores, custe o piano $500 ou
+$50.000: isso é um teto do protocolo (seção anterior), não do hardware. O
+que muda com o preço é *outra coisa*: quão bem o mecanismo consegue
+capturar o gesto real do pianista — de forma consistente, tecla a tecla,
+em toda a extensão do teclado — e converter isso nesse mesmo intervalo
+fixo de 128 valores, além de que *tipos* de mensagem o teclado consegue
+produzir.
+
+| Ação (Yamaha) | Sensores/tecla | Escapamento | Teclas | Aftertouch |
+|---|---|---|---|---|
+| GHS (P-125) | 2 | não | plástico | não — falta o sensor |
+| GH3 | 3 | não | plástico | sim |
+| GH3X | 3 | sim | plástico | sim |
+| NWX | 3 | sim | madeira (brancas) | sim |
+
+> 📖 **Por que o terceiro sensor importa:** *aftertouch* (pressão contínua
+> depois que a tecla já chegou ao fundo) exige um terceiro ponto de
+> contato perto do fim do curso da tecla. Numa ação de dois sensores como
+> a GHS, esse terceiro ponto **não existe fisicamente** — não é uma
+> limitação de firmware que uma atualização resolveria, é a mecânica em si
+> que não tem como detectar isso. O escapamento (a "marchinha" que você
+> sente na metade do curso de um piano acústico de verdade) e as teclas de
+> madeira, por sua vez, não mudam nenhum número que sai pelo MIDI — elas
+> mudam o quão bem o *pianista* consegue controlar a força com que aperta
+> a tecla, o que indiretamente produz uma velocidade mais consistente e
+> mais expressiva dentro do mesmo teto de 128.
+
+#### A capacidade do seu Yamaha P-125, especificamente
+
+| Característica | Valor |
+|---|---|
+| Teclas | 88, com ação GHS (martelo graduado, 2 sensores) |
+| Curvas de toque | 4 predefinidas: desligada, suave, média, forte |
+| Aftertouch | Não suportado (ação sem terceiro sensor) |
+| Saída MIDI | USB-to-Host (mesmo cabo de energia e dados) |
+| Pedal incluso | Liga/desliga simples (sustain, sem meio-pedal) |
+| Meio-pedal | Só com o pedal opcional Yamaha FC3A (contínuo) |
+| Motor de som interno | Pure CF (amostras do CFIIIS), 192 vozes de polifonia |
+
+### Como o P-125 faz o próprio som dele — e por que isso não importa aqui
+
+Vale fechar o círculo numa pergunta natural: se o P-125 já soa como um
+piano, como ele faz isso? A resposta é **o oposto exato** da técnica deste
+projeto. O motor de som do P-125, chamado pela Yamaha de "Pure CF Sound
+Engine", é baseado em **amostras**: gravações reais do piano de cauda de
+concerto Yamaha CFIIIS, tocadas de volta quando você aperta uma tecla, com
+camadas diferentes de gravação conforme a velocidade da martelada e até
+192 notas soando ao mesmo tempo (a polifonia). É literalmente o "Jeito 1"
+do capítulo 1 — e a raiz deste repositório (`CLAUDE.md`) descarta essa
+técnica de propósito para `piano_core`: áudio gravado, reproduzido de
+volta.
+
+> 📖 **Por que isso não é uma contradição:** usar o P-125 como controlador
+> para este projeto não usa nenhuma amostra do P-125 — só o teclado (a
+> mecânica GHS) é aproveitado, para gerar mensagens MIDI. O alto-falante e
+> o motor de som Pure CF do P-125 ficam completamente fora do circuito; o
+> som que sai é 100% calculado por `piano_core`, a partir da física do
+> capítulo 7 em diante. O P-125, nesse uso, é só um sensor de toque
+> sofisticado — a mesma função que um teclado de computador
+> (`docs/pt-BR/LEIA-ME.md`) cumpre de um jeito bem mais grosseiro, sem
+> velocidade nenhuma.
+
+### Honestidade: o que este projeto ainda não faz com o MIDI que recebe
+
+Para não prometer mais do que o código entrega hoje:
+
+- **Aftertouch, pitch bend e mudança de programa são descartados
+  silenciosamente** — `piano_midi::event::parse` devolve `None` para eles,
+  por design (são mensagens que este instrumento simplesmente não usa
+  ainda, não um bug). Mesmo com um teclado que os produzisse (o P-125 não
+  produz aftertouch, tabela acima), este projeto os ignoraria hoje.
+- **O pedal de sustentação é liga/desliga, não contínuo** — o código
+  compara o valor do CC64 com um limiar fixo (`value >= 64.0/127.0`) em
+  vez de usar o valor contínuo que o MIDI já carrega. Mesmo comprando o
+  pedal opcional FC3A do P-125 (que envia um CC64 contínuo, não só 0 ou
+  127), este projeto ainda não usaria a nuance do meio-pedal.
+- **`inharmonicity` e a configuração do martelo (`HammerConfig`) não têm
+  nenhum CC mapeado** — ao contrário de `damping` e `sustain`, não há hoje
+  um jeito de ajustá-los ao vivo por um controlador MIDI (só escrevendo
+  Rust diretamente). É o mesmo ponto que a conversa anterior sobre timbre
+  já registrou.
+
+---
+
+## 19. Glossário completo
 
 Todas as palavras novas deste documento, num só lugar, para consulta rápida.
 
@@ -1113,7 +1292,7 @@ Todas as palavras novas deste documento, num só lugar, para consulta rápida.
 
 ---
 
-## 19. Para saber mais
+## 20. Para saber mais
 
 Este documento é a versão didática e sem pré-requisitos de material técnico
 mais denso que já existe no projeto, em inglês, para quem quiser ir mais

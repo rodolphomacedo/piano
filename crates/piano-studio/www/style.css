@@ -1,0 +1,315 @@
+/* piano studio — control page styling.
+ *
+ * Dark, quiet chrome: this page is a workbench meant to stay open next to a
+ * DAW or terminal for a whole session, not a marketing surface. */
+
+:root {
+  color-scheme: dark;
+  --bg: #14161a;
+  --panel: #1b1e24;
+  --panel-alt: #22262e;
+  --border: #2c313a;
+  --text: #e6e8eb;
+  --text-dim: #9aa1ab;
+  --accent: #5fb3ff;
+  --accent-dim: #2c5a80;
+  --danger: #d9704f;
+  --sharp: #0d0e10;
+  --natural: #f3f2ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+header h1 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+}
+
+header h1 span {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.file input[type="text"] {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 0.35rem 0.6rem;
+  min-width: 18rem;
+}
+
+.file button {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.file button:hover {
+  border-color: var(--accent-dim);
+}
+
+#status {
+  color: var(--text-dim);
+  min-width: 8rem;
+}
+
+#play {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.controls button {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.controls button:hover {
+  border-color: var(--accent-dim);
+}
+
+#panic {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.hint {
+  flex-basis: 100%;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.hint kbd {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 0.3rem;
+  font-family: inherit;
+}
+
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.slider span {
+  min-width: 11rem;
+  color: var(--text-dim);
+}
+
+.slider.compact span {
+  min-width: 4rem;
+}
+
+.slider input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.slider output {
+  min-width: 5.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.keyboard {
+  display: flex;
+  height: 8rem;
+  position: relative;
+  gap: 1px;
+}
+
+.key {
+  border: 1px solid var(--border);
+  border-radius: 0 0 4px 4px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0.6rem;
+}
+
+.key.natural {
+  background: var(--natural);
+  color: #333;
+}
+
+.key.sharp {
+  background: var(--sharp);
+  flex: 0 0 0;
+  width: 0.7rem;
+  margin: 0 -0.35rem;
+  height: 60%;
+  z-index: 1;
+}
+
+.key.active,
+.key.pressed {
+  background: var(--accent);
+}
+
+.key.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+}
+
+#string-panel,
+#instrument-panel {
+  background: var(--panel);
+  padding: 1rem 1.25rem;
+  min-height: 20rem;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+h2 {
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin: 1.25rem 0 0.75rem;
+}
+
+h2:first-child {
+  margin-top: 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.tab {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.scope {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: var(--text-dim);
+  margin: 0.75rem 0;
+  flex-wrap: wrap;
+}
+
+.scope label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+.sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 0.75rem;
+}
+
+.mode-card {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.mode-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.mode-card .sliders {
+  gap: 0.4rem;
+}
+
+.mode-card .slider span {
+  min-width: 7rem;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+}

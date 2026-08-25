@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>piano studio</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>piano studio<span id="piano-name"></span></h1>
+      <div class="file">
+        <input
+          id="path"
+          type="text"
+          spellcheck="false"
+          placeholder="my-piano.piano.json"
+          aria-label="Piano file path"
+        />
+        <button id="save" type="button">Save</button>
+        <button id="load" type="button">Load</button>
+        <span id="status" role="status"></span>
+      </div>
+    </header>
+
+    <section id="play">
+      <div class="controls">
+        <label class="slider compact">
+          <span>velocity</span>
+          <input id="velocity" type="range" min="0.05" max="1" step="0.01" value="0.8" />
+          <output id="velocity-value">0.80</output>
+        </label>
+        <label class="toggle">
+          <input id="pedal" type="checkbox" />
+          <span>sustain pedal</span>
+        </label>
+        <button id="panic" type="button">all notes off</button>
+        <button id="clear-selection" type="button">clear selection</button>
+        <p class="hint">
+          Click a key to play it. <kbd>a</kbd>–<kbd>;</kbd> and <kbd>w</kbd>,
+          <kbd>e</kbd>, <kbd>t</kbd>, <kbd>y</kbd>, <kbd>u</kbd>, <kbd>o</kbd>,
+          <kbd>p</kbd> play from the computer keyboard, <kbd>z</kbd>/<kbd>x</kbd>
+          shift the octave, <kbd>space</kbd> is the pedal. Shift-click keys to
+          build a selection, then edit them together.
+        </p>
+      </div>
+      <div id="keyboard" class="keyboard"></div>
+    </section>
+
+    <main>
+      <section id="string-panel">
+        <div class="panel-head">
+          <h2 id="string-title">no key selected</h2>
+          <div id="string-tabs" class="tabs"></div>
+        </div>
+        <div class="scope">
+          <span>apply to</span>
+          <label>
+            <input type="radio" name="scope" value="string" checked />
+            this string
+          </label>
+          <label>
+            <input type="radio" name="scope" value="key" />
+            whole key
+          </label>
+          <label>
+            <input type="radio" name="scope" value="selection" />
+            selection (<span id="selection-count">0</span> keys)
+          </label>
+        </div>
+        <div id="string-sliders" class="sliders"></div>
+      </section>
+
+      <section id="instrument-panel">
+        <h2>soundboard</h2>
+        <div id="modes" class="modes"></div>
+        <h2>bridge</h2>
+        <div id="bridge" class="sliders"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

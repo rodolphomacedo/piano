@@ -16,5 +16,8 @@ cpal = { workspace = true }
 rtrb = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 
+[dev-dependencies]
+rustfft = { workspace = true }
+
 [lints]
 workspace = true

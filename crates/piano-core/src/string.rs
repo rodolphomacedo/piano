@@ -103,6 +103,16 @@ pub const DEFAULT_DAMPING: f32 = 0.5;
 /// Sustain [`StringConfig::new`] uses when the caller does not choose one.
 pub const DEFAULT_SUSTAIN: f32 = 0.996;
 
+/// Loop-filter zero mix [`StringConfig::new`] uses when the caller does not
+/// choose one — the loop filter's original, pre-per-register fixed value
+/// (`filter::LoopFilter`'s own `MAX_ZERO_MIX`, full Nyquist-null rolloff).
+/// `piano_audio::voicing::loop_filter_coefficients` is what chooses a
+/// smaller value for keys whose round-trip budget cannot afford the full
+/// zero; a caller building a [`StringConfig`] directly (as
+/// `piano-render`'s tests do, deliberately bypassing that per-register
+/// voicing) keeps today's original filter character unchanged.
+pub const DEFAULT_LOOP_ZERO_MIX: f32 = 0.5;
+
 /// Tunable properties of a struck string.
 #[derive(Debug, Clone, Copy)]
 pub struct StringConfig {
@@ -121,6 +131,12 @@ pub struct StringConfig {
     pub seed: u32,
     /// This string's own felt-contact physics. See [`hammer::HammerConfig`].
     pub hammer: hammer::HammerConfig,
+    /// The loop filter's zero mix, in `[0, filter::MAX_ZERO_MIX]`. Higher
+    /// gives upper partials extra rolloff beyond what `damping` alone
+    /// provides, at the cost of amplitude at the fundamental itself — see
+    /// [`crate::filter::LoopFilter`]'s docs for why this had to become a
+    /// per-string value rather than a fixed constant.
+    pub loop_zero_mix: f32,
 }
 
 impl StringConfig {
@@ -134,6 +150,7 @@ impl StringConfig {
             inharmonicity: crate::dispersion::DEFAULT_INHARMONICITY,
             seed: 0x2545_F491,
             hammer: hammer::DEFAULT_HAMMER,
+            loop_zero_mix: DEFAULT_LOOP_ZERO_MIX,
         }
     }
 }
@@ -188,7 +205,10 @@ impl PluckedString {
     /// than two samples of delay.
     pub fn new(config: StringConfig, sample_rate: SampleRate) -> Result<Self, ParamError> {
         let period = sample_rate.hertz() / config.frequency.hertz();
-        let loop_filter = LoopFilter::new(math::clamp_or_low(config.damping, 0.0, 1.0));
+        let loop_filter = LoopFilter::new(
+            math::clamp_or_low(config.damping, 0.0, 1.0),
+            config.loop_zero_mix,
+        );
         let dispersion = DispersionCascade::new(config.frequency.hertz(), config.inharmonicity);
 
         // The loop is the delay line plus the loss filter plus the

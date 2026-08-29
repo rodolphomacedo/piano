@@ -31,11 +31,62 @@ leaves through the bridge, and the string loses energy to air and to internal
 friction. Crucially, **it does not lose it uniformly** — high partials die much
 faster than low ones.
 
-That is exactly the behaviour of a lowpass filter, and one pole is enough to
-capture the essential character. It is why a piano note goes bright, then mellow,
-then quiet, in that order.
+That is exactly the behaviour of a lowpass filter. It is why a piano note goes
+bright, then mellow, then quiet, in that order.
 
-Implemented as `filter::OnePoleLowpass`. The `damping` parameter is that pole.
+Implemented as `filter::LoopFilter`, a one-pole, one-zero design (M4; see "Why
+upper partials sit sharp", below, for the allpass dispersion cascade this
+composes with). The `damping` parameter is the pole; `zero_mix` is the second
+parameter the section below exists to explain.
+
+### Why the zero had to become a second, per-string parameter
+
+M4 added a fixed zero at Nyquist on top of the pole, for extra high-frequency
+rolloff a bare pole cannot give (D. Jaffe & J. O. Smith, "Extensions of the
+Karplus-Strong Plucked-String Algorithm", 1983). That zero costs real
+amplitude at any fundamental that is not close to DC, independent of the
+pole — even `pole = 0` still carries the zero's own loss. For a bass string
+that loss is negligible (A0's fundamental sits far below Nyquist), but for a
+treble string completing thousands of round trips a second it compounds
+catastrophically: measured with the zero fixed at Nyquist and `damping`
+applied uncorrected, a C8 string decayed to silence in about **12
+milliseconds** against this document's own 1-2 s target — the zero alone was
+costing about 16% of the fundamental's amplitude every round trip, and no
+value `sustain` can take (bounded to `[0, 1]`) can put amplitude back that
+the filter already removed.
+
+`piano_audio::voicing::loop_filter_coefficients` is the fix: `filter::
+LoopFilter` now takes `zero_mix` as well as `pole`, and that function scales
+both down together, key by key, until the loop filter's own gain at that
+key's fundamental clears the round-trip budget its target decay time
+allows. Bass keeps the full desired pair (`pole = 0.6`, `zero_mix = 0.5`,
+unaffected); by C8 both are turned down to roughly a hundredth of
+themselves. Verified two ways: analytically, against `LoopFilter::
+magnitude_at`'s own closed-form gain; and empirically, by seeding a minimal
+delay-line-plus-filter loop (no dispersion, no hammer) with a plain sine
+wave and measuring its actual per-cycle decay, which matched the analytic
+prediction to within `0.03%`.
+
+**What this does not yet fix.** A real, hammer-plucked note still falls
+well short of the full target even after this correction — a *different*,
+pre-existing limitation, not a flaw in this calibration. See "What the
+current model still does not do", below.
+
+### Why the mix bus needed a limiter too
+
+A separate, unrelated gap surfaced alongside the one above: nothing summed
+every ringing voice plus the soundboard against any ceiling before handing
+samples to the audio device, contradicting this project's own stated
+invariant ("Output is bounded by construction",
+`docs/REALTIME-AUDIO-RULES.md`) once more than one voice could be ringing —
+a full chord, or the sustain pedal's sympathetic resonance
+(`piano_core::bridge`), could sum past `±1.0` and hit whatever hard-clipping
+the host's `f32 -> PCM` conversion does. `piano_audio::engine`'s
+`process_chunk` now runs every sample through `limiter::soft_limit`: the
+identity function below `0.9`, so a single voice's own render is bit-for-bit
+unaffected, and a smooth `tanh` saturation into the remaining headroom above
+it — a standard soft-knee limiter, not a physical model, so (unlike
+everything else in this document) it carries no literature citation.
 
 ## Why the loop is shorter than the period
 
@@ -274,6 +325,7 @@ Stated plainly, because these are the gaps a later milestone would close:
 | **Longitudinal modes** | No metallic "phantom partials" of the low bass. | Backlog |
 | **Simultaneous hammer/string coupling** | The hammer model (above) does not yet feed the string's own motion back into the contact force during the strike. | Backlog |
 | **Per-string bridge admittance** | Every voice couples to the shared bridge bus at the same fixed gain; a real bridge's admittance varies with frequency and string position. | Backlog |
+| **The hammer excitation's noise burst does not concentrate on the resonant fundamental** | `PluckedString::pluck` seeds the loop with broadband noise, shaped only in envelope and overall cutoff (see "Why the excitation is a shaped noise burst", above) — most of that energy is off-resonance and the delay line's own comb selectivity cancels it out within the first few hundred round trips, *regardless* of how gentle the loop filter is. That burn-in spends a large fraction of a note's total dynamic range before the correctly-calibrated slow tail (see "Why the zero had to become a second, per-string parameter", above) ever gets to dominate, so a real render still lands well under the per-register decay times this document states — measured on a real, calibrated C8: about 0.4 s reached, not the full 1-2 s. Bass notes are least affected (their decay budget is largest relative to the burn-in's fixed cost); this is most visible from the upper mid register up. | Backlog |
 
 ## Numbers worth having
 

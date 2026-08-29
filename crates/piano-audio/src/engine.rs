@@ -43,6 +43,8 @@ use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 use rtrb::Consumer;
 
+use crate::limiter::{OUTPUT_LIMITER_THRESHOLD, soft_limit};
+
 use crate::commands::Command;
 use crate::voicing;
 
@@ -172,6 +174,7 @@ impl Engine {
         }
         for sample in chunk.iter_mut() {
             *sample += SOUNDBOARD_MIX_GAIN * self.soundboard.process(*sample);
+            *sample = soft_limit(*sample, OUTPUT_LIMITER_THRESHOLD);
         }
     }
 

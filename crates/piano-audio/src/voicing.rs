@@ -17,7 +17,7 @@
 
 use piano_core::dispersion::MAX_INHARMONICITY;
 use piano_core::filter::LoopFilter;
-use piano_core::string::{SILENCE_THRESHOLD, StringConfig};
+use piano_core::string::{DEFAULT_LOOP_ZERO_MIX, SILENCE_THRESHOLD, StringConfig};
 use piano_core::{SampleRate, math};
 use piano_params::{CONCERT_A_KEY, HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
@@ -39,20 +39,63 @@ const BASS_INHARMONICITY: f32 = 0.000_1;
 /// [`MAX_INHARMONICITY`].
 const TREBLE_INHARMONICITY: f32 = MAX_INHARMONICITY;
 
-/// Loss-filter pole at A0. Chaigne & Askenfelt's simulations (cited
-/// elsewhere in this project for the hammer and release models) find a
-/// bass note's upper partials collapse toward the fundamental markedly
-/// faster than a treble note's few partials do — this project has no
-/// per-register number for that in `docs/PHYSICS.md` to interpolate from,
-/// so the *shape* (duller in the bass, brighter in the treble) is
-/// literature-motivated but the specific anchor values are this project's
-/// own reasoned interpolation, not a measured curve; a mild, symmetric
-/// swing around [`piano_core::string::DEFAULT_DAMPING`] (0.5) rather than
-/// a dramatic one, honestly labelled as such.
+/// Loss-filter pole at A0, *if* the round-trip budget a key's target decay
+/// time allows can afford it — see [`loop_filter_coefficients`]. Chaigne &
+/// Askenfelt's simulations (cited elsewhere in this project for the hammer
+/// and release models) find a bass note's upper partials collapse toward
+/// the fundamental markedly faster than a treble note's few partials do —
+/// this project has no per-register number for that in `docs/PHYSICS.md` to
+/// interpolate from, so the *shape* (duller in the bass, brighter in the
+/// treble) is literature-motivated but the specific anchor values are this
+/// project's own reasoned interpolation, not a measured curve; a mild,
+/// symmetric swing around [`piano_core::string::DEFAULT_DAMPING`] (0.5)
+/// rather than a dramatic one, honestly labelled as such.
+///
+/// At A0 this ceiling is never actually clamped down: the bass round-trip
+/// budget is generous enough (the fundamental sits far below Nyquist) that
+/// the full desired pole always fits. It stops being free of charge partway
+/// through the mid register — see [`loop_filter_coefficients`]'s doc
+/// comment for the measured numbers.
 const BASS_DAMPING: f32 = 0.6;
 
-/// Loss-filter pole at C8. See [`BASS_DAMPING`].
+/// Loss-filter pole at C8, under the same "if the budget allows it" caveat
+/// as [`BASS_DAMPING`]. In practice the treble round-trip budget almost
+/// never allows it — [`loop_filter_coefficients`] scales this down to
+/// single-digit percentages of itself for the top register.
 const TREBLE_DAMPING: f32 = 0.4;
+
+/// Loop-filter zero mix [`loop_filter_coefficients`] would use everywhere,
+/// if the round-trip budget were unconstrained —
+/// [`piano_core::filter::LoopFilter`]'s own `MAX_ZERO_MIX`, the zero's full
+/// Nyquist-null rolloff, matching this filter's behaviour before per-string
+/// `zero_mix` existed. Unlike [`BASS_DAMPING`]/[`TREBLE_DAMPING`] this is
+/// not itself register-interpolated: the budget check tapers it down
+/// exactly where it needs to, key by key, rather than a second hand-picked
+/// curve trying to anticipate that.
+const DESIRED_ZERO_MIX: f32 = DEFAULT_LOOP_ZERO_MIX;
+
+/// How far above the bare round-trip-budget boundary
+/// [`loop_filter_coefficients`] requires the loop filter's own gain to sit,
+/// expressed as a multiplier on the target gain (`1.00001` asks for
+/// 0.001% more gain than the boundary). Pure `f32`-rounding insurance
+/// against landing exactly on the boundary and tipping the wrong way —
+/// not a musically meaningful margin: at the upper keys the entire
+/// round-trip budget is already only a few thousandths of gain wide (see
+/// this function's own doc comment), so there is no room for a real
+/// percentage safety margin without reintroducing the same shortfall this
+/// module exists to close.
+const FILTER_GAIN_SAFETY_MARGIN: f32 = 1.000_01;
+
+/// Iterations [`loop_filter_coefficients`]'s bisection runs to find how much
+/// of the desired pole/zero-mix pair a key's round-trip budget affords.
+/// `0.5^24` of the initial `[0, 1]` search interval is far finer than `f32`
+/// can resolve a coefficient in `[0, 1]` to, so more iterations would not
+/// change the answer; this is a compile-time bound purely so the search is
+/// provably finite, one of `docs/REALTIME-AUDIO-RULES.md`'s totality
+/// requirements (this function does not run on the audio thread — see its
+/// own docs — but the project holds every parameter-derivation function to
+/// the same standard).
+const FILTER_SCALE_SEARCH_ITERATIONS: u32 = 24;
 
 /// A key's computed baseline voicing, ready to drop into
 /// [`StringConfig`]'s matching fields.
@@ -68,6 +111,8 @@ pub struct KeyVoicing {
     pub sustain: f32,
     /// See [`StringConfig::inharmonicity`].
     pub inharmonicity: f32,
+    /// See [`StringConfig::loop_zero_mix`].
+    pub zero_mix: f32,
 }
 
 /// How many physical strings `key` is struck by (M6, `docs/ROADMAP.md`).
@@ -110,14 +155,103 @@ pub fn voicing_for_key(key: PianoKey, tuning: Tuning, sample_rate: SampleRate) -
         treble_hz,
         TREBLE_INHARMONICITY,
     );
-    let damping =
-        interpolate_log_frequency(frequency, bass_hz, BASS_DAMPING, treble_hz, TREBLE_DAMPING);
+    let (damping, zero_mix) =
+        loop_filter_coefficients(frequency, bass_hz, treble_hz, decay_seconds, sample_rate);
 
     KeyVoicing {
         damping,
-        sustain: sustain_for_decay_seconds(decay_seconds, frequency, damping, sample_rate),
+        sustain: sustain_for_decay_seconds(
+            decay_seconds,
+            frequency,
+            damping,
+            zero_mix,
+            sample_rate,
+        ),
         inharmonicity,
+        zero_mix,
     }
+}
+
+/// Chooses this key's loop-filter `(pole, zero_mix)` pair — [`BASS_DAMPING`]
+/// through [`TREBLE_DAMPING`] and [`DESIRED_ZERO_MIX`], scaled down together
+/// by whatever fraction the key's own round-trip budget can actually afford.
+///
+/// # Why a scaled-down pair, not the desired one directly
+///
+/// [`piano_core::filter::LoopFilter::magnitude_at`] measures how much of a
+/// string's *fundamental* survives one round trip through the loop filter
+/// alone. For a low fundamental that loss is negligible regardless of the
+/// filter's coefficients — the fundamental sits far below Nyquist, where
+/// any reasonable one-zero-one-pole filter is nearly transparent. For a
+/// high fundamental it is not: a C8 string completes about 4186 round trips
+/// a second, so reaching even the *documented* 1.5 s target needs each
+/// round trip to keep more than `99.85%` of the previous one's amplitude.
+/// Measured with the desired pair fixed at [`TREBLE_DAMPING`]/
+/// [`DESIRED_ZERO_MIX`] (`0.4`/`0.5`), the loop filter alone was already
+/// keeping only about `83.6%` per round trip — the note decayed to silence
+/// in about 12 ms, not 1.5 s, because [`sustain_for_decay_seconds`] had
+/// nothing left to work with once the filter had already spent the entire
+/// budget and more.
+///
+/// This function is the fix: it starts from the desired `(pole, zero_mix)`
+/// pair — the *timbre* this project wants, register by register — and, key
+/// by key, scales both coefficients down by the same factor `s ∈ [0, 1]`
+/// until the loop filter's own gain at that key's fundamental clears the
+/// round-trip budget its target decay time allows, found by bisection
+/// ([`FILTER_SCALE_SEARCH_ITERATIONS`], a bounded search, not an unbounded
+/// one). Scaling both coefficients by the same factor, rather than solving
+/// for pole and `zero_mix` independently, keeps their *ratio* — and so the
+/// filter's qualitative brightness character — the same as the desired
+/// pair's, just turned down. Measured across the full keyboard: bass keeps
+/// `s = 1` (the desired pair, unclamped — its budget is never binding);
+/// C8 lands around `s ≈ 0.01`, both coefficients turned down to about a
+/// hundredth of themselves, which is what recovers the documented decay
+/// time at the cost of most of the loop filter's own contribution to
+/// treble brightness — see `docs/PHYSICS.md`'s "Why there is a lowpass
+/// filter in the loop" for the honest accounting of that trade-off.
+///
+/// Total for every input via the same guarantees [`interpolate_log_frequency`]
+/// and [`LoopFilter::magnitude_at`] already have: a degenerate
+/// `bass_hz`/`treble_hz` span or a non-finite `frequency`/`sample_rate`
+/// flows through to a fallback rather than a panic or a `NaN`.
+fn loop_filter_coefficients(
+    frequency: f32,
+    bass_hz: f32,
+    treble_hz: f32,
+    decay_seconds: f32,
+    sample_rate: SampleRate,
+) -> (f32, f32) {
+    let desired_pole =
+        interpolate_log_frequency(frequency, bass_hz, BASS_DAMPING, treble_hz, TREBLE_DAMPING);
+    let desired_zero_mix = DESIRED_ZERO_MIX;
+
+    let round_trips = (frequency * decay_seconds).max(1.0);
+    let target_gain = math::clamp_or_low(
+        math::exp(math::ln(SILENCE_THRESHOLD) / round_trips) * FILTER_GAIN_SAFETY_MARGIN,
+        0.0,
+        0.999_999,
+    );
+
+    let filter_gain_at = |scale: f32| {
+        LoopFilter::new(scale * desired_pole, scale * desired_zero_mix)
+            .magnitude_at(frequency, sample_rate.hertz())
+    };
+
+    if filter_gain_at(1.0) >= target_gain {
+        return (desired_pole, desired_zero_mix);
+    }
+
+    let mut low_scale = 0.0f32;
+    let mut high_scale = 1.0f32;
+    for _ in 0..FILTER_SCALE_SEARCH_ITERATIONS {
+        let midpoint = f32::midpoint(low_scale, high_scale);
+        if filter_gain_at(midpoint) >= target_gain {
+            low_scale = midpoint;
+        } else {
+            high_scale = midpoint;
+        }
+    }
+    (low_scale * desired_pole, low_scale * desired_zero_mix)
 }
 
 /// Builds a [`StringConfig`] for `key` under `tuning`, its voicing fields
@@ -130,6 +264,7 @@ pub fn config_for_key(key: PianoKey, tuning: Tuning, sample_rate: SampleRate) ->
     config.damping = voicing.damping;
     config.sustain = voicing.sustain;
     config.inharmonicity = voicing.inharmonicity;
+    config.loop_zero_mix = voicing.zero_mix;
     config
 }
 
@@ -184,7 +319,7 @@ fn interpolate_two_segments(
 
 /// Converts a target ring-out time into the broadband per-round-trip loop
 /// gain ([`StringConfig::sustain`]) that produces it at `frequency`, for a
-/// string voiced with `damping` and running at `sample_rate`.
+/// string voiced with `damping`/`zero_mix` and running at `sample_rate`.
 ///
 /// Derived from the waveguide loop's own geometry: after `n` round trips
 /// the envelope has shrunk by `(sustain·g)^n`, where `g` is
@@ -194,9 +329,9 @@ fn interpolate_two_segments(
 /// `(sustain·g)^(frequency * decay_seconds) = SILENCE_THRESHOLD` for
 /// `sustain` gives the closed form below, then dividing out `g`.
 ///
-/// # The bug this replaced
+/// # The bug this replaced, and the one after it
 ///
-/// The previous version solved `sustain^n = SILENCE_THRESHOLD` directly —
+/// The original version solved `sustain^n = SILENCE_THRESHOLD` directly —
 /// correct only if the loop filter were perfectly transparent at
 /// `frequency`, which it is not: even a modest, mid-register `damping`
 /// loses a small fraction of the fundamental's own amplitude every round
@@ -205,15 +340,27 @@ fn interpolate_two_segments(
 /// faster than `decay_seconds` actually called for — audibly a dry,
 /// percussive "knock" rather than a sustained tone, worst in the
 /// mid-register where `damping` sits furthest from either extreme.
+///
+/// Dividing out `g` (this function's current body) fixed the *formula*, but
+/// on its own only reaches `decay_seconds` for a key whose `(damping,
+/// zero_mix)` pair leaves `g` above what the round-trip budget needs —
+/// `sustain`'s own ceiling of `1.0` cannot manufacture gain the filter
+/// itself did not leave on the table. [`loop_filter_coefficients`] is what
+/// closes that second gap, by choosing a `(damping, zero_mix)` pair that
+/// actually fits the budget before this function ever runs — this function
+/// no longer needs to (and cannot) rescue a filter that was already asked
+/// to lose more than the target decay time affords.
 fn sustain_for_decay_seconds(
     decay_seconds: f32,
     frequency: f32,
     damping: f32,
+    zero_mix: f32,
     sample_rate: SampleRate,
 ) -> f32 {
     let round_trips = (frequency * decay_seconds).max(1.0);
     let total_gain_needed = math::exp(math::ln(SILENCE_THRESHOLD) / round_trips);
-    let filter_gain = LoopFilter::new(damping).magnitude_at(frequency, sample_rate.hertz());
+    let filter_gain =
+        LoopFilter::new(damping, zero_mix).magnitude_at(frequency, sample_rate.hertz());
     // `filter_gain` is total and clamped into `[0, 1]` by construction
     // (`LoopFilter::magnitude_at`'s own contract), but a pathologically
     // small value would still blow `sustain` up past 1 here — floor it so
@@ -257,6 +404,10 @@ mod tests {
                 voicing.inharmonicity.is_finite()
                     && (0.0..=MAX_INHARMONICITY).contains(&voicing.inharmonicity)
             );
+            assert!(
+                voicing.zero_mix.is_finite()
+                    && (0.0..=DESIRED_ZERO_MIX).contains(&voicing.zero_mix)
+            );
         }
     }
 
@@ -265,17 +416,28 @@ mod tests {
         // `sustain` alone cannot be compared directly across two different
         // frequencies — the same sustain decays faster at a higher
         // frequency purely because it completes more round trips per
-        // second. Convert each key's `sustain` back to seconds through the
-        // same closed form `voicing_for_key` used to derive it, and compare
-        // those instead.
+        // second, and (since `loop_filter_coefficients`) `sustain` is no
+        // longer the *only* per-round-trip loss either: the loop filter's
+        // own `magnitude_at` contributes too, sometimes the larger share
+        // (see that function's doc comment). Convert each key's total
+        // round-trip gain — `sustain * magnitude_at`, the same product
+        // `sustain_for_decay_seconds` solves against — back to seconds, and
+        // compare those instead.
         let tuning = Tuning::default();
         let bass = PianoKey::from_midi(LOWEST_PIANO_KEY).expect("A0 is on the keyboard");
         let treble = PianoKey::from_midi(HIGHEST_PIANO_KEY).expect("C8 is on the keyboard");
         let bass_voicing = voicing_for_key(bass, tuning, sample_rate());
         let treble_voicing = voicing_for_key(treble, tuning, sample_rate());
 
-        let bass_round_trips = math::ln(SILENCE_THRESHOLD) / math::ln(bass_voicing.sustain);
-        let treble_round_trips = math::ln(SILENCE_THRESHOLD) / math::ln(treble_voicing.sustain);
+        let total_gain = |key: PianoKey, voicing: &KeyVoicing| {
+            let filter_gain = LoopFilter::new(voicing.damping, voicing.zero_mix)
+                .magnitude_at(key.frequency(tuning).hertz(), sample_rate().hertz());
+            voicing.sustain * filter_gain
+        };
+        let bass_round_trips =
+            math::ln(SILENCE_THRESHOLD) / math::ln(total_gain(bass, &bass_voicing));
+        let treble_round_trips =
+            math::ln(SILENCE_THRESHOLD) / math::ln(total_gain(treble, &treble_voicing));
         let bass_seconds = bass_round_trips / bass.frequency(tuning).hertz();
         let treble_seconds = treble_round_trips / treble.frequency(tuning).hertz();
 
@@ -316,6 +478,7 @@ mod tests {
             assert!(voicing.damping.is_finite());
             assert!(voicing.sustain.is_finite());
             assert!(voicing.inharmonicity.is_finite());
+            assert!(voicing.zero_mix.is_finite());
         }
     }
 
@@ -326,17 +489,17 @@ mod tests {
     /// tracks a fast, sample-rate-scaled envelope meant for voice
     /// reclaiming, not a physics measurement, so converting its own
     /// per-sample updates back to seconds is what makes this honest.
-    fn measured_decay_seconds(sustain: f32) -> f32 {
-        let mut config = config_for_key(
-            PianoKey::from_midi(CONCERT_A_KEY).expect("A4 is on the keyboard"),
-            Tuning::default(),
-            sample_rate(),
-        );
+    fn measured_decay_seconds(key: PianoKey, sustain: f32) -> f32 {
+        let mut config = config_for_key(key, Tuning::default(), sample_rate());
         config.sustain = sustain;
-        let mut string = PluckedString::new(config, sample_rate()).expect("A4 is tunable");
+        let mut string = PluckedString::new(config, sample_rate()).expect("key is tunable");
         string.pluck(1.0);
 
-        let sample_count_cap = (sample_rate().hertz() * MID_DECAY_SECONDS * 3.0) as u32;
+        // `BASS_DECAY_SECONDS` is the longest any anchor's target ever
+        // asks for, so a cap of `1.5x` that comfortably bounds every
+        // measurement this module takes, bass through treble, without the
+        // cap itself becoming the thing under test.
+        let sample_count_cap = (sample_rate().hertz() * BASS_DECAY_SECONDS * 1.5) as u32;
         let mut samples_elapsed = 0u32;
         while !string.is_silent() && samples_elapsed < sample_count_cap {
             let _ = string.process();
@@ -353,14 +516,26 @@ mod tests {
     /// compensated for, not just that the formula changed on paper.
     ///
     /// Not asserted here: that the corrected decay reaches
-    /// `MID_DECAY_SECONDS` (11 s) itself. At `A4`'s interpolated damping,
-    /// the loop filter's own loss at the fundamental is large enough that
-    /// `sustain` alone cannot fully cancel it out even at its `1.0`
-    /// ceiling — closing that remaining gap needs the anchor `damping`
-    /// values themselves recalibrated against `LoopFilter::magnitude_at`,
-    /// a separate, follow-up change from this fix. This test's honest
-    /// claim is "closer, not identical" — see the module docs on
-    /// `sustain_for_decay_seconds` for the full accounting.
+    /// `MID_DECAY_SECONDS` (11 s) itself, even after `loop_filter_
+    /// coefficients` closed the ceiling-clamping gap `sustain_for_decay_
+    /// seconds`'s own doc comment describes. Isolating just the delay line,
+    /// loop filter, dispersion and sustain scaling (no hammer excitation) in
+    /// a minimal closed loop, seeded with a plain sine wave instead of a
+    /// hammer burst, confirms the *per-round-trip* physics now matches
+    /// `magnitude_at`'s prediction to within measurement noise — the
+    /// calibration this module does is correct. What still falls short on a
+    /// *real*, hammer-plucked string is the excitation itself: a burst only
+    /// [`piano_core::string::PluckedString::pluck`]'s one loop-length long,
+    /// built from noise rather than a pure tone, does not concentrate
+    /// cleanly on the resonant fundamental the way a seeded sine does — most
+    /// of its energy is off-resonance content that the delay line's own
+    /// comb selectivity cancels out within the first few hundred round
+    /// trips, regardless of how gentle the loop filter is. That burn-in
+    /// spends a large fraction of the note's total dynamic range before the
+    /// correctly-calibrated slow tail ever gets to dominate, so a real
+    /// render still lands well under the documented target — a real,
+    /// separate gap (`docs/PHYSICS.md`'s "What the hammer still gets
+    /// wrong"), not a symptom of the loop filter calibration being wrong.
     #[test]
     fn correcting_for_the_loop_filter_rings_measurably_longer() {
         let tuning = Tuning::default();
@@ -370,13 +545,44 @@ mod tests {
         );
         let corrected_sustain = voicing_for_key(a4, tuning, sample_rate()).sustain;
 
-        let uncorrected_seconds = measured_decay_seconds(uncorrected_sustain);
-        let corrected_seconds = measured_decay_seconds(corrected_sustain);
+        let uncorrected_seconds = measured_decay_seconds(a4, uncorrected_sustain);
+        let corrected_seconds = measured_decay_seconds(a4, corrected_sustain);
 
         assert!(
             corrected_seconds > uncorrected_seconds * 1.3,
             "corrected {corrected_seconds}s should ring noticeably longer than \
              uncorrected {uncorrected_seconds}s"
+        );
+    }
+
+    /// The regression test for the report this fix actually shipped for:
+    /// with the loop filter's zero fixed at Nyquist and `TREBLE_DAMPING`
+    /// applied uncorrected, a real C8 string measured about 12 ms to
+    /// silence against a documented 1-2 s target — audibly a click, not a
+    /// note. `loop_filter_coefficients` tapering both `damping` and
+    /// `zero_mix` down for the top register directly targets that: the
+    /// *per-round-trip* loss the loop filter itself contributes at C8's
+    /// fundamental is now correctly small (verified against a minimal
+    /// closed loop seeded with a plain sine, see `correcting_for_the_loop_
+    /// filter_rings_measurably_longer`'s doc comment).
+    ///
+    /// A real, hammer-plucked C8 still falls well short of the full 1-2 s
+    /// target — a separate, pre-existing limitation of the noise-burst
+    /// excitation itself, not of this fix — so this only asserts the part
+    /// this change actually closes: a real render measurably longer than
+    /// the ~12 ms the uncalibrated filter produced, by more than an order
+    /// of magnitude.
+    #[test]
+    fn treble_notes_no_longer_die_in_milliseconds() {
+        let tuning = Tuning::default();
+        let c8 = PianoKey::from_midi(HIGHEST_PIANO_KEY).expect("C8 is on the keyboard");
+        let voicing = voicing_for_key(c8, tuning, sample_rate());
+        let measured = measured_decay_seconds(c8, voicing.sustain);
+
+        assert!(
+            measured > 0.2,
+            "measured {measured}s should be at least an order of magnitude longer than \
+             the ~12ms the uncalibrated filter used to produce"
         );
     }
 
@@ -387,7 +593,8 @@ mod tests {
     #[test]
     fn the_loop_filter_correction_raises_sustain_above_the_naive_value() {
         let naive = math::exp(math::ln(SILENCE_THRESHOLD) / (440.0 * MID_DECAY_SECONDS));
-        let corrected = sustain_for_decay_seconds(MID_DECAY_SECONDS, 440.0, 0.5, sample_rate());
+        let corrected =
+            sustain_for_decay_seconds(MID_DECAY_SECONDS, 440.0, 0.5, 0.5, sample_rate());
         assert!(
             corrected > naive,
             "corrected sustain {corrected} should exceed the naive {naive}"

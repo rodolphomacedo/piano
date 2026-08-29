@@ -57,6 +57,11 @@ float_fn!(
     /// Rounds to the nearest integer, half away from zero.
     round, round, libm::roundf
 );
+float_fn!(
+    /// Hyperbolic tangent — used as a soft-clip curve, not for any physical
+    /// model: linear near zero, saturating smoothly to `±1` beyond it.
+    tanh, tanh, libm::tanhf
+);
 
 /// Raises `base` to `exponent`.
 #[inline]

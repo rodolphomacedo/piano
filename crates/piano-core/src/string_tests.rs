@@ -370,6 +370,40 @@ fn release_before_plucking_is_harmless() {
 }
 
 #[test]
+fn a_short_period_strike_keeps_injecting_contact_force_past_the_first_loop() {
+    // At 4 kHz the loop is on the order of 10-12 samples, far shorter than
+    // the default hammer's 3.5-6.5 ms (~170-310 samples at 48 kHz) contact
+    // — exactly the case `docs/PHYSICS.md`'s "What the hammer still gets
+    // wrong" describes. Measure total energy over the first 400 samples
+    // (comfortably past one loop length but still within the contact
+    // window) against energy in just the first loop length: if the
+    // extension is doing anything, later round trips must carry
+    // meaningfully more than what a single loop length's initial burst
+    // alone would explain once it has already started decaying.
+    let mut string = string_at(4_000.0);
+    string.pluck(1.0);
+    let loop_length = string.loop_delay() as usize + 1;
+
+    let mut early_energy = 0.0f32;
+    for _ in 0..loop_length {
+        let sample = string.process();
+        early_energy += sample * sample;
+    }
+    let mut later_energy = 0.0f32;
+    for _ in 0..(400 - loop_length) {
+        let sample = string.process();
+        later_energy += sample * sample;
+    }
+
+    assert!(
+        later_energy > early_energy * 0.1,
+        "later energy {later_energy} should be a substantial fraction of the \
+         first loop's {early_energy}, not a rapidly decaying tail with nothing \
+         still being injected"
+    );
+}
+
+#[test]
 fn re_plucking_after_release_lifts_the_damper_again() {
     let mut string = string_at(440.0);
     string.pluck(1.0);
@@ -489,6 +523,22 @@ proptest! {
     #[test]
     fn plucking_at_any_velocity_never_breaks_the_string(velocity in proptest::num::f32::ANY) {
         let mut string = string_at(220.0);
+        string.pluck(velocity);
+        for _ in 0..2_000 {
+            let sample = string.process();
+            prop_assert!(sample.is_finite());
+            prop_assert!(sample.abs() < 4.0, "sample {sample} escaped");
+        }
+    }
+
+    /// The same totality guarantee as above, specifically for a short-period
+    /// string whose `PendingContact` (a hammer contact outlasting one loop
+    /// length) stays active across many `process` calls — the case
+    /// `a_short_period_strike_keeps_injecting_contact_force_past_the_first_
+    /// loop` exercises for a single velocity, fuzzed here.
+    #[test]
+    fn a_pending_contact_never_breaks_a_short_period_string(velocity in proptest::num::f32::ANY) {
+        let mut string = string_at(4_000.0);
         string.pluck(velocity);
         for _ in 0..2_000 {
             let sample = string.process();

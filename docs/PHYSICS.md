@@ -67,10 +67,20 @@ delay-line-plus-filter loop (no dispersion, no hammer) with a plain sine
 wave and measuring its actual per-cycle decay, which matched the analytic
 prediction to within `0.03%`.
 
-**What this does not yet fix.** A real, hammer-plucked note still falls
-well short of the full target even after this correction — a *different*,
-pre-existing limitation, not a flaw in this calibration. See "What the
-current model still does not do", below.
+**What this alone did not fix, and what closed the rest of it.** A real,
+hammer-plucked note still fell well short of the full target even after
+this correction — a *different*, pre-existing limitation, not a flaw in
+this calibration: `PluckedString::pluck` only ever wrote one loop length of
+the hammer's contact force, truncating the rest for any string whose period
+is shorter than the felt's contact duration (see "What the current model
+still does not do", below, for the numbers). `PluckedString`'s
+`PendingContact` closes most of that: it keeps injecting the already-computed
+remainder of the contact force sample by sample, on top of the loop's own
+feedback, for as many extra round trips as the physical contact actually
+lasts. C8 (dozens of extra round trips available, its period being so much
+shorter than the contact duration) now measures close to its 1-2 s target;
+A4 (only one or two extra round trips available) improves but still falls
+short, for the residual reason described below.
 
 ### Why the mix bus needed a limiter too
 
@@ -325,7 +335,7 @@ Stated plainly, because these are the gaps a later milestone would close:
 | **Longitudinal modes** | No metallic "phantom partials" of the low bass. | Backlog |
 | **Simultaneous hammer/string coupling** | The hammer model (above) does not yet feed the string's own motion back into the contact force during the strike. | Backlog |
 | **Per-string bridge admittance** | Every voice couples to the shared bridge bus at the same fixed gain; a real bridge's admittance varies with frequency and string position. | Backlog |
-| **The hammer excitation's noise burst does not concentrate on the resonant fundamental** | `PluckedString::pluck` seeds the loop with broadband noise, shaped only in envelope and overall cutoff (see "Why the excitation is a shaped noise burst", above) — most of that energy is off-resonance and the delay line's own comb selectivity cancels it out within the first few hundred round trips, *regardless* of how gentle the loop filter is. That burn-in spends a large fraction of a note's total dynamic range before the correctly-calibrated slow tail (see "Why the zero had to become a second, per-string parameter", above) ever gets to dominate, so a real render still lands well under the per-register decay times this document states — measured on a real, calibrated C8: about 0.4 s reached, not the full 1-2 s. Bass notes are least affected (their decay budget is largest relative to the burn-in's fixed cost); this is most visible from the upper mid register up. | Backlog |
+| **The hammer excitation's noise burst still does not concentrate perfectly on the resonant fundamental** | `PluckedString::pluck` seeds the loop with broadband noise, shaped only in envelope and overall cutoff (see "Why the excitation is a shaped noise burst", above) — most of that energy is off-resonance and the delay line's own comb selectivity cancels it out over the first several hundred round trips, *regardless* of how gentle the loop filter is. `PendingContact` (see "Why the zero had to become a second, per-string parameter", above) closes most of the resulting shortfall by continuing to inject the hammer's own contact force for as many round trips as it actually lasts, rather than truncating it to one loop length — measured on a real, calibrated C8: about 1.4 s now reached, close to the 1-2 s target. What is left is genuinely the excitation's spectral concentration, not truncation: a key whose period sits close to the contact duration (around A4, where only one or two *extra* round trips of continued injection are available) still falls short — measured around 6-7 s against an 11 s target. Bass notes are essentially unaffected either way (their contact already fits inside one loop length, so `PendingContact` never engages for them) yet still measure under target too (about 17 s against 35 s for A0) — the same comb-selectivity burn-in, from a note whose contact was never truncated, not yet investigated further. | Backlog |
 
 ## Numbers worth having
 

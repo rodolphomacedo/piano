@@ -16,6 +16,8 @@
 //! *shape* of what excites the string, not just its level. That is the
 //! whole of milestone M4.
 
+use alloc::boxed::Box;
+
 use crate::{
     delay::DelayLine,
     dispersion::DispersionCascade,
@@ -155,6 +157,38 @@ impl StringConfig {
     }
 }
 
+/// A felt hammer's contact force still being injected past the first loop
+/// length.
+///
+/// [`PluckedString::write_excitation`] can only fill one loop length's worth
+/// of delay line before [`PluckedString::pluck`] returns; a real hammer's
+/// contact can outlast that for any string whose period is shorter than the
+/// contact duration (`docs/PHYSICS.md`'s "What the hammer still gets
+/// wrong"), so this carries the rest of `hammer::simulate_contact`'s output
+/// — and the same noise generator's continuation and the same shaping
+/// filters' state — to be added in sample by sample as
+/// [`PluckedString::write_mixed_feedback`] runs.
+///
+/// Deliberately does *not* hold the `[f32; MAX_CONTACT_SAMPLES]` force curve
+/// itself — see [`PluckedString::contact_force`] for why that lives in one
+/// heap allocation per string instead, made once at construction rather
+/// than inline in every [`PluckedString`], `Option`-wrapped or not.
+#[derive(Debug, Clone, Copy)]
+struct PendingContact {
+    /// How many leading entries of [`PluckedString::contact_force`] are
+    /// non-zero for the strike this belongs to.
+    contact_samples: usize,
+    /// The next index of [`PluckedString::contact_force`] to inject;
+    /// contact has ended once this reaches `contact_samples`.
+    next_index: usize,
+    /// This strike's velocity, same role as in [`PluckedString::write_excitation`].
+    velocity: f32,
+    /// Continuation of the same shaping filter chain
+    /// [`PluckedString::write_excitation`] started, so the spectrum does not
+    /// discontinuously change where the first loop length's worth left off.
+    felt: [OnePoleLowpass; EXCITATION_POLES],
+}
+
 /// A single struck string voice.
 ///
 /// Allocates once, in [`PluckedString::new`]. Every other method is
@@ -167,6 +201,26 @@ pub struct PluckedString {
     dispersion: DispersionCascade,
     dc_blocker: DcBlocker,
     rng: Xorshift32,
+    /// See [`PendingContact`]. `None` once a strike's contact has fully
+    /// injected (or for a strike whose contact fit in one loop length to
+    /// begin with — the common case for bass and mid-register keys).
+    pending_contact: Option<PendingContact>,
+    /// `hammer::simulate_contact`'s full output for the *current* strike,
+    /// one heap allocation made once in [`PluckedString::new`] and
+    /// overwritten in place by every later [`PluckedString::pluck`] —
+    /// never reallocated, so this costs nothing on the audio thread.
+    ///
+    /// A plain `[f32; MAX_CONTACT_SAMPLES]` field here instead would put
+    /// 2 KB inline in *every* [`PluckedString`], `Option`-wrapped inside
+    /// [`PendingContact`] or not — harmless for one string, but
+    /// [`crate::unison::UnisonGroup`] holds up to three and
+    /// `piano_audio::Engine` holds up to 222 of those across the keyboard,
+    /// and building that many inline copies as a stack value (as
+    /// `Engine::new`'s `core::array::from_fn` does before the result moves
+    /// to its final home) overflowed the stack outright — measured, not
+    /// guessed at, the fix that replaced the inline array with this `Box`
+    /// exists because the array version crashed a real test run.
+    contact_force: Box<[f32; hammer::MAX_CONTACT_SAMPLES]>,
     /// Samples per cycle at this string's fixed frequency. `frequency`
     /// itself is only live-adjustable within [`MAX_LIVE_DETUNE_CENTS`] of the
     /// frequency `PluckedString::new` reserved delay-line headroom for (see
@@ -238,6 +292,8 @@ impl PluckedString {
             dispersion,
             dc_blocker: DcBlocker::default(),
             rng: Xorshift32::new(config.seed),
+            pending_contact: None,
+            contact_force: Box::new([0.0; hammer::MAX_CONTACT_SAMPLES]),
             period,
             loop_delay,
             sustain: math::clamp_or_low(config.sustain, 0.0, 1.0),
@@ -383,9 +439,17 @@ impl PluckedString {
     /// the string; the rest of the delay line is filled with that silence,
     /// filtered, rather than left untouched.
     ///
-    /// The filters are built per strike and live on the stack: no
-    /// allocation, and no state carried between notes for a later strike to
-    /// inherit.
+    /// Fills exactly one loop length here — the most this call alone can
+    /// write before [`PluckedString::pluck`] returns — and, when
+    /// `contact_samples` outlasts that (any string whose period is shorter
+    /// than the felt's contact, `docs/PHYSICS.md`'s "What the hammer still
+    /// gets wrong"), copies the rest of `contact_force` into
+    /// [`PluckedString::contact_force`]'s already-allocated buffer and
+    /// leaves [`PendingContact`] set up for
+    /// [`PluckedString::write_mixed_feedback`] to keep injecting sample by
+    /// sample as the string actually rings. A bass or mid-register strike,
+    /// whose contact fits in one loop length, leaves `pending_contact`
+    /// `None` and never touches the buffer's contents at all.
     fn write_excitation(&mut self, velocity: f32) {
         let (contact_force, contact_samples) =
             hammer::simulate_contact(velocity, self.sample_rate, self.hammer);
@@ -400,6 +464,50 @@ impl PluckedString {
                 .fold(excitation, |sample, stage| stage.process(sample));
             self.delay.write(shaped);
         }
+        self.pending_contact = (contact_samples > burst_length).then_some(PendingContact {
+            contact_samples,
+            next_index: burst_length,
+            velocity,
+            felt,
+        });
+        if self.pending_contact.is_some() {
+            *self.contact_force = contact_force;
+        }
+    }
+
+    /// Injects the next sample of an ongoing hammer contact
+    /// ([`PendingContact`]) on top of the loop's own feedback, or `0.0` once
+    /// contact has ended (or the string's last strike never needed one).
+    ///
+    /// Total: every branch returns a plain `f32`, `contact_force.get`
+    /// guards the index defensively the same way [`PluckedString::
+    /// write_excitation`] does, and [`OnePoleLowpass::process`] cannot
+    /// return non-finite output for a finite input — this can never panic
+    /// or leak a `NaN` into the feedback loop it feeds.
+    #[inline]
+    fn next_contact_sample(&mut self) -> f32 {
+        let Some(mut contact) = self.pending_contact.take() else {
+            return 0.0;
+        };
+        if contact.next_index >= contact.contact_samples {
+            return 0.0;
+        }
+        let noise = self.rng.next_bipolar();
+        let shape = self
+            .contact_force
+            .get(contact.next_index)
+            .copied()
+            .unwrap_or(0.0);
+        let excitation = noise * contact.velocity * shape;
+        let shaped = contact
+            .felt
+            .iter_mut()
+            .fold(excitation, |sample, stage| stage.process(sample));
+        contact.next_index += 1;
+        if contact.next_index < contact.contact_samples {
+            self.pending_contact = Some(contact);
+        }
+        shaped
     }
 
     /// Engages the damper: from this call on, every round trip loses extra
@@ -574,7 +682,11 @@ impl PluckedString {
         };
         let bridge_admittance = 1.0 - loop_gain;
         let driven = mixed + coupling * bridge_admittance;
-        let reflected = driven * loop_gain;
+        // The hammer's continued push (`PendingContact`, when a strike's
+        // contact outlasts one loop length) is an external force on top of
+        // the loop's own scattering, so it is added after `loop_gain` is
+        // applied to the recirculating signal, not folded into it.
+        let reflected = driven * loop_gain + self.next_contact_sample();
         self.delay.write(math::flush_denormal(reflected));
 
         let output = self.dc_blocker.process(tap);

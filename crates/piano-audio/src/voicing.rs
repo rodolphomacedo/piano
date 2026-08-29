@@ -518,24 +518,22 @@ mod tests {
     /// Not asserted here: that the corrected decay reaches
     /// `MID_DECAY_SECONDS` (11 s) itself, even after `loop_filter_
     /// coefficients` closed the ceiling-clamping gap `sustain_for_decay_
-    /// seconds`'s own doc comment describes. Isolating just the delay line,
-    /// loop filter, dispersion and sustain scaling (no hammer excitation) in
-    /// a minimal closed loop, seeded with a plain sine wave instead of a
-    /// hammer burst, confirms the *per-round-trip* physics now matches
-    /// `magnitude_at`'s prediction to within measurement noise — the
-    /// calibration this module does is correct. What still falls short on a
-    /// *real*, hammer-plucked string is the excitation itself: a burst only
-    /// [`piano_core::string::PluckedString::pluck`]'s one loop-length long,
-    /// built from noise rather than a pure tone, does not concentrate
-    /// cleanly on the resonant fundamental the way a seeded sine does — most
-    /// of its energy is off-resonance content that the delay line's own
-    /// comb selectivity cancels out within the first few hundred round
-    /// trips, regardless of how gentle the loop filter is. That burn-in
-    /// spends a large fraction of the note's total dynamic range before the
-    /// correctly-calibrated slow tail ever gets to dominate, so a real
-    /// render still lands well under the documented target — a real,
-    /// separate gap (`docs/PHYSICS.md`'s "What the hammer still gets
-    /// wrong"), not a symptom of the loop filter calibration being wrong.
+    /// seconds`'s own doc comment describes, and after `piano_core::
+    /// string::PluckedString`'s `PendingContact` stopped truncating the
+    /// hammer's contact force to one loop length (`docs/PHYSICS.md`'s "What
+    /// the hammer still gets wrong"). A4 still lands under target (measured
+    /// around 6-7 s, not 11 s) because A4's period (~109 samples) is close
+    /// enough to the hammer's own contact duration (~170-310 samples) that
+    /// only one or two extra round trips of continued injection are left to
+    /// help — C8's much shorter period gets dozens, and lands much closer
+    /// to its own target (see `treble_notes_no_longer_die_in_milliseconds`).
+    /// The remaining shortfall is the noise-burst excitation itself not
+    /// concentrating cleanly on the resonant fundamental the way a seeded
+    /// sine does (verified by isolating just the delay line, loop filter,
+    /// dispersion and sustain scaling — no hammer excitation — in a minimal
+    /// closed loop seeded with a plain sine, which matches `magnitude_at`'s
+    /// prediction to within measurement noise: the calibration itself is
+    /// correct) — a real, separate gap, not a symptom of miscalibration.
     #[test]
     fn correcting_for_the_loop_filter_rings_measurably_longer() {
         let tuning = Tuning::default();
@@ -566,12 +564,14 @@ mod tests {
     /// closed loop seeded with a plain sine, see `correcting_for_the_loop_
     /// filter_rings_measurably_longer`'s doc comment).
     ///
-    /// A real, hammer-plucked C8 still falls well short of the full 1-2 s
-    /// target — a separate, pre-existing limitation of the noise-burst
-    /// excitation itself, not of this fix — so this only asserts the part
-    /// this change actually closes: a real render measurably longer than
-    /// the ~12 ms the uncalibrated filter produced, by more than an order
-    /// of magnitude.
+    /// A real, hammer-plucked C8 fell well short of the full 1-2 s target
+    /// even after that correction, for a second, independent reason:
+    /// `PluckedString::pluck` only wrote one loop length of the hammer's
+    /// contact force, silently truncating the rest for any string (C8
+    /// very much included, `docs/PHYSICS.md`'s "What the hammer still gets
+    /// wrong") whose period is shorter than the felt's contact duration.
+    /// `PluckedString`'s `PendingContact` closes that: C8 now measures
+    /// close to (not merely "longer than") the documented target.
     #[test]
     fn treble_notes_no_longer_die_in_milliseconds() {
         let tuning = Tuning::default();
@@ -580,9 +580,9 @@ mod tests {
         let measured = measured_decay_seconds(c8, voicing.sustain);
 
         assert!(
-            measured > 0.2,
-            "measured {measured}s should be at least an order of magnitude longer than \
-             the ~12ms the uncalibrated filter used to produce"
+            measured > TREBLE_DECAY_SECONDS * 0.7,
+            "measured {measured}s should land close to the {TREBLE_DECAY_SECONDS}s target, \
+             not the ~12ms the uncalibrated filter and the truncated excitation used to produce"
         );
     }
 

@@ -236,3 +236,32 @@ F1 alone should be audible immediately and is the single highest-value
 change in this document. P1 is a small bug fix that unblocks Part 2. F2 and
 F3 are the next two large timbre gains. Everything in Part 3 is worth
 doing only once Part 2 has something worth controlling.
+
+## Tracking
+
+Every item above is a GitHub issue, ordered by priority label.
+
+| Milestone | Issue | Plan item | Priority |
+|---|---|---|---|
+| M16 — Make it sound like a piano | [#76](https://github.com/rodolphomacedo/piano/issues/76) Loop filter solved against the wrong constraint | F1 | 1 — critical |
+| M16 | [#77](https://github.com/rodolphomacedo/piano/issues/77) Replace the white-noise excitation with a hammer pulse | F2 | 1 — critical |
+| M16 | [#32](https://github.com/rodolphomacedo/piano/issues/32) Model strike position and its comb filtering | F2 / F4 | 1 — critical |
+| M16 | [#78](https://github.com/rodolphomacedo/piano/issues/78) The soundboard is inaudible above 200 Hz | F3 | 1 — critical |
+| M16 | [#79](https://github.com/rodolphomacedo/piano/issues/79) No velocity curve and no master gain | F5 | 2 — high |
+| M16 | [#80](https://github.com/rodolphomacedo/piano/issues/80) Re-tune anchors by ear; update PHYSICS.md and the pt-BR material | F6 | 2 — high |
+| M17 — Everything configurable | [#81](https://github.com/rodolphomacedo/piano/issues/81) *Bug*: `registers` parsed and silently ignored | P1 | 1 — critical |
+| M17 | [#82](https://github.com/rodolphomacedo/piano/issues/82) Move every remaining constant into the cascade | P2 | 2 — high |
+| M17 | [#83](https://github.com/rodolphomacedo/piano/issues/83) Ranges and display curves worth dragging | P3 | 3 — medium |
+| M17 | [#84](https://github.com/rodolphomacedo/piano/issues/84) Gate: every core parameter reachable from the studio | P4 | 3 — medium |
+| M18 — Control surfaces | [#85](https://github.com/rodolphomacedo/piano/issues/85) `piano-mcp` crate | S2 | 3 — medium |
+| M18 | [#86](https://github.com/rodolphomacedo/piano/issues/86) `piano analyze` CLI subcommand | S3 | 3 — medium |
+
+[#63](https://github.com/rodolphomacedo/piano/issues/63) ("Expand the
+soundboard's modal bank", M11) was closed as superseded by #78, which carries
+the same scope plus the measurement that reframes it.
+
+Documentation that must be updated as these close — tracked in #80, listed
+here so it is not forgotten: `docs/PHYSICS.md`, this file,
+`docs/PARAMETER-STUDIO.md`, and the pt-BR teaching material
+(`docs/pt-BR/COMO-FUNCIONA.md` and the `.tex`/`.pdf` it generates), which
+currently describes an excitation and a loop filter that F1 and F2 replace.

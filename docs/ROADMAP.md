@@ -590,6 +590,51 @@ milestone lives here.
 
 ---
 
+## M16 — Make it sound like a piano 🔴 *priority 1, do first*
+
+Raised out of order, ahead of M9–M15, after a listener reported the
+instrument as *"metallic, thin, nothing like a piano"* and the measurements
+in `docs/TIMBRE-PLAN.md` root-caused it. Everything here is gated on
+`crates/piano-audio/tests/timbre_diagnostic.rs`, written for that
+investigation because no existing test could have caught the defect.
+
+The headline finding: `voicing::loop_filter_coefficients` solves one
+equation with two free parameters, leaving the filter slope — which is what
+sets every harmonic's decay — uncontrolled. Measured, A4 is a bare sine wave
+0.2 s after the attack (H8 decays in 0.17 s against a target near 1.5 s),
+and A0's partials all decay together, which is the spectral signature of an
+organ rather than a string.
+
+**Done when**: the per-partial decay table in `timbre_diagnostic` shows
+harmonics dying several times faster than fundamentals across the keyboard,
+the instrument has an audible body, and a keyboard sweep has no seam.
+
+---
+
+## M17 — Everything configurable 🟠 *priority 2*
+
+Every sound-shaping value reachable from a `.piano.json` and the studio,
+with ranges that are useful to drag rather than merely numerically valid.
+Starts with a real bug: the `registers` block documented in
+`docs/PARAMETER-STUDIO.md` is parsed and silently discarded.
+
+**Done when**: no constant in `piano-core` that changes the timbre is
+unreachable from a file, and a test makes it impossible to add one.
+
+---
+
+## M18 — Control surfaces (MCP, analyze) 🟡 *priority 3*
+
+An MCP server and a `piano analyze` CLI subcommand, both over the same
+command queue and the same measurement code everything else uses — one path,
+not three (`docs/ARCHITECTURE.md`). Deliberately after M17: a control
+surface is worth only as much as the parameters it can reach.
+
+**Done when**: an agent can measurably improve a rendered note through the
+MCP alone.
+
+---
+
 ## Ideas beyond M8
 
 Not scheduled, not sized, and not started — recorded so the reasoning behind

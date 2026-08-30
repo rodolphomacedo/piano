@@ -17,6 +17,7 @@ rtrb = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+proptest = { workspace = true }
 rustfft = { workspace = true }
 
 [lints]

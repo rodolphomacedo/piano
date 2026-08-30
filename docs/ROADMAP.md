@@ -598,12 +598,18 @@ in `docs/TIMBRE-PLAN.md` root-caused it. Everything here is gated on
 `crates/piano-audio/tests/timbre_diagnostic.rs`, written for that
 investigation because no existing test could have caught the defect.
 
-The headline finding: `voicing::loop_filter_coefficients` solves one
-equation with two free parameters, leaving the filter slope — which is what
-sets every harmonic's decay — uncontrolled. Measured, A4 is a bare sine wave
-0.2 s after the attack (H8 decays in 0.17 s against a target near 1.5 s),
-and A0's partials all decay together, which is the spectral signature of an
-organ rather than a string.
+The headline finding: the loop filter solved one equation with two free
+parameters, leaving the filter slope — which is what sets every harmonic's
+decay — uncontrolled. Measured, A4 was a bare sine wave 0.2 s after the
+attack (H8 decaying in 0.17 s against a target near 1.5 s), and A0's
+partials all decayed together, which is the spectral signature of an organ
+rather than a string.
+
+`voicing::solve_loop_losses` closed that (#76): three per-partial decay
+targets per key, three unknowns fitted against them. A0's H1:H8 ratio went
+from 1.18 to 5.54 — the metallic half of the report. What remains is the
+excitation: a noise burst leaves A4's H2 57 dB below its fundamental, so
+there is little for the corrected slope to shape (#77, #32).
 
 **Done when**: the per-partial decay table in `timbre_diagnostic` shows
 harmonics dying several times faster than fundamentals across the keyboard,

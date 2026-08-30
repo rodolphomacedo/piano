@@ -3,11 +3,80 @@
 //! `CONTRIBUTING.md`) — `#[path = "engine_tests.rs"] mod tests;` at the
 //! bottom of `engine.rs` still compiles this as `engine::tests`.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::time::Duration;
 
+use rustfft::{FftPlanner, num_complex::Complex32};
+
 use super::*;
+
+const DIAGNOSTIC_SAMPLE_RATE_HZ: f32 = 48_000.0;
+const DIAGNOSTIC_WINDOW: usize = 8192;
+
+/// Direct DFT magnitude at one frequency — same technique
+/// `tests/timbre_diagnostic.rs` uses, duplicated rather than shared because
+/// that file is a separate binary this crate's private `Engine` is not
+/// visible to.
+fn magnitude_at(samples: &[f32], frequency_hz: f32) -> f32 {
+    let omega = core::f32::consts::TAU * frequency_hz / DIAGNOSTIC_SAMPLE_RATE_HZ;
+    let (mut real, mut imag) = (0.0f32, 0.0f32);
+    for (index, &sample) in samples.iter().enumerate() {
+        let window =
+            0.5 - 0.5 * (core::f32::consts::TAU * index as f32 / samples.len() as f32).cos();
+        let phase = omega * index as f32;
+        real += sample * window * phase.cos();
+        imag -= sample * window * phase.sin();
+    }
+    (real * real + imag * imag).sqrt() / samples.len() as f32
+}
+
+fn spectral_centroid(samples: &[f32]) -> f32 {
+    let mut planner = FftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(DIAGNOSTIC_WINDOW);
+    let mut buffer: Vec<Complex32> = samples
+        .iter()
+        .take(DIAGNOSTIC_WINDOW)
+        .enumerate()
+        .map(|(index, &sample)| {
+            let window = 0.5
+                - 0.5 * (core::f32::consts::TAU * index as f32 / DIAGNOSTIC_WINDOW as f32).cos();
+            Complex32::new(sample * window, 0.0)
+        })
+        .collect();
+    buffer.resize(DIAGNOSTIC_WINDOW, Complex32::new(0.0, 0.0));
+    fft.process(&mut buffer);
+
+    let (mut weighted, mut total) = (0.0f64, 0.0f64);
+    for (bin, value) in buffer.iter().take(DIAGNOSTIC_WINDOW / 2).enumerate() {
+        let magnitude = f64::from(value.norm());
+        weighted += magnitude
+            * f64::from(bin as f32 * DIAGNOSTIC_SAMPLE_RATE_HZ / DIAGNOSTIC_WINDOW as f32);
+        total += magnitude;
+    }
+    if total <= 0.0 {
+        0.0
+    } else {
+        (weighted / total) as f32
+    }
+}
+
+/// Renders `seconds` of `midi` struck alone, through the real [`Engine`] —
+/// unison, bridge bus, soundboard and output limiter all included, exactly
+/// the path `make run-studio`/`AudioSession` takes. Every earlier timbre
+/// measurement in this project rendered a bare [`piano_core::PluckedString`]
+/// or a `PluckedString` + [`piano_core::Soundboard`] pair, never the whole
+/// engine — this is deliberately the first one that does.
+fn render_key_through_engine(midi: u8, seconds: f32) -> Vec<f32> {
+    let mut engine = engine();
+    press(&mut engine, midi);
+    let sample_count = (DIAGNOSTIC_SAMPLE_RATE_HZ * seconds) as usize;
+    let mut samples = vec![0.0f32; sample_count];
+    for chunk in samples.chunks_mut(512) {
+        engine.process_block(chunk);
+    }
+    samples
+}
 
 fn engine() -> Engine {
     let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
@@ -20,6 +89,104 @@ fn ring_buffer() -> (rtrb::Producer<Command>, Consumer<Command>) {
 
 fn ring_buffer_with_capacity(capacity: usize) -> (rtrb::Producer<Command>, Consumer<Command>) {
     rtrb::RingBuffer::new(capacity)
+}
+
+/// Evidence gathering for the report: "A5 sounds terrible, like hitting a
+/// tin can with a muffled iron" — through the *real* engine (unison, bridge,
+/// soundboard, limiter), not a bare string. Prints, not pass/fail; compares
+/// A5 against A4, whose per-partial decay `docs/TIMBRE-PLAN.md`'s F1 already
+/// measured as fixed, to see whether A5 is worse in a way A4 is not.
+#[test]
+fn report_a5_versus_a4_per_harmonic_decay_through_the_full_engine() {
+    println!("\n=== A5 vs A4, PER-HARMONIC DECAY THROUGH THE FULL ENGINE ===");
+    for (name, midi) in [("A4", 69u8), ("A5", 81)] {
+        let samples = render_key_through_engine(midi, 4.0);
+        let fundamental = PianoKey::from_midi(midi)
+            .expect("key")
+            .frequency(Tuning::default())
+            .hertz();
+        print!("{name} (f0={fundamental:.1} Hz)  ");
+        let windows: Vec<Vec<f32>> = samples
+            .chunks(DIAGNOSTIC_WINDOW)
+            .map(<[f32]>::to_vec)
+            .collect();
+        for harmonic in 1..=8 {
+            let frequency = fundamental * harmonic as f32;
+            if frequency > DIAGNOSTIC_SAMPLE_RATE_HZ * 0.45 {
+                break;
+            }
+            let magnitudes: Vec<f32> = windows
+                .iter()
+                .map(|window| magnitude_at(window, frequency))
+                .collect();
+            let peak = magnitudes.iter().copied().fold(0.0f32, f32::max);
+            if peak <= 0.0 {
+                print!("H{harmonic}=silent ");
+                continue;
+            }
+            let target = peak * 0.1;
+            match magnitudes.iter().position(|&m| m < target) {
+                Some(offset) => {
+                    let seconds = (offset * DIAGNOSTIC_WINDOW) as f32 / DIAGNOSTIC_SAMPLE_RATE_HZ;
+                    print!("H{harmonic}={seconds:.2}s ");
+                }
+                None => print!("H{harmonic}=>4s "),
+            }
+        }
+        println!();
+    }
+}
+
+/// The unison beat envelope: three strings a few cents apart should shimmer
+/// slowly, not throb harshly. Prints the RMS of each 20 ms window over the
+/// first second — a beat period short enough to read as "throbbing"/"tin
+/// can" rather than "shimmering" would show up as fast, deep ripples here.
+#[test]
+fn report_a5_unison_beat_envelope_and_solved_voicing() {
+    const STEP: usize = (DIAGNOSTIC_SAMPLE_RATE_HZ * 0.02) as usize;
+
+    println!("\n=== A5 UNISON BEAT ENVELOPE (RMS per 20ms window, first 1s) ===");
+    let samples = render_key_through_engine(81, 1.0);
+    for window in samples.chunks(STEP) {
+        let rms = (window.iter().map(|s| s * s).sum::<f32>() / window.len() as f32).sqrt();
+        print!("{rms:.4} ");
+    }
+    println!();
+
+    println!("\n=== A5 SOLO SOLVED VOICING (piano_audio::voicing) ===");
+    let tuning = Tuning::default();
+    let key = PianoKey::from_midi(81).expect("A5 is a real key");
+    let sample_rate = SampleRate::new(DIAGNOSTIC_SAMPLE_RATE_HZ).expect("48kHz is valid");
+    let voicing = crate::voicing::voicing_for_key(key, tuning, sample_rate);
+    println!(
+        "A5: pole={:.5} zero_mix={:.5} sustain={:.6} inharmonicity={:.6} unison_count={}",
+        voicing.damping,
+        voicing.zero_mix,
+        voicing.sustain,
+        voicing.inharmonicity,
+        crate::voicing::unison_count_for_key(key)
+    );
+}
+
+/// Spectral centroid over the life of the note — A4's already-fixed F1
+/// curve keeps falling across several seconds (`docs/TIMBRE-PLAN.md`, F1).
+/// A flat or erratic A5 centroid would point at something A5-specific,
+/// rather than the general decay-shape defect F1 already closed.
+#[test]
+fn report_a5_versus_a4_spectral_centroid_through_the_full_engine() {
+    println!("\n=== A5 vs A4, SPECTRAL CENTROID OVER TIME (Hz), FULL ENGINE ===");
+    for (name, midi) in [("A4", 69u8), ("A5", 81)] {
+        let samples = render_key_through_engine(midi, 4.0);
+        print!("{name}: ");
+        for step in 0..4 {
+            let offset = step * DIAGNOSTIC_SAMPLE_RATE_HZ as usize;
+            if offset + DIAGNOSTIC_WINDOW > samples.len() {
+                break;
+            }
+            print!("t={step}s:{:.0}Hz ", spectral_centroid(&samples[offset..]));
+        }
+        println!();
+    }
 }
 
 #[test]

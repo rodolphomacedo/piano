@@ -15,6 +15,7 @@ use piano_midi::{MidiEvent, MidiListener};
 use piano_params::Tuning;
 
 use crate::report_timing;
+use crate::sink::NoteSink;
 
 /// How long `event::poll` waits before re-checking for a reason to stop.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -186,26 +187,33 @@ fn drain_midi(session: &mut AudioSession, listener: &mut MidiListener) {
     }
 }
 
-fn apply(session: &mut AudioSession, event: MidiEvent) {
+/// Plays one decoded MIDI event on `sink`.
+///
+/// Generic over [`NoteSink`] rather than taking `AudioSession` directly so
+/// this mapping is testable without an audio device — see [`crate::sink`].
+/// `crate::studio` calls this same function, so both subcommands answer a
+/// controller identically by construction, rather than by two match arms
+/// being kept in step by hand — which they were not: `studio` used to
+/// discard every control change, sustain pedal included.
+pub(crate) fn apply(sink: &mut impl NoteSink, event: MidiEvent) {
     match event {
-        MidiEvent::NoteOn { note, velocity } => {
-            session.note_on(note, velocity);
+        MidiEvent::NoteOn { note, velocity } => sink.note_on(note, velocity),
+        MidiEvent::NoteOff { note } => sink.note_off(note),
+        MidiEvent::ControlChange { controller, value } => {
+            apply_control_change(sink, controller, value);
         }
-        MidiEvent::NoteOff { note } => {
-            session.note_off(note);
-        }
-        MidiEvent::ControlChange { controller, value } if controller == DAMPING_CC => {
-            session.set_damping(1.0 - value);
-        }
-        MidiEvent::ControlChange { controller, value } if controller == SUSTAIN_CC => {
-            session.set_sustain(value);
-        }
-        MidiEvent::ControlChange { controller, value } if controller == SUSTAIN_PEDAL_CC => {
-            session.set_sustain_pedal(value >= SUSTAIN_PEDAL_DOWN_THRESHOLD);
-        }
-        // Every other control change is not one this instrument
-        // understands.
-        MidiEvent::ControlChange { .. } => {}
+    }
+}
+
+/// The controller half of [`apply`], split out so both stay under this
+/// project's 20-line function limit (`CONTRIBUTING.md`).
+fn apply_control_change(sink: &mut impl NoteSink, controller: u8, value: f32) {
+    match controller {
+        DAMPING_CC => sink.set_damping(1.0 - value),
+        SUSTAIN_CC => sink.set_sustain(value),
+        SUSTAIN_PEDAL_CC => sink.set_sustain_pedal(value >= SUSTAIN_PEDAL_DOWN_THRESHOLD),
+        // Every other control change is not one this instrument understands.
+        _ => {}
     }
 }
 
@@ -242,10 +250,247 @@ impl Drop for RawModeGuard {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
+    use crate::sink::recorder::{Played, Recorder};
 
     fn names(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    /// Feeds `messages` in as raw MIDI bytes — exactly what a controller
+    /// puts on the wire — and returns every call they produced on the
+    /// instrument. Decoding is `piano_midi`'s real decoder, not a stub, so
+    /// this covers the whole chain from wire format to engine call with only
+    /// the audio device replaced.
+    fn play_bytes(messages: &[&[u8]]) -> Vec<Played> {
+        let mut recorder = Recorder::default();
+        for message in messages {
+            if let Some(event) = MidiEvent::decode(message) {
+                apply(&mut recorder, event);
+            }
+        }
+        recorder.played
+    }
+
+    /// Middle C, struck hard: status `0x90` (note-on, channel 1), note 60,
+    /// velocity 100.
+    const MIDDLE_C_ON: &[u8] = &[0x90, 60, 100];
+    /// Middle C released: status `0x80`, note 60, release velocity 64.
+    const MIDDLE_C_OFF: &[u8] = &[0x80, 60, 64];
+
+    #[test]
+    fn pressing_a_key_on_the_controller_strikes_that_note() {
+        assert_eq!(
+            play_bytes(&[MIDDLE_C_ON]),
+            vec![Played::NoteOn {
+                midi: 60,
+                velocity: 100.0 / 127.0
+            }]
+        );
+    }
+
+    #[test]
+    fn releasing_a_key_on_the_controller_releases_that_note() {
+        assert_eq!(
+            play_bytes(&[MIDDLE_C_ON, MIDDLE_C_OFF]),
+            vec![
+                Played::NoteOn {
+                    midi: 60,
+                    velocity: 100.0 / 127.0
+                },
+                Played::NoteOff { midi: 60 },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_note_on_at_zero_velocity_releases_rather_than_striking_silently() {
+        // The running-status idiom: many controllers never send `0x80` at
+        // all. Reading it as a strike would leave every key held forever.
+        assert_eq!(
+            play_bytes(&[MIDDLE_C_ON, &[0x90, 60, 0]]),
+            vec![
+                Played::NoteOn {
+                    midi: 60,
+                    velocity: 100.0 / 127.0
+                },
+                Played::NoteOff { midi: 60 },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_chord_strikes_every_note_in_it() {
+        let played = play_bytes(&[&[0x90, 60, 90], &[0x90, 64, 90], &[0x90, 67, 90]]);
+        let struck: Vec<u8> = played
+            .iter()
+            .filter_map(|call| match call {
+                Played::NoteOn { midi, .. } => Some(*midi),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(struck, vec![60, 64, 67], "a C major triad lost a note");
+    }
+
+    #[test]
+    fn a_controller_on_any_channel_is_heard() {
+        // A digital piano set to channel 5 must not be silently ignored:
+        // only the status byte's high nibble names the message type.
+        for channel in 0..16u8 {
+            let played = play_bytes(&[&[0x90 | channel, 60, 100]]);
+            assert!(
+                matches!(played.as_slice(), [Played::NoteOn { midi: 60, .. }]),
+                "channel {channel} was ignored"
+            );
+        }
+    }
+
+    /// The regression test for the defect this change fixes. CC64 is the
+    /// hold pedal; `>= 64` is down, `< 64` is up (MIDI 1.0 Detailed
+    /// Specification). `piano studio --midi` reached a `match` that dropped
+    /// every control change, so the pedal did nothing there while working
+    /// under `piano midi`. Both now go through this one function.
+    #[test]
+    fn the_sustain_pedal_goes_down_and_comes_back_up() {
+        assert_eq!(
+            play_bytes(&[&[0xB0, 64, 127], &[0xB0, 64, 0]]),
+            vec![
+                Played::SustainPedal { down: true },
+                Played::SustainPedal { down: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn the_pedal_threshold_sits_where_the_midi_specification_puts_it() {
+        // 63 is up, 64 is down — a half-pedal controller sweeping through
+        // the middle must switch at exactly one place, and the right one.
+        assert_eq!(
+            play_bytes(&[&[0xB0, 64, 63]]),
+            vec![Played::SustainPedal { down: false }]
+        );
+        assert_eq!(
+            play_bytes(&[&[0xB0, 64, 64]]),
+            vec![Played::SustainPedal { down: true }]
+        );
+    }
+
+    #[test]
+    fn the_brightness_knob_is_inverted_into_damping() {
+        // CC74 up means brighter, and brighter means *less* damping.
+        assert_eq!(
+            play_bytes(&[&[0xB0, 74, 127]]),
+            vec![Played::Damping { damping: 0.0 }]
+        );
+        assert_eq!(
+            play_bytes(&[&[0xB0, 74, 0]]),
+            vec![Played::Damping { damping: 1.0 }]
+        );
+    }
+
+    #[test]
+    fn the_modulation_wheel_sets_sustain() {
+        assert_eq!(
+            play_bytes(&[&[0xB0, 1, 127]]),
+            vec![Played::Sustain { sustain: 1.0 }]
+        );
+    }
+
+    #[test]
+    fn the_pedal_and_the_sustain_knob_are_not_the_same_control() {
+        // They share the word "sustain" and nothing else: CC64 is the
+        // physical hold pedal, CC1 is a decay-rate voicing parameter.
+        // Wiring one to the other would be silent and badly wrong.
+        assert_eq!(
+            play_bytes(&[&[0xB0, 64, 127], &[0xB0, 1, 127]]),
+            vec![
+                Played::SustainPedal { down: true },
+                Played::Sustain { sustain: 1.0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_control_this_instrument_does_not_map_changes_nothing() {
+        // CC7 is volume, CC10 is pan: real controllers send them, and
+        // acting on them would be worse than ignoring them.
+        assert!(play_bytes(&[&[0xB0, 7, 100], &[0xB0, 10, 64]]).is_empty());
+    }
+
+    #[test]
+    fn messages_this_synthesiser_does_not_act_on_are_dropped_not_misread() {
+        // Pitch bend, program change, aftertouch and clock arrive
+        // constantly from a real instrument. Misreading any of them as a
+        // note is how a controller starts playing notes nobody pressed.
+        let played = play_bytes(&[
+            &[0xE0, 0, 64],  // pitch bend
+            &[0xC0, 5],      // program change
+            &[0xD0, 64],     // channel aftertouch
+            &[0xA0, 60, 64], // polyphonic aftertouch
+            &[0xF8],         // timing clock
+            &[0xFE],         // active sensing
+            &[],             // an empty read
+        ]);
+        assert!(
+            played.is_empty(),
+            "a non-note message reached the engine: {played:?}"
+        );
+    }
+
+    #[test]
+    fn a_truncated_message_never_panics() {
+        // A cable pulled mid-message, or a driver handing over a partial
+        // buffer, must not take the process down: this runs off a driver
+        // callback thread.
+        for message in [
+            [0x90].as_slice(),
+            &[0x90, 60],
+            &[0xB0],
+            &[0xB0, 64],
+            &[0x80, 60],
+        ] {
+            let _ = play_bytes(&[message]);
+        }
+    }
+
+    #[test]
+    fn every_key_of_an_88_key_piano_reaches_the_engine() {
+        // A0 is MIDI 21 and C8 is 108. A controller sending the top or
+        // bottom of its range must not be filtered out before the engine
+        // gets a say about which notes it can voice.
+        for note in 21..=108u8 {
+            let played = play_bytes(&[&[0x90, note, 64]]);
+            assert!(
+                matches!(played.as_slice(), [Played::NoteOn { midi, .. }] if *midi == note),
+                "MIDI note {note} did not reach the instrument"
+            );
+        }
+    }
+
+    #[test]
+    fn every_velocity_arrives_inside_the_unit_range_and_in_order() {
+        // `pluck` clamps, but a velocity that arrives outside `[0, 1]` — or
+        // that does not rise with the player's touch — is a bug here, not
+        // there.
+        let mut previous = 0.0f32;
+        for velocity in 1..=127u8 {
+            let played = play_bytes(&[&[0x90, 60, velocity]]);
+            let [Played::NoteOn { velocity: sent, .. }] = played.as_slice() else {
+                panic!("velocity {velocity} did not produce a strike");
+            };
+            assert!(
+                (0.0..=1.0).contains(sent),
+                "velocity {velocity} normalised to {sent}"
+            );
+            assert!(*sent > previous, "velocity {velocity} did not rise");
+            previous = *sent;
+        }
+        assert!(
+            (previous - 1.0).abs() < f32::EPSILON,
+            "full velocity normalised to {previous}, not 1.0"
+        );
     }
 
     #[test]

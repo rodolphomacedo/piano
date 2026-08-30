@@ -9,6 +9,7 @@
 mod keyboard;
 mod midi;
 mod play;
+mod sink;
 mod studio;
 
 use std::path::PathBuf;

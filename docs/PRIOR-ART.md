@@ -76,6 +76,31 @@ derivative work of anyone's source code.
   stability analysis, and numerical hygiene that applies to any method.
 - **B. Bank et al.** — efficient piano synthesis: soundboard modelling by resonator
   banks, and the beating behaviour of unison string groups.
+- **J. Bensa, S. Bilbao, R. Kronland-Martinet & J. O. Smith (2003)**, *The
+  simulation of piano string vibration: from physical models to finite difference
+  schemes and digital waveguides* (JASA 114) — the paper that connects the
+  finite-difference physics to the **waveguide** formulation this project actually
+  uses. The most directly applicable source we have for improving string realism
+  without abandoning the architecture.
+- **G. Weinreich (1977)**, *Coupled Piano Strings* (JASA 62) — unison coupling
+  through a shared bridge admittance, the fast pre-decay and slow aftersound.
+  Already the cited source in `piano_core::unison`.
+- **H. Fletcher (1964)**, *Normal Vibration Frequencies of a Stiff Piano String*
+  (JASA 36) — inharmonicity, `f_n = n·f_1·√(1+B·n²)`. Already the cited source in
+  `piano_core::dispersion`.
+- **A. Stulov (1995)**, *Hysteretic model of the grand piano hammer felt* (JASA 97)
+  — felt force depends on the *history* of compression, not only its current
+  value. A refinement on top of a properly coupled hammer, not a replacement for
+  one.
+- **X. Boutillon & K. Ege (2013)**, *Vibroacoustics of the piano soundboard*
+  (arXiv:1305.3057) — bridge mobility, modal density, and acoustical radiation
+  regimes. The source for making the soundboard a mechanical load rather than a
+  post-mix effect.
+
+**Where the working list lives.** `MODEL-REVIEW.md` carries a literature register
+mapping each paper to the specific issue it serves and whether it is already cited
+in code. When a new paper arrives, add it there *and* here — the register says what
+we intend to take from it, this list says we are allowed to.
 
 ## Practical policy for contributors
 

@@ -2,7 +2,9 @@
 //! `piano_audio::AudioSession`'s live setters actually consume —
 //! `docs/PARAMETER-STUDIO.md`'s cascade, resolved once.
 
-use piano_audio::voicing::{unison_count_for_key, voicing_for_key};
+use piano_audio::voicing::{
+    RegisterAnchorOverride, RegisterOverrides, unison_count_for_key, voicing_for_key_with_registers,
+};
 use piano_core::SampleRate;
 use piano_core::dispersion::DEFAULT_INHARMONICITY;
 use piano_core::hammer::{DEFAULT_HAMMER, HammerConfig};
@@ -10,7 +12,7 @@ use piano_core::soundboard::SoundboardMode;
 use piano_core::string::{DEFAULT_DAMPING, DEFAULT_SUSTAIN};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
-use crate::format::{HammerOverrides, ParameterOverrides, PianoFile};
+use crate::format::{HammerOverrides, ParameterOverrides, PianoFile, RegisterAnchor, Registers};
 
 /// Default detune a string resolves to when nothing overrides it — "no
 /// detune" in the *absolute* cents-from-base-frequency sense
@@ -97,6 +99,7 @@ struct Resolved {
 /// `piano-audio` closes.
 #[must_use]
 pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> ResolvedPiano {
+    let registers = register_overrides_from(&file.registers);
     let mut strings = Vec::new();
     for midi in LOWEST_PIANO_KEY..=HIGHEST_PIANO_KEY {
         let Ok(key) = PianoKey::from_midi(midi) else {
@@ -105,6 +108,7 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
         for string_index in 0..unison_count_for_key(key) {
             strings.push(resolve_string(
                 file,
+                registers,
                 key,
                 tuning,
                 sample_rate,
@@ -137,10 +141,36 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
     }
 }
 
+/// Turns a file's `registers` block into what
+/// `piano_audio::voicing::voicing_for_key_with_registers` expects — the
+/// wire format's `RegisterAnchor` maps field-for-field onto
+/// `RegisterAnchorOverride`, an absent register (`None`) becoming that
+/// anchor's all-`None` default, which changes nothing (see
+/// `registers_default_matches_voicing_for_key_on_every_key` in
+/// `piano-audio`'s own tests).
+fn register_overrides_from(registers: &Registers) -> RegisterOverrides {
+    let anchor = |entry: Option<RegisterAnchor>| {
+        entry.map_or(RegisterAnchorOverride::default(), |anchor| {
+            RegisterAnchorOverride {
+                anchor_midi: Some(anchor.anchor_midi),
+                decay_seconds: anchor.decay_seconds,
+                damping: anchor.damping,
+                inharmonicity: anchor.inharmonicity,
+            }
+        })
+    };
+    RegisterOverrides {
+        bass: anchor(registers.bass),
+        mid: anchor(registers.mid),
+        treble: anchor(registers.treble),
+    }
+}
+
 /// Resolves one string through all four cascade tiers, in
 /// least-to-most-specific order.
 fn resolve_string(
     file: &PianoFile,
+    registers: RegisterOverrides,
     key: PianoKey,
     tuning: Tuning,
     sample_rate: SampleRate,
@@ -157,10 +187,12 @@ fn resolve_string(
     };
 
     // The `registers` tier always wins over `defaults` for the three
-    // fields `voicing_for_key` computes — see the module docs' honesty
-    // note on why this reuses that fixed interpolation rather than the
-    // file's own (currently unused) `registers` block.
-    let voicing = voicing_for_key(key, tuning, sample_rate);
+    // fields `voicing_for_key_with_registers` computes. `registers` here
+    // carries the file's own bass/mid/treble anchor overrides — see
+    // `register_overrides_from` — rather than always reproducing the
+    // built-in three-anchor curve regardless of what the file said, which
+    // is what this line did until `docs/TIMBRE-PLAN.md` D5/P1 was fixed.
+    let voicing = voicing_for_key_with_registers(key, tuning, sample_rate, registers);
     resolved.damping = voicing.damping;
     resolved.sustain = voicing.sustain;
     resolved.inharmonicity = voicing.inharmonicity;
@@ -222,5 +254,141 @@ fn resolve_hammer(base: HammerConfig, overrides: &HammerOverrides) -> HammerConf
         contact_exponent: overrides.contact_exponent.unwrap_or(base.contact_exponent),
         stiffness: overrides.stiffness.unwrap_or(base.stiffness),
         mass: overrides.mass.unwrap_or(base.mass),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
+
+    use super::*;
+    use crate::format::RegisterAnchor;
+
+    fn sample_rate() -> SampleRate {
+        SampleRate::new(48_000.0).expect("48 kHz is valid")
+    }
+
+    fn find(piano: &ResolvedPiano, midi: u8, string_index: u8) -> &ResolvedString {
+        piano
+            .strings
+            .iter()
+            .find(|string| string.midi == midi && string.string_index == string_index)
+            .expect("midi/string_index exists on an 88-key instrument")
+    }
+
+    /// The literal report behind `docs/TIMBRE-PLAN.md`'s D5/P1: "a user who
+    /// edits `decay_seconds`... in their piano file gets silence — no
+    /// error, no effect." A bass register override must now change the
+    /// resolved bass string, and must not touch the treble string.
+    #[test]
+    fn a_bass_register_decay_override_reaches_the_resolved_bass_string() {
+        let mut file = PianoFile::default();
+        let baseline = resolve(&file, Tuning::default(), sample_rate());
+
+        file.registers.bass = Some(RegisterAnchor {
+            anchor_midi: LOWEST_PIANO_KEY,
+            decay_seconds: Some(1.0), // far shorter than the built-in bass target
+            damping: None,
+            inharmonicity: None,
+        });
+        let overridden = resolve(&file, Tuning::default(), sample_rate());
+
+        let baseline_bass = find(&baseline, LOWEST_PIANO_KEY, 0);
+        let overridden_bass = find(&overridden, LOWEST_PIANO_KEY, 0);
+        assert_ne!(
+            baseline_bass.sustain, overridden_bass.sustain,
+            "the registers.bass.decay_seconds override never reached resolution"
+        );
+
+        let baseline_treble = find(&baseline, HIGHEST_PIANO_KEY, 0);
+        let overridden_treble = find(&overridden, HIGHEST_PIANO_KEY, 0);
+        assert_eq!(
+            baseline_treble.sustain, overridden_treble.sustain,
+            "a bass-only register override changed the treble string too"
+        );
+    }
+
+    /// The same report, for `inharmonicity`.
+    #[test]
+    fn a_treble_register_inharmonicity_override_reaches_the_resolved_treble_string() {
+        let mut file = PianoFile::default();
+        file.registers.treble = Some(RegisterAnchor {
+            anchor_midi: HIGHEST_PIANO_KEY,
+            decay_seconds: None,
+            damping: None,
+            inharmonicity: Some(0.02),
+        });
+        let piano = resolve(&file, Tuning::default(), sample_rate());
+        let treble = find(&piano, HIGHEST_PIANO_KEY, 0);
+        assert!(
+            (treble.inharmonicity - 0.02).abs() < 1e-4,
+            "resolved treble inharmonicity was {}, not the overridden 0.02",
+            treble.inharmonicity
+        );
+    }
+
+    /// The same report, for `damping` — pinned at the exact anchor key, per
+    /// `piano_audio::voicing::RegisterAnchorOverride::damping`.
+    #[test]
+    fn a_register_damping_override_pins_the_resolved_anchor_string() {
+        let mut file = PianoFile::default();
+        file.registers.mid = Some(RegisterAnchor {
+            anchor_midi: piano_params::CONCERT_A_KEY,
+            decay_seconds: None,
+            damping: Some(0.222_222),
+            inharmonicity: None,
+        });
+        let piano = resolve(&file, Tuning::default(), sample_rate());
+        let a4 = find(&piano, piano_params::CONCERT_A_KEY, 0);
+        assert_eq!(a4.damping, 0.222_222);
+    }
+
+    /// The cascade order (`docs/PARAMETER-STUDIO.md`: `defaults` <
+    /// `registers` < `groups` < `strings`) must still hold now that
+    /// `registers` is no longer a no-op: a `strings[]` entry on the same
+    /// key as a register override still wins.
+    #[test]
+    fn a_string_override_still_wins_over_a_register_override_on_the_same_key() {
+        let mut file = PianoFile::default();
+        file.registers.bass = Some(RegisterAnchor {
+            anchor_midi: LOWEST_PIANO_KEY,
+            decay_seconds: None,
+            damping: Some(0.111_111),
+            inharmonicity: None,
+        });
+        file.strings.push(crate::format::StringOverride {
+            midi: LOWEST_PIANO_KEY,
+            string_index: 0,
+            overrides: ParameterOverrides {
+                damping: Some(0.9),
+                ..ParameterOverrides::default()
+            },
+        });
+        let piano = resolve(&file, Tuning::default(), sample_rate());
+        let bass = find(&piano, LOWEST_PIANO_KEY, 0);
+        assert_eq!(
+            bass.damping, 0.9,
+            "the register tier's damping pin outranked an explicit string override"
+        );
+    }
+
+    /// An empty `registers` block (the default, absent from a hand-written
+    /// file) must resolve identically to the built-in three-anchor curve —
+    /// the same backward-compatibility guarantee
+    /// `registers_default_matches_voicing_for_key_on_every_key` proves one
+    /// layer down, checked here through the whole file-load path.
+    #[test]
+    fn an_empty_registers_block_resolves_exactly_like_the_built_in_anchors() {
+        let file = PianoFile::default();
+        let piano = resolve(&file, Tuning::default(), sample_rate());
+        let a4 = find(&piano, piano_params::CONCERT_A_KEY, 0);
+        let expected = piano_audio::voicing::voicing_for_key(
+            PianoKey::from_midi(piano_params::CONCERT_A_KEY).expect("A4 is a real key"),
+            Tuning::default(),
+            sample_rate(),
+        );
+        assert_eq!(a4.damping, expected.damping);
+        assert_eq!(a4.sustain, expected.sustain);
+        assert_eq!(a4.inharmonicity, expected.inharmonicity);
     }
 }

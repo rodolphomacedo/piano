@@ -45,13 +45,18 @@ pub struct ParameterOverrides {
 
 /// One `registers.bass`/`mid`/`treble` entry.
 ///
-/// Honesty note: [`crate::resolve`] currently reuses
-/// `piano_audio::voicing::voicing_for_key`'s existing, fixed three-anchor
-/// interpolation for the `damping`/`sustain`/`inharmonicity` a key falls
-/// back to — the same reuse-not-reimplement scope `docs/PARAMETER-STUDIO.md`
-/// calls for. This type round-trips a file's `registers` block faithfully
-/// (so saving what was loaded is lossless), but its fields do not yet
-/// feed back into that interpolation.
+/// [`crate::resolve`] feeds this into
+/// `piano_audio::voicing::voicing_for_key_with_registers`, which reuses
+/// (rather than reimplements) `voicing_for_key`'s three-anchor
+/// interpolation for `sustain`/`inharmonicity`, extended so each anchor's
+/// `decay_seconds`/`inharmonicity` can override its built-in value — the
+/// register tier `docs/PARAMETER-STUDIO.md` describes as data instead of
+/// Rust constants. `damping` is handled differently: it
+/// is normally a *solved output*, not an independent anchor value, so an
+/// override pins only the one key exactly at `anchor_midi` rather than
+/// blending a curve — see `RegisterAnchorOverride::damping` in that module
+/// for why. This block was previously round-tripped but silently ignored
+/// (`docs/TIMBRE-PLAN.md`, D5/P1); no longer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, Serialize)]
 pub struct RegisterAnchor {
     /// The MIDI note this register is anchored at.

@@ -55,17 +55,18 @@ costing about 16% of the fundamental's amplitude every round trip, and no
 value `sustain` can take (bounded to `[0, 1]`) can put amplitude back that
 the filter already removed.
 
-`piano_audio::voicing::loop_filter_coefficients` is the fix: `filter::
-LoopFilter` now takes `zero_mix` as well as `pole`, and that function scales
-both down together, key by key, until the loop filter's own gain at that
-key's fundamental clears the round-trip budget its target decay time
-allows. Bass keeps the full desired pair (`pole = 0.6`, `zero_mix = 0.5`,
-unaffected); by C8 both are turned down to roughly a hundredth of
-themselves. Verified two ways: analytically, against `LoopFilter::
+The fix was to make `filter::LoopFilter` take `zero_mix` as well as `pole`,
+and to have `piano_audio::voicing` choose both per key rather than fixing
+them globally. Verified two ways: analytically, against `LoopFilter::
 magnitude_at`'s own closed-form gain; and empirically, by seeding a minimal
 delay-line-plus-filter loop (no dispersion, no hammer) with a plain sine
 wave and measuring its actual per-cycle decay, which matched the analytic
 prediction to within `0.03%`.
+
+*How* those two coefficients get chosen changed afterwards, for the reason
+the next section is about: the calibration described here scaled them down
+together against a single constraint at the fundamental, and that was the
+wrong constraint.
 
 **What this alone did not fix, and what closed the rest of it.** A real,
 hammer-plucked note still fell well short of the full target even after
@@ -81,6 +82,83 @@ lasts. C8 (dozens of extra round trips available, its period being so much
 shorter than the contact duration) now measures close to its 1-2 s target;
 A4 (only one or two extra round trips available) improves but still falls
 short, for the residual reason described below.
+
+### Why the loop is solved against three decay times, not one
+
+Everything above tunes the loop filter so that the **fundamental** rings for
+the right length of time. That is one equation. The filter has two free
+coefficients, and a third quantity — `sustain`, the frequency-independent
+per-round-trip gain — also feeds the same loop. Two unknowns spent on one
+equation means the filter's *slope* is whatever falls out, and the slope is
+what sets every upper partial's decay. Nobody had specified how fast the 8th
+partial should die, so nothing did.
+
+Measured, seconds for each partial to fall 20 dB from its own peak
+(`cargo test -p piano-audio --test timbre_diagnostic -- --nocapture`):
+
+| key | H1 | H8 | H1:H8 |
+|---|---|---|---|
+| A0, single constraint | 8.87 | 7.51 | **1.18** |
+| A0, three constraints | 8.53 | 1.54 | **5.54** |
+| A4, single constraint | 2.39 | 0.17 | 14.1 |
+| A4, three constraints | 2.56 | 0.34 | 7.5 |
+
+A0's row is the whole point. Partials that decay together are the spectral
+signature of an organ pipe or a struck bar, not a string; a real bass
+string's 8th partial dies roughly six times sooner than its fundamental.
+Fletcher & Rossing (already cited above for inharmonicity) give the shape:
+air damping and internal friction both grow with frequency, so partial `n`
+decays roughly `n` times faster than the fundamental.
+
+`piano_audio::voicing::solve_loop_losses` is the fix. Each key now carries
+three decay targets — its fundamental's, its 3rd partial's and its 8th's,
+interpolated across the same A0/A4/C8 register anchors as everything else —
+and three unknowns are solved against them: `pole`, `zero_mix` and
+`sustain`. Adding `sustain` to the solve is what makes it converge at all:
+the loop filter's DC gain is exactly `1` by construction, so it *cannot*
+attenuate a fundamental. The old calibration therefore drove `sustain`
+toward `1.0` and asked the filter to carry the entire loss, which forced its
+corner down far enough to take the harmonics with it. Solving the filter
+alone against per-partial targets has the mirror failure: every fundamental
+comes out roughly ten times too long.
+
+The fit is a weighted least squares, not an exact solve, and honestly so:
+near DC both a pole and a zero attenuate as `f²`, so the two coefficients
+are nearly collinear there and three targets cannot all be met. The
+fundamental carries double weight. What it achieves at 48 kHz, from
+`piano_audio::voicing`'s own `report_the_solved_voicing_at_each_anchor`:
+
+| key | pole | zero_mix | sustain | H1 | H3 | H8 | targets |
+|---|---|---|---|---|---|---|---|
+| A0 | 0.91452 | 0.44818 | 0.990982 | 33.9 s | 21.6 s | 5.7 s | 35 / 18.7 / 6 s |
+| A2 | 0.57075 | 0.00232 | 0.996567 | 22.3 s | 14.0 s | 3.6 s | 23 / 11.9 / 3.8 s |
+| A4 | 0.03233 | 0.09967 | 0.998244 | 10.7 s | 6.2 s | 1.4 s | 11 / 5.2 / 1.5 s |
+| A6 | 0.00100 | 0.00392 | 0.999097 | 5.1 s | 2.7 s | 0.7 s | 5.2 / 2.5 / 0.8 s |
+| C8 | 0.00178 | 0.00000 | 0.998803 | 1.5 s | 0.9 s | 0.5 s | 1.5 / 0.9 / 0.5 s |
+
+C8's last column is its 5.2nd partial, not its 8th: at 4186 Hz the 8th
+partial would sit at 33 kHz, so `solved_partials` fits the highest one that
+stays under Nyquist and reads its target off the same continuous curve.
+
+The per-partial targets themselves (`35 / 18 / 6 s` at A0, `11 / 5 / 1.5 s`
+at A4, `1.5 / 0.8 / 0.3 s` at C8) are literature-*shaped* but not measured:
+they follow the `1/n` law loosely, flattened across the low partials where
+real pianos hold their first few closer together than `1/n` predicts. They
+are this project's own reasoned anchors, and re-tuning them by ear against a
+working excitation is deliberately left as its own step
+(`docs/TIMBRE-PLAN.md`, F6).
+
+**What this does not fix.** The solved numbers above are the loop's
+analytic behaviour, and the rendered per-partial decays match them closely
+once the two measurement scales are reconciled — the diagnostic's 20 dB drop
+is a quarter of the 80 dB the solve targets, so A0's analytic 33.9 s
+corresponds to a measured 8.5 s, and it measures 8.53 s. What the solve
+cannot do is put energy into partials the excitation never excited: A4's
+attack still shows H2 at −57 dB and H3 at −76 dB relative to its
+fundamental, because the excitation is a noise burst rather than a hammer
+striking at a point (`docs/TIMBRE-PLAN.md`, D4/F2). A note whose harmonics
+are absent from the first sample cannot be made to sound like a piano by
+deciding how fast they should decay.
 
 ### Why the mix bus needed a limiter too
 
@@ -335,7 +413,7 @@ Stated plainly, because these are the gaps a later milestone would close:
 | **Longitudinal modes** | No metallic "phantom partials" of the low bass. | Backlog |
 | **Simultaneous hammer/string coupling** | The hammer model (above) does not yet feed the string's own motion back into the contact force during the strike. | Backlog |
 | **Per-string bridge admittance** | Every voice couples to the shared bridge bus at the same fixed gain; a real bridge's admittance varies with frequency and string position. | Backlog |
-| **The hammer excitation's noise burst still does not concentrate perfectly on the resonant fundamental** | `PluckedString::pluck` seeds the loop with broadband noise, shaped only in envelope and overall cutoff (see "Why the excitation is a shaped noise burst", above) — most of that energy is off-resonance and the delay line's own comb selectivity cancels it out over the first several hundred round trips, *regardless* of how gentle the loop filter is. `PendingContact` (see "Why the zero had to become a second, per-string parameter", above) closes most of the resulting shortfall by continuing to inject the hammer's own contact force for as many round trips as it actually lasts, rather than truncating it to one loop length — measured on a real, calibrated C8: about 1.4 s now reached, close to the 1-2 s target. What is left is genuinely the excitation's spectral concentration, not truncation: a key whose period sits close to the contact duration (around A4, where only one or two *extra* round trips of continued injection are available) still falls short — measured around 6-7 s against an 11 s target. Bass notes are essentially unaffected either way (their contact already fits inside one loop length, so `PendingContact` never engages for them) yet still measure under target too (about 17 s against 35 s for A0) — the same comb-selectivity burn-in, from a note whose contact was never truncated, not yet investigated further. | Backlog |
+| **The hammer excitation's noise burst still does not concentrate perfectly on the resonant fundamental** | `PluckedString::pluck` seeds the loop with broadband noise, shaped only in envelope and overall cutoff (see "Why the excitation is a shaped noise burst", above) — most of that energy is off-resonance and the delay line's own comb selectivity cancels it out over the first several hundred round trips, *regardless* of how gentle the loop filter is. `PendingContact` (see "Why the zero had to become a second, per-string parameter", above) closes most of the resulting shortfall by continuing to inject the hammer's own contact force for as many round trips as it actually lasts, rather than truncating it to one loop length — measured on a real, calibrated C8: about 1.4 s now reached, close to the 1-2 s target. What is left is genuinely the excitation's spectral concentration, not truncation, and it shows up in two places. First, the *envelope* reaches silence sooner than the fundamental does, because most of what the envelope is tracking is off-resonance noise: measured to `SILENCE_THRESHOLD`, A0 lands at about 9.6 s and A4 at about 6.8 s against analytic loop targets of 33.9 s and 10.7 s (the fundamental itself does reach those — see "Why the loop is solved against three decay times, not one"). Second, and worse, the upper partials are barely excited at all: A4's attack has H2 at −57 dB and H3 at −76 dB relative to its fundamental, so there is almost nothing for the loop filter's now-correct slope to act on. Both close with a deterministic hammer pulse injected at a strike position rather than a noise burst (`docs/TIMBRE-PLAN.md`, F2). | Backlog |
 
 ## Numbers worth having
 
@@ -347,6 +425,8 @@ At 48 kHz on an 88-key piano:
 | Delay buffer (pow-2) | 2048 | 128 | 16 |
 | Memory per string | 8 KB | 512 B | 64 B |
 | Typical decay | 30–40 s | 8–15 s | 1–2 s |
+| Modelled decay, fundamental | 33.9 s | 10.7 s | 1.5 s |
+| Modelled decay, 8th partial | 5.7 s | 1.4 s | 0.5 s (5.2nd) |
 | Dispersion sections needed | ~8 | ~2 | ~0–1 |
 
 The last row is why `PERF-005` insists that dispersion order be scaled per

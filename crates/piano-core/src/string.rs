@@ -108,9 +108,9 @@ pub const DEFAULT_SUSTAIN: f32 = 0.996;
 /// Loop-filter zero mix [`StringConfig::new`] uses when the caller does not
 /// choose one — the loop filter's original, pre-per-register fixed value
 /// (`filter::LoopFilter`'s own `MAX_ZERO_MIX`, full Nyquist-null rolloff).
-/// `piano_audio::voicing::loop_filter_coefficients` is what chooses a
-/// smaller value for keys whose round-trip budget cannot afford the full
-/// zero; a caller building a [`StringConfig`] directly (as
+/// `piano_audio::voicing::solve_loop_losses` is what chooses a per-key
+/// value instead, from that key's own per-partial decay targets; a caller
+/// building a [`StringConfig`] directly (as
 /// `piano-render`'s tests do, deliberately bypassing that per-register
 /// voicing) keeps today's original filter character unchanged.
 pub const DEFAULT_LOOP_ZERO_MIX: f32 = 0.5;

@@ -22,6 +22,9 @@ polyphony, and runs in a browser tab compiled to WebAssembly. See ["Is this
 actually finished?"](#is-this-actually-finished) below, or the full history
 in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
+**Version: v0.2.1** — see [`CHANGELOG.md`](CHANGELOG.md) for what changed
+last and why.
+
 ## Try it in one command
 
 ```sh

@@ -70,7 +70,7 @@ pub const MAX_UNISON_STRINGS: usize = 3;
 /// project has no per-instrument admittance measurement to fit to, so
 /// this specific figure is a reasoned choice within that "weak coupling"
 /// order of magnitude, honestly labelled as such — the same pattern
-/// `piano_audio::voicing`'s `BASS_DAMPING`/`TREBLE_DAMPING` already use.
+/// `piano_audio::voicing`'s per-partial decay anchors already use.
 const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.15;
 
 /// Detuning, in cents, for a 2-string (bichord) unison group, symmetric
@@ -660,6 +660,54 @@ mod tests {
             assert!(
                 sample.abs() < UNISON_BOUND,
                 "sample {index} = {sample} escaped"
+            );
+        }
+    }
+
+    /// The regression test for the report: "A5 sounds terrible, like
+    /// hitting a tin can with a muffled iron". `dispersion::section_count`
+    /// computes exactly one active dispersion section across roughly
+    /// C#5-B5, and a high enough inharmonicity there used to clamp that
+    /// one section's coefficient close enough to the unit circle
+    /// (`dispersion::MAX_COEFFICIENT`, before it was lowered) that its
+    /// steep phase response spun three unison strings a few cents apart out
+    /// of phase with each other within a handful of round trips — see that
+    /// constant's own doc comment for the full mechanism. This group's RMS
+    /// used to collapse from `0.14` to numerically silent within about
+    /// 120 ms; a monochord at the same pitch, with nothing to diverge
+    /// against, was fine throughout, which is what proves this was never
+    /// about `sustain` or the loop filter.
+    ///
+    /// A5 (880 Hz) sits at the top of that single-section band and gets the
+    /// highest inharmonicity within it — the worst point, not an arbitrary
+    /// one.
+    #[test]
+    fn a_high_inharmonicity_trichord_in_the_single_dispersion_section_band_does_not_collapse() {
+        const STEP: usize = 960; // 20 ms at 48 kHz.
+
+        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
+        let mut config = StringConfig::new(Hz::new(880.0).expect("A5 is a valid frequency"));
+        config.inharmonicity = 0.0345; // piano_audio::voicing's own solved A5 value.
+        config.sustain = 0.998_808; // ditto — a near-lossless round trip.
+        config.damping = 0.000_57; // ditto — a loop filter that is nearly transparent.
+        let mut group = UnisonGroup::new(config, 3, rate).expect("A5 is representable at 48 kHz");
+        group.pluck(0.8);
+
+        let mut buffer = [0.0f32; STEP];
+        let rms_of = |group: &mut UnisonGroup, buffer: &mut [f32; STEP]| {
+            for sample in buffer.iter_mut() {
+                *sample = group.process();
+            }
+            (buffer.iter().map(|s| s * s).sum::<f32>() / STEP as f32).sqrt()
+        };
+
+        let first = rms_of(&mut group, &mut buffer);
+        for step in 1..25 {
+            let rms = rms_of(&mut group, &mut buffer);
+            assert!(
+                rms > first * 0.01,
+                "trichord collapsed by window {step} ({rms:.6} against an opening RMS of \
+                 {first:.6}) — see dispersion::MAX_COEFFICIENT's doc comment"
             );
         }
     }

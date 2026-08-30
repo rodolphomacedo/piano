@@ -74,7 +74,7 @@ const BRIDGE_BLOCK_SAMPLES: usize = 128;
 /// measured tuning/inharmonicity test this project has (M1, M4). This
 /// value was chosen by ear, not measured or fit, so the soundboard's
 /// resonant colour is clearly present without dominating — an honest,
-/// reasoned choice in the same spirit as `voicing`'s `BASS_DAMPING`.
+/// reasoned choice in the same spirit as `voicing`'s decay anchors.
 const SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 
 /// One key's permanent voice. `None` only when `sample_rate` could not

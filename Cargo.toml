@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -13,13 +13,13 @@ keywords = ["audio", "dsp", "synthesis", "physical-modeling", "piano"]
 categories = ["multimedia::audio", "simulation"]
 
 [workspace.dependencies]
-piano-core = { path = "crates/piano-core", version = "0.1.0", default-features = false }
-piano-params = { path = "crates/piano-params", version = "0.1.0", default-features = false }
-piano-render = { path = "crates/piano-render", version = "0.1.0" }
-piano-audio = { path = "crates/piano-audio", version = "0.1.0" }
-piano-midi = { path = "crates/piano-midi", version = "0.1.0" }
-piano-wasm = { path = "crates/piano-wasm", version = "0.1.0" }
-piano-studio = { path = "crates/piano-studio", version = "0.1.0" }
+piano-core = { path = "crates/piano-core", version = "0.2.1", default-features = false }
+piano-params = { path = "crates/piano-params", version = "0.2.1", default-features = false }
+piano-render = { path = "crates/piano-render", version = "0.2.1" }
+piano-audio = { path = "crates/piano-audio", version = "0.2.1" }
+piano-midi = { path = "crates/piano-midi", version = "0.2.1" }
+piano-wasm = { path = "crates/piano-wasm", version = "0.2.1" }
+piano-studio = { path = "crates/piano-studio", version = "0.2.1" }
 libm = "0.2"
 hound = "3.5"
 anyhow = "1"

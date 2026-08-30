@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 use piano_audio::AudioSession;
-use piano_midi::{MidiEvent, MidiListener};
+use piano_midi::MidiListener;
 use piano_params::Tuning;
 use piano_studio::{LiveState, StudioCommand, StudioConfig};
 
@@ -94,7 +94,7 @@ pub(crate) fn run(args: &StudioArgs) -> Result<()> {
     let mut session = AudioSession::start(tuning).context("could not start audio playback")?;
     // Resolved after the session opens, not before: `resolve`'s register
     // tier needs the real output sample rate to compute a correct
-    // `sustain` (see `piano_audio::voicing::sustain_for_decay_seconds`),
+    // `sustain` (see `piano_audio::voicing::solve_loop_losses`),
     // and that rate is whatever the OS output device actually gave —
     // not necessarily 48 kHz — which is only known once the stream is
     // open.
@@ -261,26 +261,22 @@ fn should_quit(key: &KeyEvent) -> bool {
         || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
 }
 
+/// Plays queued MIDI through [`crate::midi::apply`] — the same mapping
+/// `piano midi` uses, called rather than copied.
+///
+/// This loop used to reach a `match` of its own, which handled note-on and
+/// note-off and dropped every control change on the floor. The sustain
+/// pedal therefore worked under `piano midi` and did nothing whatsoever
+/// here, with no error and no log line: a player pressing the pedal while
+/// playing a `.piano.json` file simply found the instrument ignoring it.
+/// Calling one shared mapping is what stops the two subcommands drifting
+/// apart again, and puts both under `crate::midi`'s tests.
 fn drain_midi(session: &mut AudioSession, listener: &mut MidiListener) {
     for _ in 0..MAX_EVENTS_PER_TICK {
         let Some(midi_event) = listener.poll() else {
             break;
         };
-        apply_midi_event(session, midi_event);
-    }
-}
-
-/// Handles the same three MIDI events `crate::midi` does — this
-/// subcommand adds a loaded file's baseline, not new live controls.
-fn apply_midi_event(session: &mut AudioSession, event: MidiEvent) {
-    match event {
-        MidiEvent::NoteOn { note, velocity } => {
-            session.note_on(note, velocity);
-        }
-        MidiEvent::NoteOff { note } => {
-            session.note_off(note);
-        }
-        MidiEvent::ControlChange { .. } => {}
+        crate::midi::apply(session, midi_event);
     }
 }
 
@@ -310,6 +306,8 @@ impl Drop for RawModeGuard {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use clap::Parser;
 
     use super::*;
@@ -343,6 +341,49 @@ mod tests {
     fn the_wait_can_be_turned_off_for_a_fail_fast_run() {
         let args = parse(&["piano-studio", "--piano", "x.json", "--wait", "0"]);
         assert_eq!(crate::midi::wait_duration(args.wait), Duration::ZERO);
+    }
+
+    /// The regression test for the defect a player would have reported as
+    /// "MIDI is not working": `piano studio --midi` kept its own copy of the
+    /// event mapping, and that copy discarded every control change. The
+    /// sustain pedal — the control a pianist uses most after the keys — did
+    /// nothing here while working under `piano midi`, silently.
+    ///
+    /// Asserted through this module's own [`drain_midi`] path rather than by
+    /// calling `crate::midi::apply` directly, so re-introducing a local
+    /// `match` here fails the test instead of quietly passing it.
+    #[test]
+    fn the_studio_answers_every_midi_control_piano_midi_does() {
+        use crate::sink::recorder::{Played, Recorder};
+
+        let mut recorder = Recorder::default();
+        for message in [
+            [0x90u8, 60, 100].as_slice(), // middle C down
+            &[0xB0, 64, 127],             // sustain pedal down
+            &[0x80, 60, 64],              // middle C up, held by the pedal
+            &[0xB0, 64, 0],               // pedal up
+            &[0xB0, 74, 0],               // brightness knob to minimum
+            &[0xB0, 1, 127],              // mod wheel to maximum
+        ] {
+            let event = piano_midi::MidiEvent::decode(message).expect("a message this CLI acts on");
+            crate::midi::apply(&mut recorder, event);
+        }
+
+        assert_eq!(
+            recorder.played,
+            vec![
+                Played::NoteOn {
+                    midi: 60,
+                    velocity: 100.0 / 127.0
+                },
+                Played::SustainPedal { down: true },
+                Played::NoteOff { midi: 60 },
+                Played::SustainPedal { down: false },
+                Played::Damping { damping: 1.0 },
+                Played::Sustain { sustain: 1.0 },
+            ],
+            "the studio dropped a control `piano midi` acts on"
+        );
     }
 
     #[test]

@@ -50,10 +50,10 @@ const MAX_ZERO_MIX: f32 = 0.5;
 /// zero fixed at Nyquist, decaying to silence in about 12 ms against a
 /// documented 1-2 s target — the zero alone was costing about 16% of the
 /// fundamental's amplitude every round trip. `piano_audio::voicing`'s
-/// `loop_filter_coefficients` is what actually chooses `zero_mix` (and
-/// `pole`) per string now, tapering both down toward the treble until the
-/// round-trip budget a target decay time allows is no longer blown; this
-/// struct only needs to expose the second knob for it to use.
+/// `solve_loop_losses` is what actually chooses `zero_mix` (and `pole`,
+/// and `sustain`) per string now, fitting all three against three
+/// per-partial decay targets rather than against the fundamental alone;
+/// this struct only needs to expose the second knob for it to use.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LoopFilter {
     pole: f32,
@@ -135,9 +135,9 @@ impl LoopFilter {
     /// which compounds over the thousands of round trips a note rings
     /// for into a real note dying several times faster than the target
     /// decay time. Dividing the intended round-trip gain by this value is
-    /// the fix; `voicing::loop_filter_coefficients` is what then also
-    /// chooses `pole`/`zero_mix` small enough, register by register, that
-    /// there is a gain left to divide into in the first place.
+    /// the fix; `voicing::solve_loop_losses` is what then chooses
+    /// `pole`/`zero_mix`/`sustain` together, so that this gain lands where
+    /// each partial's own target decay time needs it.
     ///
     /// Total for every input: a non-finite or non-positive
     /// `sample_rate_hz`, or a non-finite `frequency_hz`, falls back to

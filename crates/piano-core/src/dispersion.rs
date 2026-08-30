@@ -42,8 +42,49 @@ pub const DEFAULT_INHARMONICITY: f32 = 0.000_4;
 pub const MAX_INHARMONICITY: f32 = 0.05;
 
 /// Highest magnitude allowed for a section's coefficient, short of the unit
-/// circle, so the cascade is stable by construction for every `B`.
-const MAX_COEFFICIENT: f32 = 0.9;
+/// circle, so the cascade is stable by construction for every `B` — and low
+/// enough that one section's own phase response cannot destabilise a
+/// unison group. See the note below for why "stable" alone (the original
+/// reason for this margin) was not the same as "safe".
+///
+/// # Why `0.9` was not safe, even though it never diverged
+///
+/// A single allpass section is magnitude-preserving at every frequency for
+/// any `|coefficient| < 1` — that is the whole point of the structure, and
+/// it is why this cascade cannot itself lose energy. But its *phase*
+/// response grows arbitrarily steep as the coefficient approaches the unit
+/// circle: [`Section::phase_delay_at_dc`] is `19` samples at a coefficient
+/// of `-0.9`, against `4` samples at `-0.5`. Steep phase response means
+/// high sensitivity to small frequency changes — and `crate::unison`
+/// detunes a note's own unison strings from each other by a few cents for
+/// exactly the beating a real piano has.
+///
+/// [`section_count`] computes exactly `1` active section for roughly
+/// C#5-B5 (554-988 Hz) — the docs already call this "0-1" a soft boundary
+/// — and a struck note there with high enough inharmonicity clamped its
+/// one section's coefficient to `-0.9`. That one section's steep phase
+/// response, applied to three strings a few cents apart, was enough to
+/// spin their post-dispersion signals out of phase with each other within
+/// a handful of round trips. `crate::unison::UnisonGroup`'s local blend
+/// assumes "same note, coupled with no latency, so the difference term is
+/// genuinely small" (`crate::string::PluckedString::write_mixed_feedback`'s
+/// own doc comment) — once the three strings' dispersed signals stopped
+/// being genuinely close, blending them fed each string a partly
+/// self-cancelling signal every round trip, an unbounded, compounding loss
+/// nothing about `sustain` predicts or accounts for.
+///
+/// Measured, at A5 (the worst point in that band — the highest
+/// inharmonicity within the single-section region): a trichord's RMS fell
+/// from `0.14` to numerically silent within six 20 ms windows (about
+/// 120 ms), while the same note plucked as a monochord (no detuning to
+/// diverge against) rang normally. At `0.8`, swept across the whole
+/// affected band (G5 through B5), every trichord decays smoothly instead
+/// — see `piano-audio`'s `report_a5_unison_group_decay_in_isolation` and
+/// `crate::unison::tests::a_high_inharmonicity_trichord_in_the_single_
+/// dispersion_section_band_does_not_collapse`. `0.8` was chosen as the
+/// smallest reduction from `0.9` that closed the gap with margin across
+/// that whole band, not the smallest one that merely fixed A5 itself.
+const MAX_COEFFICIENT: f32 = 0.8;
 
 /// Scales `B` into a per-section allpass coefficient.
 ///

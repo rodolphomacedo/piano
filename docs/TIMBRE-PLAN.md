@@ -86,17 +86,159 @@ targets; weighting H1 higher, or adding a fourth partial, tightens it. Do
 not treat the table above as final values — treat it as proof the solve
 converges.
 
-### D3 — The soundboard is inaudible, and absent above 200 Hz.
-
-Measured impulse response of `Soundboard` alone: peak **0.015** for a unit
-impulse, spectral centroid pinned at **170 Hz** for its whole life, fully
-decayed by 1.5 s. Mixing it in moves a note's centroid from 1145 Hz to
-1081 Hz — a 6% change.
+### D3 — The soundboard is absent above 200 Hz.
 
 `DEFAULT_MODES` is 8 modes, the highest at 1400 Hz. A real soundboard has
 hundreds, well past 5 kHz, and is a large part of why a piano sounds like a
-wooden box rather than a wire. The instrument currently has effectively no
-body.
+wooden box rather than a wire. The instrument has effectively no body above
+the low mid-range.
+
+> **This entry originally opened "the soundboard is inaudible", on the
+> strength of its impulse response peaking at 0.015 for a unit impulse and a
+> mixed-in centroid moving only 6%. Both numbers were real and the conclusion
+> drawn from them was wrong** — see D8. A very narrow resonator has a *small*
+> impulse peak and an enormous *steady-state* gain at its own frequency, and
+> a spectral centroid is a poor detector of a handful of loud, narrow,
+> low-frequency tones sitting under a broadband note. The soundboard was in
+> fact about 30 dB too loud. The scope this entry hands to F3 — more modes,
+> reaching higher — is unchanged; the "inaudible" framing is not.
+
+### D8 — *Bug*: soundboard mode gain is not normalised, and the modes ring like bells. *(the reported "metallic knocking" in the mid register)*
+
+Found after F1 shipped, from a second listener report: *"the mid-register
+strings still sound bad; something metallic is knocking."* Reproduce with:
+
+```sh
+cargo test --release -p piano-audio --test soundboard_ring_diagnostic -- --nocapture --test-threads=1
+```
+
+**D8a — `Resonator::new` did the opposite of what it documented.** Its
+`input_gain` line claimed `gain * (1 - radius)` "normalises the resonator's
+peak steady-state gain to roughly `gain`". Measured, driving each mode with
+a unit sine at its own resonant frequency:
+
+| mode | asked for | delivered | error |
+|---|---|---|---|
+| 80 Hz | 1.00 | **47.75** | +34 dB |
+| 130 Hz | 0.80 | 23.51 | +29 dB |
+| 420 Hz | 0.50 | 4.55 | +19 dB |
+| 1400 Hz | 0.25 | 0.69 | +9 dB |
+
+A two-pole resonator's peak is `g / ((1-r)·|1 - r·e^{-j2θ}|)`. Dividing out
+`(1 - r)` alone leaves `1/|1 - r·e^{-j2θ}|` ≈ `1/(2·sin θ)` standing in the
+signal path — a boost that grows without limit as the mode frequency falls.
+Every note therefore carried a fixed low thump louder than its own
+fundamental: measured on A4, the 80 Hz mode came out **+13.4 dB above that
+note's own H1**.
+
+**D8b — the mode table was a bell, not a wooden box.** `Q = π·f·τ` for the
+shipped decay times:
+
+| | Q |
+|---|---|
+| ribbed spruce soundboard (`η` ≈ 0.02-0.05) | 20-50 |
+| shipped table | **302 … 1100** |
+
+−3 dB bandwidths of 0.27 Hz to 1.27 Hz: eight essentially pure sine
+oscillators at fixed pitches, ringing for up to 1.2 s under every note. Where
+one landed near a partial, the two beat audibly — the 420 Hz mode sits **81
+cents** from A4's fundamental, giving a 20 Hz beat. That beating is the
+reported *knocking*, and it is worst in the mid register because that is
+where modes 280/420/650/950 lie.
+
+Fraction of measured energy sitting at mode frequencies rather than at the
+note's own partials, A4:
+
+| | t=0 | t=1s |
+|---|---|---|
+| string alone | 11% | 8% |
+| **+ soundboard, before** | **90%** | 23% |
+| + soundboard, after | 33% | 8% |
+
+**Fixed.** `soundboard::resonant_peak_reciprocal` divides out both factors
+exactly, and `DEFAULT_MODES` now derives every decay time from one stated
+`DEFAULT_MODE_Q = 30` rather than eight hand-typed numbers, so the table
+cannot drift back into bell territory unnoticed. `MIN_DECAY_SECONDS` dropped
+from 10 ms to 0.1 ms, which was silently clamping any heavily damped mode
+above about 1 kHz back into ringing. Guarded by four tests in
+`piano_core::soundboard`; the two gain tests were confirmed to fail against
+the old normalisation before being kept.
+
+**Not fixed here, and still F3's:** with the gain honest, 8 modes topping out
+at 1400 Hz is a small body. That is the same scope D3 hands to F3
+(issue #78) — now an enhancement rather than a correction.
+
+### D9 — *Bug*: `piano studio --midi` silently discarded every control change.
+
+`crates/piano-cli/src/studio.rs` carried its own copy of `crate::midi`'s
+event mapping. The copy handled note-on and note-off and ended with
+`MidiEvent::ControlChange { .. } => {}`. The sustain pedal — CC64, the
+control a pianist uses most after the keys — therefore worked under
+`piano midi` and did **nothing at all** under `piano studio --midi`, with no
+error and no log line, alongside the brightness knob (CC74) and the mod
+wheel (CC1).
+
+**Why no test caught it.** Every MIDI test this project had stopped at
+`piano_midi::parse` (wire format) or `select_index` (port choice). The
+mapping from a decoded event to the engine call it should make was covered
+by nothing, in either subcommand, because `AudioSession` needs a real output
+device and no CI machine has one.
+
+**Fixed.** `crate::sink::NoteSink` is that mapping's boundary: `AudioSession`
+implements it in production and a recorder implements it under test, so
+`studio` now calls `crate::midi::apply` rather than copying it. Fifteen tests
+drive the chain from **raw MIDI bytes** — the actual wire format — through
+the real decoder to the recorded engine calls: note-on, note-off, the
+zero-velocity note-off idiom, chords, all 16 channels, all 88 keys, every
+velocity from 1 to 127, the CC64 threshold at exactly 63/64, CC74's
+inversion, CC1, unmapped controllers, pitch bend / program change /
+aftertouch / clock being dropped rather than misread, and truncated messages
+not panicking on the driver's callback thread.
+
+### D10 — *Bug*: a trichord collapses to silence within ~120 ms across G5-B5, the worst of it at A5. *(the reported "hitting a tin can with a muffled iron")*
+
+Found from a third listener report, after D8/D9 shipped: A5 specifically
+still sounded broken. Reproduce with:
+
+```sh
+cargo test --release -p piano-audio --test timbre_diagnostic report_a5_unison_group -- --nocapture
+cargo test -p piano-core --lib unison::tests::a_high_inharmonicity_trichord
+```
+
+**Root cause.** `dispersion::section_count` computes exactly **one** active
+allpass section for roughly C#5-B5 (554-988 Hz) — the module docs already
+call "0-1 sections" a soft boundary there. A single allpass section is
+magnitude-preserving at every frequency for any coefficient short of the
+unit circle (that is the whole point of the structure), but its *phase*
+response grows arbitrarily steep as the coefficient approaches it: at the
+old `MAX_COEFFICIENT = 0.9`, one section's phase delay at DC is 19 samples,
+against 4 samples at `0.5`. A5's solved inharmonicity (0.0345) clamped its
+one section to exactly that steep coefficient. Steep phase response means
+high sensitivity to small frequency differences — and `UnisonGroup` detunes
+a note's own 1-3 strings by a few cents for the beating a real piano has.
+Three strings a few cents apart, each individually stable, span out of
+phase with each other within a handful of round trips once dispersed
+through that one steep section. `UnisonGroup`'s local blend assumes "same
+note, coupled with no latency, so the difference term is genuinely small" —
+once that stopped being true, the blend fed each string a partly
+self-cancelling signal on every round trip: an unbounded, compounding loss
+`sustain` never predicted or accounted for.
+
+Measured: A5's trichord RMS fell from `0.14` to numerically silent within
+six 20 ms windows (~120 ms). The **same note plucked as a monochord** — one
+string, nothing to diverge against — decayed completely normally, which is
+what rules out the loop filter, `sustain`, or the dispersion coefficient
+itself as the cause. A4, A6 and C8's trichords were all measured and found
+healthy — this is specific to the single-section band, not unison strings
+in general.
+
+**Fixed.** `dispersion::MAX_COEFFICIENT` lowered from `0.9` to `0.8` — swept
+across the whole affected band (G5 through B5) to confirm every trichord in
+it decays smoothly afterward, not just A5. Guarded by
+`piano_core::unison::tests::a_high_inharmonicity_trichord_in_the_single_
+dispersion_section_band_does_not_collapse`, confirmed to fail at the old
+value before being kept, plus the `piano-audio` diagnostic above kept as a
+permanent measurement across G5-B5 and the healthy neighbours (A4, A6, C8).
 
 ### D4 — The excitation is white noise, not a hammer.
 
@@ -156,11 +298,34 @@ every phase in Part 1.
 ### Part 1 — Make it sound like a piano
 
 **F1. Per-partial decay targets, and a three-unknown solve.** *(the big one)*
-Replace `loop_filter_coefficients`' single-constraint bisection with a solve
-for (`pole`, `zero_mix`, `sustain`) against per-partial decay targets. Add
-`brightness_decay_seconds` (H8's target) and a mid-partial target to the
-register anchors. Expected: A4 goes from `H1=2.4s, H8=0.17s` to
-`H1≈9s, H8≈1.5s`. Gate: the decay table in D1 moves toward the D2 table.
+**Done** — `voicing::solve_loop_losses`, issue #76. The single-constraint
+bisection is gone; each key now carries three decay targets (its
+fundamental's, its 3rd partial's and its 8th's) and `pole`, `zero_mix` and
+`sustain` are fitted against them by a bounded search with a closed-form
+inner solve. Measured against D1's own table, seconds to −20 dB:
+
+| key | H1 before → after | H8 before → after | H1:H8 before → after |
+|---|---|---|---|
+| A0 | 8.87 → 8.53 | 7.51 → **1.54** | 1.18 → **5.54** |
+| A2 | 5.80 → 5.63 | 0.85 → 0.85 | 6.8 → 6.6 |
+| A4 | 2.39 → 2.56 | 0.17 → **0.34** | 14.1 → **7.5** |
+
+A0 is the result that matters: partials no longer decay together, which was
+the *metallic* half of the report. A4's spectral centroid now keeps falling
+across the whole note (2308 → 737 → 565 → 507 → 482 → 469 Hz over five
+seconds) instead of collapsing to the fundamental inside one second and
+sitting there.
+
+Two notes on reading those numbers. The diagnostic measures a 20 dB drop
+while the solve targets 80 dB, so a measured figure is about a quarter of
+the analytic one — A0's analytic H1 is 33.9 s and it measures 8.53 s. And
+A4's H8 at 0.34 s is not the `≈1.5 s` this entry originally predicted
+*measured*; its analytic value is 1.42 s, on target. The gap between the two
+is F2's, not F1's: an excitation that never put energy into H2 (−57 dB) and
+H3 (−76 dB) leaves the filter's now-correct slope with almost nothing to act
+on. Achieved coefficients and per-partial times per register are in
+`docs/PHYSICS.md`, "Why the loop is solved against three decay times, not
+one".
 
 **F2. Deterministic hammer pulse + strike position.** Replace the noise
 excitation with the contact force itself injected at a strike position
@@ -189,9 +354,30 @@ achieves.
 
 ### Part 2 — Make everything configurable
 
-**P1. Fix D5 first.** Wire the `registers` block into resolution so the
-cascade documented in `docs/PARAMETER-STUDIO.md` is real. This is a bug fix,
-not a feature, and every later parameter depends on the tier working.
+**P1. Fix D5 first.** **Done.** Wire the `registers` block into resolution so
+the cascade documented in `docs/PARAMETER-STUDIO.md` is real. This was a bug
+fix, not a feature, and every later parameter depends on the tier working.
+
+`piano_audio::voicing::voicing_for_key_with_registers` generalises the
+built-in three-anchor curve so a file's `registers.bass`/`mid`/`treble` can
+override each anchor's position (`anchor_midi`), fundamental decay target
+(`decay_seconds`) and inharmonicity — all blended into the same curve the
+built-in anchors always used, with `RegisterOverrides::default()` proven to
+reproduce `voicing_for_key`'s output exactly (regression-tested per key).
+`damping` is handled differently: it is normally a *solved output*, not an
+independent anchor value, so an override pins only the one key exactly at
+that anchor's resolved position rather than inventing a blended curve for a
+value the physics doesn't anchor independently — documented on
+`RegisterAnchorOverride::damping`. `piano-studio::resolve` now calls this
+instead of the plain `voicing_for_key`, closing the reported gap: *"a user
+who edits `decay_seconds`, `damping` or `inharmonicity` in their piano file
+gets silence — no error, no effect."* Guarded by 8 tests in
+`piano_audio::voicing` (including a totality proptest over garbage
+`anchor_midi`/`NaN`/`±∞` overrides) and 6 in `piano_studio::resolve`
+(including cascade precedence — a `strings[]` entry still outranks a
+register — and that an empty `registers` block resolves identically to the
+built-in anchors). Two of the `resolve` tests were confirmed to fail against
+the old `voicing_for_key`-only call before being kept.
 
 **P2. Move every value in D6's table out of `const` and into the cascade.**
 Instrument tier for the global ones (soundboard mix, limiter threshold,
@@ -243,7 +429,7 @@ Every item above is a GitHub issue, ordered by priority label.
 
 | Milestone | Issue | Plan item | Priority |
 |---|---|---|---|
-| M16 — Make it sound like a piano | [#76](https://github.com/rodolphomacedo/piano/issues/76) Loop filter solved against the wrong constraint | F1 | 1 — critical |
+| M16 — Make it sound like a piano | [#76](https://github.com/rodolphomacedo/piano/issues/76) Loop filter solved against the wrong constraint — **done** | F1 | 1 — critical |
 | M16 | [#77](https://github.com/rodolphomacedo/piano/issues/77) Replace the white-noise excitation with a hammer pulse | F2 | 1 — critical |
 | M16 | [#32](https://github.com/rodolphomacedo/piano/issues/32) Model strike position and its comb filtering | F2 / F4 | 1 — critical |
 | M16 | [#78](https://github.com/rodolphomacedo/piano/issues/78) The soundboard is inaudible above 200 Hz | F3 | 1 — critical |
@@ -264,4 +450,10 @@ Documentation that must be updated as these close — tracked in #80, listed
 here so it is not forgotten: `docs/PHYSICS.md`, this file,
 `docs/PARAMETER-STUDIO.md`, and the pt-BR teaching material
 (`docs/pt-BR/COMO-FUNCIONA.md` and the `.tex`/`.pdf` it generates), which
-currently describes an excitation and a loop filter that F1 and F2 replace.
+still describes an excitation that F2 replaces.
+
+F1's share of that is done: `docs/PHYSICS.md` gained "Why the loop is solved
+against three decay times, not one", and the pt-BR material gained the
+matching lesson section in both the `.md` and the `.tex`. **The `.pdf` has
+not been rebuilt** — no LaTeX toolchain was available on the machine that
+made the edit, so `COMO-FUNCIONA.pdf` is one revision behind its `.tex`.

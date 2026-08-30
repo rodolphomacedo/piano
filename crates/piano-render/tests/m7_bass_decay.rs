@@ -19,15 +19,20 @@
 //!
 //! `piano-render` does not depend on `piano-audio` (`docs/ARCHITECTURE.md`:
 //! dependencies point one way, and `piano-audio` is the crate closer to the
-//! platform, not the other way round). The bass sustain/damping figures
-//! used here are `piano_audio::voicing`'s own `BASS_DECAY_SECONDS` (35 s,
-//! the middle of `docs/PHYSICS.md`'s 30-40 s row for A0) and `BASS_DAMPING`
-//! (0.6), converted through the same closed-form
-//! `sustain_for_decay_seconds` derivation that module already uses and
-//! documents — copied rather than imported, so this test exercises the same
-//! real-world parameters the engine actually voices A0 with, not the
-//! crate's own generic `StringConfig::new` default (whose `sustain` targets
-//! no particular decay time at all).
+//! platform, not the other way round). The three loop coefficients used
+//! here are the ones `piano_audio::voicing::solve_loop_losses` actually
+//! solves A0 to at 48 kHz, printed by that module's own
+//! `report_the_solved_voicing_at_each_anchor` — copied rather than
+//! imported, so this test exercises the same real-world parameters the
+//! engine actually voices A0 with, not the crate's own generic
+//! `StringConfig::new` default (whose `sustain` targets no particular decay
+//! time at all).
+//!
+//! They are a snapshot, not a derivation: if the register anchors move, the
+//! numbers below go stale and should be re-copied from that report. What
+//! this test measures — whether `f32` can carry a 60-second decay without
+//! stalling — does not depend on their exact values, only on their being a
+//! real bass voicing rather than a default one.
 
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
@@ -38,31 +43,20 @@ const SAMPLE_RATE_HZ: f32 = 48_000.0;
 const A0_HZ: f32 = 27.5;
 const RENDER_SECONDS: f32 = 60.0;
 
-/// `piano_audio::voicing::BASS_DECAY_SECONDS` (35 s, middle of
-/// `docs/PHYSICS.md`'s 30-40 s row for A0).
-const BASS_DECAY_SECONDS: f32 = 35.0;
-/// `piano_audio::voicing::BASS_DAMPING`.
-const BASS_DAMPING: f32 = 0.6;
+/// The loop-filter pole `solve_loop_losses` gives A0 at 48 kHz.
+const BASS_POLE: f32 = 0.914_52;
+/// The loop-filter zero mix it gives A0 at the same rate.
+const BASS_ZERO_MIX: f32 = 0.448_18;
+/// The broadband round-trip gain it gives A0 at the same rate.
+const BASS_SUSTAIN: f32 = 0.990_982;
 /// `piano_audio::voicing::BASS_INHARMONICITY`.
 const BASS_INHARMONICITY: f32 = 0.000_1;
-/// `piano_core::string::SILENCE_THRESHOLD` — copied because it is not `pub`
-/// re-exported at the crate root under that name for a downstream renderer
-/// to import; the same closed form `piano_audio::voicing::
-/// sustain_for_decay_seconds` derives its target from.
-const SILENCE_THRESHOLD: f32 = 1e-4;
-
-/// Same closed form as `piano_audio::voicing::sustain_for_decay_seconds` —
-/// see that function's doc comment for the derivation from the waveguide
-/// loop's own geometry.
-fn sustain_for_decay_seconds(decay_seconds: f32, frequency: f32) -> f32 {
-    let round_trips = (frequency * decay_seconds).max(1.0);
-    (SILENCE_THRESHOLD.ln() / round_trips).exp().clamp(0.0, 1.0)
-}
 
 fn bass_voicing() -> StringConfig {
     let mut config = StringConfig::new(Hz::new(A0_HZ).expect("A0 is a valid frequency"));
-    config.damping = BASS_DAMPING;
-    config.sustain = sustain_for_decay_seconds(BASS_DECAY_SECONDS, A0_HZ);
+    config.damping = BASS_POLE;
+    config.sustain = BASS_SUSTAIN;
+    config.loop_zero_mix = BASS_ZERO_MIX;
     config.inharmonicity = BASS_INHARMONICITY;
     config
 }

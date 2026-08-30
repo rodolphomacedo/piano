@@ -21,7 +21,7 @@
 
 use piano_audio::voicing::config_for_key;
 use piano_core::string::PluckedString;
-use piano_core::{SampleRate, Soundboard};
+use piano_core::{SampleRate, Soundboard, UnisonGroup};
 use piano_params::{PianoKey, Tuning};
 use rustfft::{FftPlanner, num_complex::Complex32};
 
@@ -143,7 +143,12 @@ fn report_per_harmonic_decay_across_the_keyboard() {
     println!("\n=== PER-HARMONIC DECAY (seconds to -20 dB from that partial's own peak) ===");
     println!("A real piano: H8 should die several times faster than H1.\n");
 
-    for (name, midi, seconds) in [("A0", 21u8, 20.0f32), ("A2", 45, 12.0), ("A4", 69, 8.0)] {
+    for (name, midi, seconds) in [
+        ("A0", 21u8, 20.0f32),
+        ("A2", 45, 12.0),
+        ("A4", 69, 8.0),
+        ("A5", 81, 6.0),
+    ] {
         let samples = render(midi, seconds, false);
         let fundamental = PianoKey::from_midi(midi)
             .expect("key")
@@ -161,6 +166,46 @@ fn report_per_harmonic_decay_across_the_keyboard() {
             }
         }
         println!();
+    }
+}
+
+/// Isolates whether the reported A5 collapse comes from unison combination
+/// (3 detuned strings blended together) rather than the string/dispersion
+/// layer `report_per_harmonic_decay_across_the_keyboard` already measures
+/// as reasonable in isolation. Bridge-free (`UnisonGroup::process`), no
+/// soundboard: exactly the local 3-string blend and nothing else.
+#[test]
+fn report_a5_unison_group_decay_in_isolation() {
+    const STEP: usize = (SAMPLE_RATE_HZ * 0.02) as usize;
+
+    let tuning = Tuning::default();
+    for (name, midi) in [
+        ("A4", 69u8),
+        ("G5", 79),
+        ("G#5", 80),
+        ("A5", 81),
+        ("A#5", 82),
+        ("B5", 83),
+        ("A6", 93),
+        ("C8", 108),
+    ] {
+        let key = PianoKey::from_midi(midi).expect("key is real");
+        let config = config_for_key(key, tuning, sample_rate());
+        for (label, count) in [("1 string", 1), ("3 strings (trichord)", 3)] {
+            println!("\n=== {name} UNISON GROUP, {label} — RMS per 20ms ===");
+            let mut group = UnisonGroup::new(config, count, sample_rate()).expect("key is tunable");
+            group.pluck(0.8);
+
+            let mut buffer = [0.0f32; STEP];
+            for _ in 0..25 {
+                for sample in &mut buffer {
+                    *sample = group.process();
+                }
+                let rms = (buffer.iter().map(|s| s * s).sum::<f32>() / buffer.len() as f32).sqrt();
+                print!("{rms:.4} ");
+            }
+            println!();
+        }
     }
 }
 

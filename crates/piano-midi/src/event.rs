@@ -31,6 +31,21 @@ pub enum MidiEvent {
     },
 }
 
+impl MidiEvent {
+    /// Decodes one raw MIDI message, exactly as it arrives from the driver.
+    ///
+    /// Public so a caller downstream of this crate can be tested against the
+    /// bytes a real controller sends, rather than against hand-built
+    /// [`MidiEvent`]s: that leaves only the audio device faked, and closes
+    /// the gap where the wire format was covered and everything it fed was
+    /// not. Returns `None` for messages this synthesiser does not act on —
+    /// see [`parse`] for which, and why that is not an error.
+    #[must_use]
+    pub fn decode(message: &[u8]) -> Option<Self> {
+        parse(message)
+    }
+}
+
 /// Scales a 7-bit MIDI data byte (`0..=127`) into `[0.0, 1.0]`.
 #[inline]
 fn normalize(data: u8) -> f32 {

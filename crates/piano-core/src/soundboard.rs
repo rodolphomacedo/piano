@@ -41,7 +41,7 @@
 //! above, with higher, more heavily damped modes filling in above that) —
 //! not measurements of one specific real instrument, and not fit to any
 //! recording, honestly labelled the same way `piano_audio::voicing`'s
-//! `BASS_DAMPING`/`TREBLE_DAMPING` already are for exactly the same reason:
+//! per-partial decay anchors already are for exactly the same reason:
 //! this project has no per-instrument measurement to calibrate against and
 //! says so rather than presenting a guess as data.
 //!
@@ -54,7 +54,7 @@
 //! `θ = 2π·f/fs` and `r = exp(-1 / (τ·fs))` so the impulse response's
 //! envelope decays to `1/e` in exactly `τ` seconds — the same
 //! decay-time-to-coefficient derivation style `piano_audio::voicing`'s
-//! `sustain_for_decay_seconds` already uses for the string loop, applied
+//! `solve_loop_losses` already uses for the string loop, applied
 //! here to a resonant filter instead of a delay-line loop gain.
 
 use crate::{math, units::SampleRate};
@@ -65,9 +65,41 @@ use crate::{math, units::SampleRate};
 /// "faithful" is the expected, accepted cost of modal synthesis.
 pub const MODE_COUNT: usize = 8;
 
-/// Shortest decay time accepted for a mode, so a caller cannot construct a
-/// resonator whose pole radius collapses to (or past) the unit circle.
-const MIN_DECAY_SECONDS: f32 = 0.01;
+/// Shortest decay time accepted for a mode.
+///
+/// A guard against a non-positive or `NaN` decay reaching `exp(-1/(τ·fs))`,
+/// not against instability from *below*: a shorter decay gives a *smaller*
+/// pole radius, which is further inside the unit circle, and
+/// [`MAX_RADIUS`] is what holds the other end of the line. Low enough that
+/// a heavily damped high mode — [`DEFAULT_MODE_Q`] at 5 kHz is under 2 ms —
+/// is expressible rather than being silently clamped into ringing.
+const MIN_DECAY_SECONDS: f32 = 0.000_1;
+
+/// Quality factor every entry in [`DEFAULT_MODES`] is built at.
+///
+/// A ribbed spruce soundboard is a heavily damped structure: its modal loss
+/// factor `η` runs to roughly `0.02`-`0.05` (J. Berthaut, M. N. Ichchou &
+/// L. Jézéquel, "Piano soundboard: structural behavior…", *Applied
+/// Acoustics* 64 (2003); consistent with the modal damping in Wogram and
+/// Suzuki, cited in the module docs), giving `Q = 1/η` of about 20-50.
+///
+/// This table was previously written as hand-typed decay times which worked
+/// out to `Q` between 302 and 1100 — a struck metal bar, not a wooden box.
+/// Every note therefore rang with eight fixed, foreign, barely-damped
+/// pitches under it, and where one of them landed near a partial (the
+/// 420 Hz mode sits 81 cents from A4's fundamental) the two beat against
+/// each other. Deriving the table from one stated `Q` rather than eight
+/// independent numbers is what keeps that from silently returning.
+const DEFAULT_MODE_Q: f32 = 30.0;
+
+/// The decay time a mode at `frequency_hz` must have to reach `q`.
+///
+/// For a two-pole resonator whose envelope falls to `1/e` in `τ` seconds,
+/// `Q = π·f·τ`, so `τ = Q/(π·f)` — the same decay-time-to-coefficient
+/// derivation the module docs describe, run in the other direction.
+const fn decay_seconds_for_q(frequency_hz: f32, q: f32) -> f32 {
+    q / (core::f32::consts::PI * frequency_hz)
+}
 
 /// Highest pole radius allowed, short of the unit circle, so every
 /// resonator is stable by construction — same margin pattern as
@@ -111,48 +143,27 @@ pub struct SoundboardMode {
 /// what the running board started at, and a [`Resonator`]'s parameters
 /// cannot be read back out of its coefficients — the starting table is the
 /// only truthful thing such a surface can display.
+/// Every mode's decay time comes from [`DEFAULT_MODE_Q`] rather than being
+/// written down separately — see that constant for why.
 pub const DEFAULT_MODES: [SoundboardMode; MODE_COUNT] = [
-    SoundboardMode {
-        frequency_hz: 80.0,
-        decay_seconds: 1.2,
-        gain: 1.0,
-    },
-    SoundboardMode {
-        frequency_hz: 130.0,
-        decay_seconds: 1.0,
-        gain: 0.8,
-    },
-    SoundboardMode {
-        frequency_hz: 190.0,
-        decay_seconds: 0.8,
-        gain: 0.7,
-    },
-    SoundboardMode {
-        frequency_hz: 280.0,
-        decay_seconds: 0.6,
-        gain: 0.6,
-    },
-    SoundboardMode {
-        frequency_hz: 420.0,
-        decay_seconds: 0.5,
-        gain: 0.5,
-    },
-    SoundboardMode {
-        frequency_hz: 650.0,
-        decay_seconds: 0.4,
-        gain: 0.4,
-    },
-    SoundboardMode {
-        frequency_hz: 950.0,
-        decay_seconds: 0.3,
-        gain: 0.3,
-    },
-    SoundboardMode {
-        frequency_hz: 1_400.0,
-        decay_seconds: 0.25,
-        gain: 0.25,
-    },
+    default_mode(80.0, 1.0),
+    default_mode(130.0, 0.8),
+    default_mode(190.0, 0.7),
+    default_mode(280.0, 0.6),
+    default_mode(420.0, 0.5),
+    default_mode(650.0, 0.4),
+    default_mode(950.0, 0.3),
+    default_mode(1_400.0, 0.25),
 ];
+
+/// One entry of [`DEFAULT_MODES`], damped at [`DEFAULT_MODE_Q`].
+const fn default_mode(frequency_hz: f32, gain: f32) -> SoundboardMode {
+    SoundboardMode {
+        frequency_hz,
+        decay_seconds: decay_seconds_for_q(frequency_hz, DEFAULT_MODE_Q),
+        gain,
+    }
+}
 
 /// One mode's two-pole resonator state. See the module docs for the
 /// difference equation and its derivation.
@@ -163,6 +174,37 @@ struct Resonator {
     input_gain: f32,
     state1: f32,
     state2: f32,
+}
+
+/// The factor that makes a [`Resonator`]'s gain at its own resonant
+/// frequency come out as exactly the `gain` its caller asked for.
+///
+/// `H(z) = g / ((1 - r·e^{jθ}z⁻¹)(1 - r·e^{-jθ}z⁻¹))`. Evaluated at
+/// resonance (`z = e^{jθ}`) the first factor collapses to `1 - r` and the
+/// second to `1 - r·e^{-j2θ}`, so the peak magnitude is
+/// `g / ((1 - r)·|1 - r·e^{-j2θ}|)`. Both factors have to be divided out;
+/// this returns their product, which is multiplied in rather than divided
+/// by, so no input can produce a division at all.
+///
+/// This module used to divide out only `(1 - r)`, leaving the whole
+/// `1/|1 - r·e^{-j2θ}|` term — approximately `1/(2·sin θ)` as `r → 1` —
+/// standing in the signal path. Measured against the shipped mode table
+/// that was a gain of `47.75` where `1.0` was asked for at 80 Hz, falling
+/// to `0.69` where `0.25` was asked for at 1400 Hz: a bass-tilted boost of
+/// up to 34 dB that made every note sound a fixed low thump plus seven
+/// foreign pitches. `Resonator`'s own gain-normalisation test now measures
+/// this rather than trusting the algebra above.
+///
+/// Total: `radius <= MAX_RADIUS < 1` and `theta` is finite (its frequency is
+/// clamped before it gets here), so the result is finite and strictly
+/// positive — it is never smaller than `(1 - r)²`.
+#[inline]
+#[must_use]
+fn resonant_peak_reciprocal(radius: f32, theta: f32) -> f32 {
+    let two_theta = 2.0 * theta;
+    let real = 1.0 - radius * math::cos(two_theta);
+    let imaginary = radius * math::sin(two_theta);
+    (1.0 - radius) * math::sqrt(real * real + imaginary * imaginary)
 }
 
 impl Resonator {
@@ -184,12 +226,7 @@ impl Resonator {
         Self {
             two_r_cos_theta: 2.0 * radius * math::cos(theta),
             neg_r_squared: -(radius * radius),
-            // Normalises the resonator's peak steady-state gain to roughly
-            // `gain`, independent of how long the mode rings for — without
-            // the `(1 - r)` term a long-decaying (large `r`) mode would
-            // resonate far louder than a short one for the same `gain`,
-            // which is not what "gain" should mean to a caller.
-            input_gain: gain * (1.0 - radius),
+            input_gain: gain * resonant_peak_reciprocal(radius, theta),
             state1: 0.0,
             state2: 0.0,
         }
@@ -337,6 +374,117 @@ mod tests {
             assert!(sample.is_finite(), "sample {index} was not finite");
             assert!(sample.abs() < 8.0, "sample {index} = {sample} escaped");
         }
+    }
+
+    /// Drives one mode alone with a unit sine at `frequency_hz` and returns
+    /// the steady-state output amplitude — the resonator's actual gain,
+    /// measured rather than derived from its coefficients.
+    fn measured_gain_at(mode: SoundboardMode, frequency_hz: f32) -> f32 {
+        const RATE: f32 = 48_000.0;
+        let mut board = soundboard();
+        for index in 0..MODE_COUNT {
+            board.set_mode(
+                index,
+                SoundboardMode {
+                    gain: 0.0,
+                    ..DEFAULT_MODES[0]
+                },
+            );
+        }
+        board.set_mode(0, mode);
+
+        // Six time constants of settling puts the transient at least 300 dB
+        // down, so what is measured afterwards is steady state alone.
+        let settle = (RATE * mode.decay_seconds * 6.0) as usize + 1;
+        let omega = core::f32::consts::TAU * frequency_hz / RATE;
+        let mut peak = 0.0f32;
+        for step in 0..settle + (RATE as usize / 4) {
+            let output = board.process(math::sin(omega * step as f32));
+            if step >= settle {
+                peak = peak.max(math::abs(output));
+            }
+        }
+        peak
+    }
+
+    /// The regression test for the defect behind the report "the mid-register
+    /// strings sound bad; something metallic is knocking".
+    ///
+    /// `Resonator::new` promises a peak gain of `gain` at the mode's own
+    /// frequency. Before `resonant_peak_reciprocal` existed it delivered
+    /// `47.75` for a requested `1.0` at 80 Hz and `0.69` for a requested
+    /// `0.25` at 1400 Hz — a frequency-dependent boost of up to 34 dB, which
+    /// put a fixed low thump and seven foreign pitches under every note
+    /// played. Measured, not derived: the algebra is exactly what was wrong
+    /// before, so asserting against a rendered signal is the point.
+    #[test]
+    fn every_mode_resonates_at_the_gain_it_was_asked_for() {
+        for mode in DEFAULT_MODES {
+            let measured = measured_gain_at(mode, mode.frequency_hz);
+            let ratio = measured / mode.gain;
+            assert!(
+                (0.7..1.4).contains(&ratio),
+                "mode at {} Hz was asked for a gain of {} and resonates at {measured} \
+                 ({:+.1} dB off)",
+                mode.frequency_hz,
+                mode.gain,
+                20.0 * math::ln(ratio) / core::f32::consts::LN_10 * 2.0
+            );
+        }
+    }
+
+    /// The same promise, held across the whole range a caller can live-set —
+    /// not only at the eight frequencies the default table happens to use.
+    /// A normalisation that is right for the shipped modes and wrong
+    /// elsewhere would still ambush anyone editing a mode in the studio.
+    #[test]
+    fn the_gain_promise_holds_across_the_whole_settable_frequency_range() {
+        for frequency_hz in [20.0f32, 55.0, 110.0, 440.0, 1_000.0, 4_000.0, 9_000.0] {
+            let mode = SoundboardMode {
+                frequency_hz,
+                decay_seconds: decay_seconds_for_q(frequency_hz, DEFAULT_MODE_Q),
+                gain: 0.5,
+            };
+            let measured = measured_gain_at(mode, frequency_hz);
+            let ratio = measured / mode.gain;
+            assert!(
+                (0.7..1.4).contains(&ratio),
+                "a mode at {frequency_hz} Hz asked for gain 0.5 resonates at {measured}"
+            );
+        }
+    }
+
+    /// The other half of the same report: these are meant to be a wooden
+    /// box's resonances, not a tuned bell's. The shipped table used to work
+    /// out to `Q` between 302 and 1100; a ribbed spruce soundboard's modal
+    /// `Q` is roughly 20-50 (see [`DEFAULT_MODE_Q`]). The band is
+    /// deliberately wider than that on both sides — this guards against the
+    /// table drifting back into bell territory, not against re-voicing it.
+    #[test]
+    fn no_default_mode_rings_like_a_bell() {
+        for mode in DEFAULT_MODES {
+            let q = core::f32::consts::PI * mode.frequency_hz * mode.decay_seconds;
+            assert!(
+                (10.0..80.0).contains(&q),
+                "the mode at {} Hz has Q={q:.0}; a soundboard is 20-50, a bell is in \
+                 the hundreds or thousands",
+                mode.frequency_hz
+            );
+        }
+    }
+
+    /// `MIN_DECAY_SECONDS` must not silently turn a heavily damped high mode
+    /// into a ringing one. Clamping a 5 kHz mode's 1.9 ms decay up to the old
+    /// 10 ms floor would have quintupled its `Q` behind the caller's back.
+    #[test]
+    fn a_heavily_damped_high_mode_is_expressible_rather_than_clamped_into_ringing() {
+        let frequency_hz = 5_000.0;
+        let decay_seconds = decay_seconds_for_q(frequency_hz, DEFAULT_MODE_Q);
+        assert!(
+            decay_seconds > MIN_DECAY_SECONDS,
+            "a {DEFAULT_MODE_Q}-Q mode at {frequency_hz} Hz needs {decay_seconds}s, \
+             below the {MIN_DECAY_SECONDS}s floor"
+        );
     }
 
     #[test]

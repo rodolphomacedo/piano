@@ -861,9 +861,9 @@ C8 (agudo) & 4186~Hz & 4186 & 1--2~s \\
 
 \begin{newword}
 \nova{Honestidade sobre a tabela} Os decaimentos típicos não vêm só das
-voltas por segundo --- \texttt{damping} e \texttt{sustain} também variam
-um pouco por registro no código, calibrados para casar com a tabela
-medida em \texttt{docs/PHYSICS.md}. O ponto central continua de pé: a
+voltas por segundo --- \texttt{damping} e \texttt{sustain} são calculados
+tecla a tecla no código, para casar com a tabela medida em
+\texttt{docs/PHYSICS.md}. O ponto central continua de pé: a
 \emph{mesma} perda por volta produz decaimentos muito diferentes conforme
 a nota, só porque o número de voltas por segundo já é, sozinho, muito
 diferente.
@@ -902,6 +902,64 @@ voltas por segundo.
 \end{axis}
 \end{tikzpicture}
 \end{center}
+
+\section*{\enquote{Agudos morrem primeiro} --- mas quanto mais rápido,
+exatamente?}
+\addcontentsline{toc}{section}{\enquote{Agudos morrem primeiro} --- mas
+quanto mais rápido, exatamente?}
+
+Repare que tudo o que este capítulo disse até aqui é \emph{qualitativo}: os
+harmônicos agudos morrem antes dos graves. Isso é verdade, e é o
+comportamento certo --- mas não é uma especificação. Quanto mais rápido?
+Duas vezes? Dez vezes?
+
+Por muito tempo o projeto não respondia essa pergunta, e o preço foi alto. O
+código só exigia uma coisa de cada tecla: \emph{a fundamental tem que durar
+tantos segundos}. Isso é \textbf{uma} equação. Mas o filtro tem
+\textbf{dois} botões (o polo, que é o \texttt{damping}, e um segundo
+chamado \texttt{zero\_mix}), e o \texttt{sustain} é um terceiro. Sobrando
+botões e faltando exigências, a \emph{inclinação} do filtro --- justamente o
+que decide a velocidade de cada harmônico --- virava um efeito colateral:
+qualquer valor servia, desde que a fundamental saísse certa.
+
+O resultado medido em A0 (a nota mais grave do piano) foi este: o 8º
+harmônico morria só \textbf{1,18 vez} mais rápido que a fundamental. Numa
+corda de verdade ele morre umas \textbf{6 vezes} mais rápido. Harmônicos que
+morrem todos juntos são a assinatura acústica de um órgão ou de uma barra de
+metal percutida --- é exatamente o \enquote{som metálico} que se ouvia.
+
+A correção foi parar de pedir uma coisa e passar a pedir três, por tecla:
+quanto deve durar a \textbf{fundamental}, quanto deve durar o \textbf{3º
+harmônico} e quanto deve durar o \textbf{8º}. Aí os três botões
+(\texttt{damping}, \texttt{zero\_mix} e \texttt{sustain}) são resolvidos
+juntos contra esses três alvos, em vez de dois botões sobrando numa
+exigência só.
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+& Antes & Depois & Corda real \\
+\midrule
+A0: o 8º harmônico morre \ldots{} mais rápido que a fundamental & 1,18$\times$ & 5,5$\times$ & $\sim$6$\times$ \\
+A4: o mesmo & 14$\times$ & 7,5$\times$ & $\sim$7$\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Um detalhe que vale para qualquer nota aguda: o 8º harmônico de C8 estaria
+em 33~kHz, muito acima do agudo máximo que 48.000 amostras por segundo
+conseguem representar (capítulo~6). Para essas teclas o código escolhe o
+harmônico mais alto que ainda cabe --- em C8, por volta do 5º --- e lê o
+alvo dele na mesma curva contínua.
+
+\begin{newword}
+\nova{O que isso ainda não resolve} Decidir a velocidade com que cada
+harmônico morre não adianta nada se o harmônico nunca chegou a existir. A
+martelada do projeto ainda é um \emph{ruído} moldado, não a força de um
+martelo batendo num ponto da corda, e ruído não excita bem os harmônicos: no
+ataque de A4, o 2º harmônico está 57~dB abaixo da fundamental. Trocar essa
+excitação é o passo seguinte do plano (\texttt{docs/TIMBRE-PLAN.md}, F2).
+\end{newword}
 
 O tanto de energia que se perde a cada volta --- o valor de $a$ da fórmula
 acima --- é controlado, no código, por um parâmetro chamado

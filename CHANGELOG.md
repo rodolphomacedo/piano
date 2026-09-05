@@ -8,6 +8,33 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/), with
 one addition: every entry names the doc where the full write-up lives, since
 this project keeps its reasoning in `docs/`, not in this file.
 
+## v0.2.2
+
+**Added**
+
+- A full-`Engine` timbre regression net (`piano_audio::offline::OfflineEngine`
+  plus `crates/piano-audio/tests/engine_timbre.rs`). Every timbre diagnostic
+  before this rendered a bare string or a string + soundboard pair; none
+  rendered the engine the player actually hears, which is how the A5 trichord
+  collapse passed every test. The new path renders the real engine — unison
+  coupling, bridge bus, soundboard mix, limiter — headless, and checks each
+  key against its own solved decay intent: fundamental decay, per-partial
+  decay ratio, radiated energy early and late, and trichord vs. monochord.
+  The all-88 sweep is `#[ignore]`d for runtime; a representative slice runs
+  in the normal gate. See `docs/MODEL-REVIEW.md`, N1/P1.
+- `piano_audio::voicing::solved_decay_targets` — a key's three solved
+  `(partial, seconds)` decay targets, so a test can measure against the same
+  intent the loop-filter solve was given.
+
+**Known**
+
+- The all-88 sweep's first run showed the D10 region is not fully clear:
+  across the upper treble a trichord radiates less sustained energy than its
+  own monochord, worst at A5. It is inside the committed regression bands but
+  the closest any key comes to failing. Tracked in #92; the fix belongs to
+  the bridge/soundboard-coupling milestone, not to a second dispersion tweak.
+  See `docs/TIMBRE-PLAN.md`, D10.
+
 ## v0.2.1
 
 **Fixed**

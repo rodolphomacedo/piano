@@ -240,6 +240,17 @@ dispersion_section_band_does_not_collapse`, confirmed to fail at the old
 value before being kept, plus the `piano-audio` diagnostic above kept as a
 permanent measurement across G5-B5 and the healthy neighbours (A4, A6, C8).
 
+**Not fully cleared.** The full-`Engine` sweep added later (#87,
+`tests/engine_timbre.rs`) — which the `unison`-level diagnostics above could
+not be, since they render `UnisonGroup` without the bridge bus or soundboard
+— shows A5's trichord still radiating ~1/10th its own monochord's
+later-window energy, and its fundamental decaying ~2× fast, where every
+other key lands within 0.3–2.55× and 0.79–1.32×. Not the ~120 ms collapse
+any more, but the same signature at a tenth the severity. It sits inside
+that harness's regression bands. Tracked as **#92**; its real fix is the
+bridge/soundboard coupling work (`docs/MODEL-REVIEW.md` P4, #89), not
+another dispersion constant.
+
 ### D4 — The excitation is white noise, not a hammer.
 
 `PluckedString::write_excitation` fills the delay line with

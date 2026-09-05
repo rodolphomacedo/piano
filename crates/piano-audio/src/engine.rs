@@ -118,8 +118,30 @@ impl Engine {
     /// starts.
     #[must_use]
     pub(crate) fn new(sample_rate: SampleRate, tuning: Tuning) -> Self {
+        Self::with_unison_override(sample_rate, tuning, None)
+    }
+
+    /// [`Engine::new`], but every voice is built with `unison_override`
+    /// strings rather than [`voicing::unison_count_for_key`]'s per-key
+    /// count. `None` is the production path and what [`Engine::new`]
+    /// passes; `Some(n)` exists for the offline monochord-vs-trichord
+    /// control [`crate::offline::OfflineEngine`] renders for issue #87's
+    /// full-engine regression measurement — a key whose trichord behaves
+    /// very differently from its own monochord is the `docs/TIMBRE-PLAN.md`
+    /// D10 signature, and that comparison needs both renderings through the
+    /// real engine, not a bare [`UnisonGroup`]. `n` is passed straight to
+    /// [`UnisonGroup::new`], which clamps it to the 1-3 strings a real key
+    /// ever has.
+    #[must_use]
+    pub(crate) fn with_unison_override(
+        sample_rate: SampleRate,
+        tuning: Tuning,
+        unison_override: Option<usize>,
+    ) -> Self {
         Self {
-            voices: core::array::from_fn(|index| voice_for_key(index, sample_rate, tuning)),
+            voices: core::array::from_fn(|index| {
+                voice_for_key(index, sample_rate, tuning, unison_override)
+            }),
             pedal_down: false,
             bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
             soundboard: Soundboard::new(sample_rate),
@@ -227,7 +249,7 @@ impl Engine {
     /// construction — the same "invalid input is dropped" pattern used
     /// throughout the audio path, since the audio thread cannot report an
     /// error to anyone.
-    fn note_on(&mut self, midi: u8, velocity: f32) {
+    pub(crate) fn note_on(&mut self, midi: u8, velocity: f32) {
         let Some(voice) = self.voice_for_midi(midi) else {
             return;
         };
@@ -248,7 +270,7 @@ impl Engine {
     /// [`Engine::release_pedal_held_voices`] finishes the job once the
     /// pedal comes back up. `held` clears unconditionally, regardless of
     /// pedal state — it tracks the finger, not the sound.
-    fn note_off(&mut self, midi: u8) {
+    pub(crate) fn note_off(&mut self, midi: u8) {
         let pedal_down = self.pedal_down;
         let Some(voice) = self.voice_for_midi(midi) else {
             return;
@@ -270,7 +292,7 @@ impl Engine {
     /// releasing it releases every non-held voice, both the ones
     /// `pending_pedal_release` marked and the ones that were merely made
     /// receptive.
-    fn set_sustain_pedal(&mut self, down: bool) {
+    pub(crate) fn set_sustain_pedal(&mut self, down: bool) {
         let was_down = self.pedal_down;
         self.pedal_down = down;
         if !was_down && down {
@@ -454,7 +476,12 @@ impl Engine {
 /// by [`voicing::unison_count_for_key`] and [`voicing::config_for_key`]
 /// rather than left at one global default across all 88 keys — see the
 /// module docs of [`crate::voicing`].
-fn voice_for_key(key_index: usize, sample_rate: SampleRate, tuning: Tuning) -> Voice {
+fn voice_for_key(
+    key_index: usize,
+    sample_rate: SampleRate,
+    tuning: Tuning,
+    unison_override: Option<usize>,
+) -> Voice {
     let midi = LOWEST_PIANO_KEY.saturating_add(key_index as u8);
     let Ok(key) = PianoKey::from_midi(midi) else {
         return Voice {
@@ -464,7 +491,7 @@ fn voice_for_key(key_index: usize, sample_rate: SampleRate, tuning: Tuning) -> V
         };
     };
     let config = voicing::config_for_key(key, tuning, sample_rate);
-    let unison_count = voicing::unison_count_for_key(key);
+    let unison_count = unison_override.unwrap_or_else(|| voicing::unison_count_for_key(key));
     Voice {
         strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),
         held: false,

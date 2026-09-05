@@ -238,6 +238,25 @@ fails a test instead of waiting for someone to notice by ear.
 This is cheap. It is also the thing that stops the repeated cycle of "it is
 still bad" → fix one defect → "it is still bad".
 
+**Done (#87).** `piano_audio::offline::OfflineEngine` renders the real
+`Engine` — unison coupling, bridge bus, soundboard mix, limiter — with no
+`cpal` stream or command ring. `crates/piano-audio/tests/engine_timbre.rs`
+measures every key against its own `voicing::solved_decay_targets`:
+fundamental −20 dB time, H1/H(bright) decay ratio, early- and late-window
+RMS, and trichord-vs-monochord late energy (the same key forced to one
+string through `Engine::with_unison_override`). The all-88 sweep is
+`#[ignore]`d for runtime; a 14-key representative slice runs in the normal
+gate. Committed bands are calibrated to bracket the current 88-key
+population, so the test guards against regression rather than re-tuning.
+
+The sweep immediately earned its place: it found that the D10 region is not
+fully clear. Across the upper treble the trichord radiates less sustained
+energy than its own monochord, worst at A5 (fundamental at 0.42× its solved
+intent, trichord at 0.09× its monochord — every other key is 0.79–1.32× and
+0.3–2.55×). It is inside the committed bands but the closest any key comes
+to failing. Filed as **#92**; its real fix is P4 (and #89 / N2), not a
+second dispersion tweak.
+
 ### N2. The voicing solve and the coupling losses contradict each other
 
 `voicing.rs` solves each key's `(pole, zero_mix, sustain)` **for a string in
@@ -269,18 +288,21 @@ gain mapping, not about timbre.
 
 Ordered by what unblocks what, and by audible return per unit of risk.
 
-### P0 — Land what is already fixed
+### P0 — Land what is already fixed — **done (`9a510bb`)**
 
-Five defects are fixed and uncommitted. Nothing else should start until they
-are committed and CI is green. Closes **#76** and **#81**.
+Five defects were fixed and uncommitted. Committed in `9a510bb` with CI
+green. Closes **#76** and **#81**.
 
-### P1 — Build the measurement safety net *(N1)*
+### P1 — Build the measurement safety net *(N1)* — **done (#87)**
 
 All 88 keys, through the real `Engine`, with committed thresholds. Ranked
 first because every later item in this plan is a change to the sound, and
 right now **we have no way to tell whether a change made things better or
 worse** other than listening to one note at a time. This is the item that
 breaks the whack-a-mole cycle.
+
+Landed as `OfflineEngine` + `tests/engine_timbre.rs` — see N1 above for what
+it measures and the A5 residual (#92) it surfaced on its first run.
 
 ### P2 — Make the hammer a hammer *(claims 1 and 2)*
 

@@ -723,6 +723,36 @@ pub fn config_for_key(key: PianoKey, tuning: Tuning, sample_rate: SampleRate) ->
     config
 }
 
+/// The three `(partial index, target ring-out seconds)` pairs `key`'s loop
+/// is solved against under `tuning` at `sample_rate` — its fundamental, a
+/// mid partial and a bright partial, the same targets [`solve_loop_losses`]
+/// fits `(pole, zero_mix, sustain)` to.
+///
+/// `pub` so a full-engine regression measurement (issue #87) can check a
+/// rendered note against the intent it was voiced for, rather than against a
+/// hand-copied table that drifts as the anchors are re-tuned. Uses this
+/// module's built-in register anchors only: the `.piano.json` `registers`
+/// tier is a `piano-studio` concern (see
+/// [`voicing_for_key_with_registers`]) and has no place in a baseline the
+/// engine's own construction does not consult.
+#[must_use]
+pub fn solved_decay_targets(
+    key: PianoKey,
+    tuning: Tuning,
+    sample_rate: SampleRate,
+) -> [(f32, f32); 3] {
+    let frequency = key.frequency(tuning).hertz();
+    let targets = decay_targets_for(
+        frequency,
+        anchor_hz(LOWEST_PIANO_KEY, tuning),
+        anchor_hz(CONCERT_A_KEY, tuning),
+        anchor_hz(HIGHEST_PIANO_KEY, tuning),
+        (BASS_DECAY_SECONDS, MID_DECAY_SECONDS, TREBLE_DECAY_SECONDS),
+    );
+    solved_partials(frequency, sample_rate)
+        .map(|partial| (partial, targets.seconds_for_partial(partial)))
+}
+
 /// `midi`'s frequency under `tuning`, falling back to the tuning's own
 /// reference pitch in the unreachable case that `midi` is not a valid piano
 /// key — keeps every caller here total without needing to plumb a

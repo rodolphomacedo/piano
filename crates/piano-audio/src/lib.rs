@@ -21,6 +21,7 @@ mod denormals;
 mod engine;
 mod error;
 mod limiter;
+pub mod offline;
 mod stream;
 #[cfg(test)]
 mod tests_no_allocation;

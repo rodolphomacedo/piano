@@ -506,6 +506,68 @@ fn moving_the_strike_position_moves_the_notch() {
     );
 }
 
+#[test]
+fn re_striking_one_string_reproduces_the_attack_sample_for_sample() {
+    // Issue #77's first "done when": two strikes at the same velocity and
+    // seed produce identical attacks. The noise excitation could not — its
+    // generator advanced across the first strike, so the second drew a
+    // different burst — which is what made the attack profile unrepeatable.
+    // `write_excitation` now rewinds the generator to the string's seed on
+    // every strike.
+    let mut string = string_at(196.0);
+    let first = render_attack(&mut string, 4_096);
+    let second = render_attack(&mut string, 4_096);
+    assert_eq!(first, second, "the second strike diverged from the first");
+}
+
+#[test]
+fn a_purely_deterministic_strike_never_consults_the_noise_generator() {
+    // At `excitation_noise_mix` 0 the excitation is the contact-force pulse
+    // alone, so the seed cannot matter: two strings differing only in seed
+    // must render the same attack. Any dependence on the seed would mean
+    // noise is still leaking in.
+    let deterministic = |seed: u32| {
+        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
+        let mut config = StringConfig::new(Hz::new(196.0).expect("frequency is valid"));
+        config.seed = seed;
+        config.excitation_noise_mix = 0.0;
+        let mut string =
+            PluckedString::new(config, rate).expect("frequency is representable at 48 kHz");
+        render_attack(&mut string, 4_096)
+    };
+    assert_eq!(deterministic(0x2545_F491), deterministic(0xDEAD_BEEF));
+}
+
+#[test]
+fn set_excitation_noise_mix_changes_the_next_strike_without_affecting_the_current_one() {
+    // Same contract as `set_seed` and `set_strike_position`: a live control
+    // takes effect on the *next* strike, never a note already ringing.
+    let mut left = string_at(196.0);
+    let mut right = string_at(196.0);
+    left.pluck(0.8);
+    right.pluck(0.8);
+    for _ in 0..64 {
+        assert_eq!(left.process(), right.process());
+    }
+    right.set_excitation_noise_mix(1.0);
+    for _ in 0..64 {
+        assert_eq!(
+            left.process(),
+            right.process(),
+            "a ringing string was disturbed"
+        );
+    }
+    left.pluck(0.8);
+    right.pluck(0.8);
+    let mut differed = false;
+    for _ in 0..256 {
+        if left.process() != right.process() {
+            differed = true;
+        }
+    }
+    assert!(differed, "the mix change never reached the next strike");
+}
+
 proptest! {
     /// The stability claim `write_mixed_feedback` makes, checked rather
     /// than argued: for *any* `sustain` and *any* coupling weight in
@@ -642,6 +704,25 @@ proptest! {
         for frequency in [55.0, 220.0, 4_000.0] {
             let mut string = harmonic_string_struck_at(frequency, 0.125);
             string.set_strike_position(strike_position);
+            string.pluck(1.0);
+            for _ in 0..2_000 {
+                let sample = string.process();
+                prop_assert!(sample.is_finite());
+                prop_assert!(sample.abs() < 4.0, "sample {sample} escaped at {frequency} Hz");
+            }
+        }
+    }
+
+    /// Whatever excitation noise mix a caller sets — NaN, +-infinity,
+    /// negative, far past 1 — the next strike stays finite and bounded
+    /// across the register (`CLAUDE.md` rule 5, for the mix control of
+    /// issue #77). Covers a short-period treble string too, whose
+    /// `PendingContact` continuation also blends through the same mix.
+    #[test]
+    fn any_excitation_noise_mix_never_breaks_the_string(mix in proptest::num::f32::ANY) {
+        for frequency in [55.0, 220.0, 4_000.0] {
+            let mut string = harmonic_string_struck_at(frequency, 0.125);
+            string.set_excitation_noise_mix(mix);
             string.pluck(1.0);
             for _ in 0..2_000 {
                 let sample = string.process();

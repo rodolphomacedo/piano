@@ -133,6 +133,48 @@ const MAX_STRIKE_POSITION: f32 = 0.5;
 /// voicing) keeps today's original filter character unchanged.
 pub const DEFAULT_LOOP_ZERO_MIX: f32 = 0.5;
 
+/// How much of the excitation is broadband noise rather than the hammer's
+/// own force pulse, in `[0, 1]`, at [`StringConfig::new`].
+///
+/// `0` is a purely deterministic strike — the contact force's own first
+/// difference (its `dF/dt`, the waveguide velocity-source form; see
+/// [`PluckedString::contact_force_diff_inv_peak`]) injected as the
+/// excitation signal itself, so two strikes at one velocity and seed
+/// produce spectrally identical attacks rather than the ragged,
+/// unrepeatable profile a fresh noise draw gives every strike (issue #77,
+/// `docs/TIMBRE-PLAN.md` D4). `1` is the original behaviour exactly: white
+/// noise shaped by the contact envelope.
+///
+/// The default is a roughly even split. #77's aspiration was to make the
+/// pulse the *clear* majority and keep only a trace of noise, and the two
+/// audible wins it names are already fully banked at any mix below 1: the
+/// strike is repeatable (the generator is rewound to the string's seed
+/// before every strike — the same "seeded noise for reproducible renders"
+/// the `noise` module documents, now applied per strike), and the bulk of
+/// the low/mid spectrum is the deterministic `dF/dt` pulse, not noise.
+///
+/// It does not go lower than this because the *stochastic* component still
+/// does two jobs the `dF/dt` pulse alone cannot cover across the compass.
+/// One is the velocity → brightness cue: the differentiated pulse is
+/// broadband and its slope steepens with strike force, so on a note whose
+/// period holds the whole contact that cue survives from the pulse alone,
+/// but in the treble the contact is truncated to one loop length
+/// (`PluckedString::pluck` writes no more), which flattens the pulse's
+/// velocity dependence there, and
+/// `m4_spectral::a_harder_strike_is_brighter_in_the_attack_itself` — the
+/// gate #77 names — needs the noise term shaped by
+/// `hammer::excitation_cutoff_hz` to make up the difference. The other is
+/// upper-partial energy in the bass: the pulse's spectrum rolls off well
+/// below the 8th partial of a low note, and `engine_timbre` (#87) checks
+/// that H8 of A2 still rings a measurable fraction as long as its
+/// fundamental rather than dying inside one analysis window. Both bind
+/// around here — the bass check wants more noise, the treble brightness
+/// gate is satisfied by less — so this sits at the low end of what keeps
+/// every timbre gate green. Once the treble truncation is fixed the pulse
+/// can carry more of the load and this can drop toward the trace #77
+/// wanted; `voicing`'s F6 re-tune (#80) is where to move it by ear.
+pub const DEFAULT_EXCITATION_NOISE_MIX: f32 = 0.6;
+
 /// Tunable properties of a struck string.
 #[derive(Debug, Clone, Copy)]
 pub struct StringConfig {
@@ -163,6 +205,10 @@ pub struct StringConfig {
     /// a node at the strike point — the `1/strike_position` harmonic and its
     /// multiples. `0` disables the comb. See [`DEFAULT_STRIKE_POSITION`].
     pub strike_position: f32,
+    /// Fraction of the excitation that is broadband noise rather than the
+    /// deterministic hammer force pulse, in `[0, 1]`. See
+    /// [`DEFAULT_EXCITATION_NOISE_MIX`].
+    pub excitation_noise_mix: f32,
 }
 
 impl StringConfig {
@@ -178,6 +224,7 @@ impl StringConfig {
             hammer: hammer::DEFAULT_HAMMER,
             loop_zero_mix: DEFAULT_LOOP_ZERO_MIX,
             strike_position: DEFAULT_STRIKE_POSITION,
+            excitation_noise_mix: DEFAULT_EXCITATION_NOISE_MIX,
         }
     }
 }
@@ -246,6 +293,22 @@ pub struct PluckedString {
     /// guessed at, the fix that replaced the inline array with this `Box`
     /// exists because the array version crashed a real test run.
     contact_force: Box<[f32; hammer::MAX_CONTACT_SAMPLES]>,
+    /// `1 / max|Δcontact_force|` for the current strike, set by
+    /// [`PluckedString::write_excitation`]; `0.0` for a contact too short to
+    /// have a slope. The deterministic part of the excitation is the force
+    /// pulse's first difference scaled by this, so it peaks near unit
+    /// amplitude whatever the contact's duration — a bass strike's
+    /// 400-sample pulse and a treble strike's 50-sample one differentiate to
+    /// very different raw slopes. Differentiating is also what makes the
+    /// deterministic excitation broadband (a smooth pulse's derivative
+    /// carries the high-frequency energy the velocity-dependent lowpass then
+    /// shapes) and exactly DC-free (a telescoping sum), so a unipolar pulse
+    /// never builds a standing offset in the near-lossless treble. It is the
+    /// waveguide velocity-source form: a string is driven by `dF/dt` at the
+    /// contact, not by `F` (Van Duyne & Smith, "Developments for the
+    /// Commuted Piano", ICMC 1995; Bank, "Physically Informed Sound
+    /// Synthesis of the Piano", 2000).
+    contact_force_diff_inv_peak: f32,
     /// Samples per cycle at this string's fixed frequency. `frequency`
     /// itself is only live-adjustable within [`MAX_LIVE_DETUNE_CENTS`] of the
     /// frequency `PluckedString::new` reserved delay-line headroom for (see
@@ -277,6 +340,36 @@ pub struct PluckedString {
     /// to size the strike-position comb; live-adjustable for the *next*
     /// strike via [`PluckedString::set_strike_position`].
     strike_position: f32,
+    /// This string's excitation noise seed. Kept alongside `rng` so
+    /// [`PluckedString::write_excitation`] can rewind the generator to it on
+    /// every strike — a strike at a given velocity and seed is then
+    /// byte-identical however many times the voice has been re-plucked,
+    /// which is what makes the deterministic-pulse claim of issue #77
+    /// testable. [`PluckedString::set_seed`] moves both together.
+    seed: u32,
+    /// Fraction of the excitation that is broadband noise rather than the
+    /// deterministic hammer force pulse, clamped into `[0, 1]`. Read by
+    /// [`PluckedString::write_excitation`] and [`PluckedString::next_contact_sample`];
+    /// live-adjustable for the *next* strike via
+    /// [`PluckedString::set_excitation_noise_mix`]. See
+    /// [`DEFAULT_EXCITATION_NOISE_MIX`].
+    excitation_noise_mix: f32,
+}
+
+/// `1 / max|force[i] − force[i−1]|` over the first `active` entries of
+/// `force`, or `0.0` when `active` is `0` or the contact is flat (no
+/// slope). Used by [`PluckedString::write_excitation`] to normalise the
+/// differentiated excitation to roughly unit peak whatever the contact's
+/// duration — see [`PluckedString::contact_force_diff_inv_peak`].
+fn diff_inv_peak_of(force: &[f32; hammer::MAX_CONTACT_SAMPLES], active: usize) -> f32 {
+    let active = active.min(force.len());
+    let earlier = force.iter().take(active);
+    let later = force.iter().take(active).skip(1);
+    let peak = earlier
+        .zip(later)
+        .map(|(a, b)| math::abs(b - a))
+        .fold(0.0f32, f32::max);
+    if peak > f32::EPSILON { 1.0 / peak } else { 0.0 }
 }
 
 impl PluckedString {
@@ -330,8 +423,10 @@ impl PluckedString {
             dispersion,
             dc_blocker: DcBlocker::default(),
             rng: Xorshift32::new(config.seed),
+            seed: config.seed,
             pending_contact: None,
             contact_force: Box::new([0.0; hammer::MAX_CONTACT_SAMPLES]),
+            contact_force_diff_inv_peak: 0.0,
             period,
             loop_delay,
             sustain: math::clamp_or_low(config.sustain, 0.0, 1.0),
@@ -351,6 +446,7 @@ impl PluckedString {
             sample_rate: sample_rate.hertz(),
             hammer: config.hammer,
             strike_position: math::clamp_or_low(config.strike_position, 0.0, MAX_STRIKE_POSITION),
+            excitation_noise_mix: math::clamp_or_low(config.excitation_noise_mix, 0.0, 1.0),
         })
     }
 
@@ -410,9 +506,12 @@ impl PluckedString {
     }
 
     /// Reseeds the excitation noise used by the *next* [`PluckedString::pluck`].
-    /// A string already ringing is unaffected, since its noise burst was
-    /// already drawn.
+    /// A string already ringing is unaffected, since its excitation was
+    /// already written. Stores the seed as well as reseeding, so
+    /// [`PluckedString::write_excitation`]'s per-strike rewind uses the new
+    /// value on every future strike, not just the next one.
     pub fn set_seed(&mut self, seed: u32) {
+        self.seed = seed;
         self.rng = Xorshift32::new(seed);
     }
 
@@ -436,8 +535,19 @@ impl PluckedString {
         self.strike_position = math::clamp_or_low(strike_position, 0.0, MAX_STRIKE_POSITION);
     }
 
-    /// Excites the string with a hammer-shaped noise burst at the given
-    /// velocity.
+    /// Sets how much of the *next* strike's excitation is broadband noise
+    /// rather than the deterministic hammer force pulse. `mix` is clamped
+    /// into `[0, 1]`, `NaN` mapping to `0` (a fully deterministic strike),
+    /// the same convention every other live setter here uses. A string
+    /// already ringing is unaffected, since its excitation was already
+    /// written into the delay line. See [`DEFAULT_EXCITATION_NOISE_MIX`].
+    pub fn set_excitation_noise_mix(&mut self, mix: f32) {
+        self.excitation_noise_mix = math::clamp_or_low(mix, 0.0, 1.0);
+    }
+
+    /// Excites the string with a felt-shaped hammer force pulse at the given
+    /// velocity, blended with a broadband noise component
+    /// ([`PluckedString::excitation_noise_mix`]).
     ///
     /// `velocity` is clamped into `[0, 1]` and, via
     /// [`hammer::simulate_contact`], shapes the burst's envelope: a harder
@@ -463,20 +573,53 @@ impl PluckedString {
         self.write_excitation(velocity);
     }
 
-    /// Fills the delay line with one strike's worth of excitation: white
-    /// noise, shaped in *time* by the felt-contact force envelope, in
-    /// *frequency* by a lowpass whose corner that same contact duration
-    /// sets, and finally in *space* by the strike-position comb — the
-    /// inverted reflection from where the hammer lands, which notches the
-    /// partials with a node at the strike point (see the comb step at the
-    /// end of this method and `DelayLine::apply_strike_comb`).
+    /// Fills the delay line with one strike's worth of excitation: the
+    /// hammer contact force's first difference (`dF/dt`), shaped in *time* by
+    /// its own felt-contact envelope, blended toward an envelope-shaped
+    /// noise burst by [`PluckedString::excitation_noise_mix`] (issue #77),
+    /// shaped in *frequency* by a lowpass whose corner that same contact
+    /// duration sets, and finally in *space* by the strike-position comb —
+    /// the inverted reflection from where the hammer lands, which notches
+    /// the partials with a node at the strike point (see the comb step at
+    /// the end of this method and `DelayLine::apply_strike_comb`).
     ///
-    /// Both halves are needed and neither substitutes for the other. The
-    /// envelope alone leaves the burst spectrally flat to Nyquist however
-    /// hard the key was struck — an enveloped white noise burst has a flat
-    /// expected power spectrum regardless of the envelope's shape — which is
-    /// heard as a full-band click, wood on wood, rather than as felt. See
-    /// [`hammer::excitation_cutoff_hz`] for the measurement and the physics.
+    /// # Why the excitation is a differentiated force pulse, not a noise burst
+    ///
+    /// A real hammer delivers a deterministic force pulse, so two strikes of
+    /// one key at one velocity are spectrally the same strike. The earlier
+    /// model instead multiplied white noise by the contact envelope, giving
+    /// every partial a random amplitude and phase on every strike — a
+    /// ragged, unrepeatable attack profile (`docs/TIMBRE-PLAN.md` D4) rather
+    /// than the fixed spectral envelope a struck string has. The rng is now
+    /// rewound to [`PluckedString::seed`] before every strike, so a given
+    /// velocity and seed is byte-identical however many times the voice has
+    /// been re-plucked, and the bulk of the excitation is the force pulse
+    /// itself rather than noise.
+    ///
+    /// It is the pulse's *derivative* that is injected, not `F` raw, for two
+    /// reasons that happen to coincide. Physically, a waveguide is a
+    /// velocity source driven by `dF/dt` at the contact point (Van Duyne &
+    /// Smith, ICMC 1995; Bank 2000). Practically, `F` raw is a smooth
+    /// unipolar bump whose spectrum rolls off by `~1/contact_duration` — a
+    /// few hundred hertz — so it leaves the upper partials unexcited *and*
+    /// its velocity → brightness behaviour is swamped by the bump's own
+    /// shape; `dF/dt` is broadband, exactly DC-free, and its high-frequency
+    /// content rises with strike velocity (harder is shorter is steeper),
+    /// which is the "brighter, not merely louder" cue
+    /// [`hammer::excitation_cutoff_hz`] then sharpens. Normalised to unit
+    /// peak by [`PluckedString::contact_force_diff_inv_peak`] so its level
+    /// does not swing three registers wide with the contact duration.
+    ///
+    /// [`PluckedString::excitation_noise_mix`] keeps a *small* broadband
+    /// stochastic component: a real felt strike has one, from the felt's
+    /// surface and the string's back-reaction during contact, and removing
+    /// it entirely sounds synthetic the other way. Mix `1` reproduces the
+    /// original noise excitation exactly; mix `0` is a purely deterministic
+    /// strike.
+    ///
+    /// The *frequency* shaping still applies on top: both components pass
+    /// the lowpass, whose corner [`hammer::excitation_cutoff_hz`] moves with
+    /// strike velocity. See that function for the measurement.
     ///
     /// The lowpass is [`EXCITATION_POLES`] identical one-pole sections in
     /// series, not one: a single 6 dB/octave section leaves so much of the
@@ -509,10 +652,18 @@ impl PluckedString {
             hammer::simulate_contact(velocity, self.sample_rate, self.hammer);
         let cutoff_hz = hammer::excitation_cutoff_hz(contact_samples, self.sample_rate);
         let mut felt = [OnePoleLowpass::from_cutoff(cutoff_hz, self.sample_rate); EXCITATION_POLES];
+        self.contact_force_diff_inv_peak = diff_inv_peak_of(&contact_force, contact_samples);
+        // A given velocity and seed is one strike, every time it is played.
+        self.rng = Xorshift32::new(self.seed);
         let burst_length = self.loop_delay as usize + 1;
         for index in 0..burst_length {
             let shape = contact_force.get(index).copied().unwrap_or(0.0);
-            let excitation = self.rng.next_bipolar() * velocity * shape;
+            let prev = index
+                .checked_sub(1)
+                .and_then(|earlier| contact_force.get(earlier))
+                .copied()
+                .unwrap_or(0.0);
+            let excitation = self.blended_excitation(shape, prev) * velocity;
             let shaped = felt
                 .iter_mut()
                 .fold(excitation, |sample, stage| stage.process(sample));
@@ -544,6 +695,32 @@ impl PluckedString {
         }
     }
 
+    /// One excitation sample for contact-force envelope value `shape` and
+    /// its predecessor `prev`: the pulse's first difference
+    /// `(shape − prev)·contact_force_diff_inv_peak` — its `dF/dt`, broadband
+    /// and exactly DC-free — blended toward an envelope-shaped noise sample
+    /// by [`PluckedString::excitation_noise_mix`] (issue #77).
+    ///
+    /// `d + mix·(noisy − d)` is a convex blend: at `mix == 0` it is the
+    /// differentiated pulse, at `mix == 1` it is `rng.next_bipolar() · shape`
+    /// — the original noise excitation exactly, so a default of `1` is a
+    /// bit-for-bit no-op against it. The generator is drawn unconditionally
+    /// so its state advances by the same amount whatever the mix, keeping a
+    /// live `set_excitation_noise_mix` from desynchronising a seed.
+    ///
+    /// Total: one finite multiply-add of finite inputs
+    /// ([`Xorshift32::next_bipolar`] is bounded, `shape`/`prev` come from
+    /// [`hammer::simulate_contact`]'s `[0, 1]` output,
+    /// `contact_force_diff_inv_peak` is finite and non-negative by
+    /// construction, `excitation_noise_mix` is clamped into `[0, 1]` at
+    /// every entry point) — it cannot panic or return a non-finite value.
+    #[inline]
+    fn blended_excitation(&mut self, shape: f32, prev: f32) -> f32 {
+        let deterministic = (shape - prev) * self.contact_force_diff_inv_peak;
+        let noisy = self.rng.next_bipolar() * shape;
+        deterministic + self.excitation_noise_mix * (noisy - deterministic)
+    }
+
     /// Injects the next sample of an ongoing hammer contact
     /// ([`PendingContact`]) on top of the loop's own feedback, or `0.0` once
     /// contact has ended (or the string's last strike never needed one).
@@ -561,13 +738,18 @@ impl PluckedString {
         if contact.next_index >= contact.contact_samples {
             return 0.0;
         }
-        let noise = self.rng.next_bipolar();
         let shape = self
             .contact_force
             .get(contact.next_index)
             .copied()
             .unwrap_or(0.0);
-        let excitation = noise * contact.velocity * shape;
+        let prev = contact
+            .next_index
+            .checked_sub(1)
+            .and_then(|earlier| self.contact_force.get(earlier))
+            .copied()
+            .unwrap_or(0.0);
+        let excitation = self.blended_excitation(shape, prev) * contact.velocity;
         let shaped = contact
             .felt
             .iter_mut()

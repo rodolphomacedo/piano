@@ -501,6 +501,69 @@ fn set_soundboard_mix_gain_changes_how_much_board_reaches_the_output() {
 }
 
 #[test]
+fn set_master_gain_changes_the_output_level() {
+    let mut quiet = engine();
+    let mut loud = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+
+    producer
+        .push(Command::SetMasterGain { gain: 0.25 })
+        .expect("queue has room");
+    quiet.drain_commands(&mut consumer);
+    producer
+        .push(Command::SetMasterGain { gain: 2.0 })
+        .expect("queue has room");
+    loud.drain_commands(&mut consumer);
+
+    for engine in [&mut quiet, &mut loud] {
+        producer
+            .push(Command::NoteOn {
+                midi: 69,
+                velocity: 0.5,
+            })
+            .expect("queue has room");
+        engine.drain_commands(&mut consumer);
+    }
+
+    let mut quiet_out = [0.0f32; 512];
+    let mut loud_out = [0.0f32; 512];
+    quiet.process_block(&mut quiet_out);
+    loud.process_block(&mut loud_out);
+
+    let rms = |b: &[f32; 512]| (b.iter().map(|s| s * s).sum::<f32>() / b.len() as f32).sqrt();
+    assert!(
+        rms(&loud_out) > rms(&quiet_out) * 2.0,
+        "master gain 2.0 ({:.4}) should be well louder than 0.25 ({:.4})",
+        rms(&loud_out),
+        rms(&quiet_out),
+    );
+}
+
+#[test]
+fn set_master_gain_out_of_range_never_panics() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    for gain in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -5.0, 1.0e30] {
+        producer
+            .push(Command::SetMasterGain { gain })
+            .expect("queue has room");
+    }
+    producer
+        .push(Command::NoteOn {
+            midi: 69,
+            velocity: 1.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut buffer = [0.0f32; 512];
+    engine.process_block(&mut buffer);
+    assert!(
+        buffer.iter().all(|sample| sample.is_finite()),
+        "an out-of-range master gain poisoned the output bus"
+    );
+}
+
+#[test]
 fn set_soundboard_mix_gain_out_of_range_never_panics() {
     let mut engine = engine();
     let (mut producer, mut consumer) = ring_buffer();

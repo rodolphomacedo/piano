@@ -108,10 +108,16 @@ cargo run --release -p piano-cli -- studio --piano meu-piano.piano.json --midi
   daquela tecla) ou "seleção" (várias teclas escolhidas com shift-clique).
   A mudança se aplica a todas de uma vez, sempre corda por corda por baixo
   dos panos — nunca vira uma "entidade" nova dentro do arquivo.
-- **Editar o instrumento inteiro**: os 8 modos da caixa de ressonância
-  (frequência, tempo de decaimento, ganho) e os dois ganhos de acoplamento
-  da ponte (entre as cordas da mesma tecla, e entre teclas diferentes,
-  responsável pela ressonância por simpatia).
+- **Editar o instrumento inteiro**: os 28 modos da caixa de ressonância
+  (frequência, tempo de decaimento, ganho), o quanto da caixa entra de volta
+  na mistura (`soundboard_mix_gain`), o volume geral de saída
+  (`master_gain`, aplicado logo antes do limitador, então abaixá-lo reduz a
+  limitação em vez de alimentar um limitador já saturado) e os dois ganhos
+  de acoplamento da ponte (entre as cordas da mesma tecla, e entre teclas
+  diferentes, responsável pela ressonância por simpatia). Por enquanto esses
+  dois ganhos do instrumento só têm campo no `.piano.json`
+  (`instrument.master_gain`, `instrument.soundboard_mix_gain`) e comando ao
+  vivo; ainda não têm controle deslizante próprio na página.
 - **Salvar**: digite um caminho no campo do topo e clique "Save" — grava um
   `.piano.json` novo com todo o instrumento já resolvido (nunca uma
   "diferença" em cima do que foi carregado, então o arquivo salvo sempre

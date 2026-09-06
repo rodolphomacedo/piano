@@ -214,6 +214,9 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
         StudioCommand::SetSoundboardMixGain { gain } => {
             session.set_soundboard_mix_gain(gain);
         }
+        StudioCommand::SetMasterGain { gain } => {
+            session.set_master_gain(gain);
+        }
         StudioCommand::SetLocalCouplingGain { gain } => {
             session.set_local_coupling_gain(gain);
         }

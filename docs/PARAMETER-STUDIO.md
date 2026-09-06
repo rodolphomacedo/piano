@@ -144,6 +144,8 @@ strings[]  (explicit, one entry per string)
     "soundboard_modes": [
       { "frequency_hz": 80.0, "decay_seconds": 1.2, "gain": 1.0 }
     ],
+    "soundboard_mix_gain": 0.5,
+    "master_gain": 1.0,
     "bridge": { "local_coupling_gain": 0.15, "global_coupling_gain": 0.08 }
   }
 }

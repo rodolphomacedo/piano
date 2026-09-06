@@ -166,6 +166,10 @@ pub struct Instrument {
     /// built-in default. See
     /// [`piano_audio::AudioSession::set_soundboard_mix_gain`] (issue #78).
     pub soundboard_mix_gain: Option<f32>,
+    /// Master output gain, applied just before the output limiter. `None`
+    /// leaves the engine at unity. See
+    /// [`piano_audio::AudioSession::set_master_gain`] (issue #79).
+    pub master_gain: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

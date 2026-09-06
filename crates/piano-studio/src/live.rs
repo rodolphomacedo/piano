@@ -43,6 +43,7 @@ pub struct LiveState {
     local_coupling_gain: f32,
     global_coupling_gain: f32,
     soundboard_mix_gain: f32,
+    master_gain: f32,
     groups: Vec<Group>,
 }
 
@@ -72,6 +73,7 @@ impl LiveState {
             local_coupling_gain: resolved.local_coupling_gain,
             global_coupling_gain: resolved.global_coupling_gain,
             soundboard_mix_gain: resolved.soundboard_mix_gain,
+            master_gain: resolved.master_gain,
             groups: file.groups.clone(),
         }
     }
@@ -97,7 +99,7 @@ impl LiveState {
     /// of them on the floor.
     #[must_use]
     pub fn commands(&self) -> Vec<StudioCommand> {
-        let mut commands = Vec::with_capacity(self.strings.len() * 6 + MODE_COUNT + 3);
+        let mut commands = Vec::with_capacity(self.strings.len() * 6 + MODE_COUNT + 4);
         for string in &self.strings {
             commands.extend(commands_for_string(string));
         }
@@ -106,6 +108,9 @@ impl LiveState {
         }
         commands.push(StudioCommand::SetSoundboardMixGain {
             gain: self.soundboard_mix_gain,
+        });
+        commands.push(StudioCommand::SetMasterGain {
+            gain: self.master_gain,
         });
         commands.push(StudioCommand::SetLocalCouplingGain {
             gain: self.local_coupling_gain,
@@ -284,6 +289,7 @@ impl LiveState {
             instrument: Instrument {
                 soundboard_modes: self.modes.iter().map(mode_override).collect(),
                 soundboard_mix_gain: Some(self.soundboard_mix_gain),
+                master_gain: Some(self.master_gain),
                 bridge: BridgeOverrides {
                     local_coupling_gain: Some(self.local_coupling_gain),
                     global_coupling_gain: Some(self.global_coupling_gain),
@@ -630,8 +636,8 @@ mod tests {
     fn the_full_command_list_covers_every_string_mode_and_gain() {
         let state = state();
         // six per string, one per soundboard mode, plus the soundboard mix
-        // gain and the two coupling gains.
-        let expected = state.strings.len() * 6 + MODE_COUNT + 3;
+        // gain, the master gain and the two coupling gains.
+        let expected = state.strings.len() * 6 + MODE_COUNT + 4;
         assert_eq!(state.commands().len(), expected);
     }
 

@@ -25,6 +25,16 @@ this project keeps its reasoning in `docs/`, not in this file.
 - `piano_audio::voicing::solved_decay_targets` — a key's three solved
   `(partial, seconds)` decay targets, so a test can measure against the same
   intent the loop-filter solve was given.
+- A master output gain (`Engine::master_gain`), the first volume control
+  anywhere in the signal path. It is applied to the mixed, soundboard-
+  coloured signal *before* `limiter::soft_limit`, so turning down reduces
+  limiting instead of feeding an already-engaged limiter. Unity by default —
+  the level every existing tuning/brightness/energy test was measured at —
+  clamped to `[0, 4]` on the audio thread, and reachable through
+  `AudioSession::set_master_gain` (live) and `.piano.json`'s
+  `instrument.master_gain` (static), the same cascade `soundboard_mix_gain`
+  uses. The companion velocity curve from issue #79 is left for a session
+  that can listen. See `docs/TIMBRE-PLAN.md` F5, issue #79.
 
 **Changed**
 

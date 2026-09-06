@@ -89,6 +89,27 @@ pub(crate) const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 /// deliberate voicing without handing over that failure mode.
 const MAX_SOUNDBOARD_MIX_GAIN: f32 = 2.0;
 
+/// Default for [`Engine::master_gain`]: the linear gain applied to the mixed,
+/// soundboard-coloured signal just before [`soft_limit`] in
+/// [`Engine::process_chunk`].
+///
+/// Unity, because the level every other part of this project was measured at
+/// is the level with no master gain in the path — M1's tuning, M4's
+/// brightness, #78's soundboard mix and #87's per-key energy bands all
+/// assume it. It is the starting point, not a fixed constant: `.piano.json`'s
+/// `instrument.master_gain` and [`crate::AudioSession::set_master_gain`] both
+/// move it (issue #79). The companion velocity curve is left for a later
+/// pass — it needs a musical judgement made by ear, which a scalar gain does
+/// not.
+pub(crate) const DEFAULT_MASTER_GAIN: f32 = 1.0;
+
+/// Ceiling for [`Engine::master_gain`]. Applied *before* [`soft_limit`], so
+/// anything past unity is deliberately driving the limiter; `4.0` (+12 dB)
+/// is enough headroom to make a quiet instrument usable without turning the
+/// control into a distortion unit, and — with [`soft_limit`] downstream —
+/// keeps the output bounded for any value a caller sets.
+const MAX_MASTER_GAIN: f32 = 4.0;
+
 /// One key's permanent voice. `None` only when `sample_rate` could not
 /// represent that key's frequency at construction (see
 /// [`UnisonGroup::new`]) — a real but rare degradation, not a bug.
@@ -126,6 +147,10 @@ pub(crate) struct Engine {
     /// by [`Command::SetSoundboardMixGain`], clamped to
     /// `[0, MAX_SOUNDBOARD_MIX_GAIN]`.
     soundboard_mix_gain: f32,
+    /// Master output gain, applied to the mixed signal just before
+    /// [`soft_limit`]. Starts at [`DEFAULT_MASTER_GAIN`] (unity); moved live
+    /// by [`Command::SetMasterGain`], clamped to `[0, MAX_MASTER_GAIN]`.
+    master_gain: f32,
 }
 
 impl Engine {
@@ -163,6 +188,7 @@ impl Engine {
             bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
             soundboard: Soundboard::new(sample_rate),
             soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
+            master_gain: DEFAULT_MASTER_GAIN,
         }
     }
 
@@ -214,7 +240,7 @@ impl Engine {
         }
         for sample in chunk.iter_mut() {
             *sample += self.soundboard_mix_gain * self.soundboard.process(*sample);
-            *sample = soft_limit(*sample, OUTPUT_LIMITER_THRESHOLD);
+            *sample = soft_limit(self.master_gain * *sample, OUTPUT_LIMITER_THRESHOLD);
         }
     }
 
@@ -228,6 +254,7 @@ impl Engine {
             Command::SustainPedal { down } => self.set_sustain_pedal(down),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
+            Command::SetMasterGain { gain } => self.set_master_gain(gain),
             Command::SetLocalCouplingGain { gain } => self.set_local_coupling_gain(gain),
             Command::SetGlobalCouplingGain { gain } => self.set_global_coupling_gain(gain),
             Command::SetStringDamping {
@@ -424,6 +451,14 @@ impl Engine {
     /// (soundboard muted) rather than poisoning the output bus.
     fn set_soundboard_mix_gain(&mut self, gain: f32) {
         self.soundboard_mix_gain = math::clamp_or_low(gain, 0.0, MAX_SOUNDBOARD_MIX_GAIN);
+    }
+
+    /// Sets the master output gain, live. `gain` is clamped into
+    /// `[0, MAX_MASTER_GAIN]` by [`math::clamp_or_low`], so `NaN` and a
+    /// negative both land on `0` (silence) rather than poisoning the output
+    /// bus; [`soft_limit`] downstream bounds the high end.
+    fn set_master_gain(&mut self, gain: f32) {
+        self.master_gain = math::clamp_or_low(gain, 0.0, MAX_MASTER_GAIN);
     }
 
     /// Applies a new local (within-group) coupling gain to every voice,

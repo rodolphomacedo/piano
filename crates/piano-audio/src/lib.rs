@@ -154,6 +154,16 @@ impl AudioSession {
             .is_ok()
     }
 
+    /// Queues a new master output gain, live (issue #79): a linear gain
+    /// applied to the mixed, soundboard-coloured signal just before the
+    /// output limiter, so turning down actually reduces limiting rather than
+    /// feeding an already-engaged limiter. `gain` is clamped into `[0, 4]`
+    /// on the audio thread — `NaN` or a negative silences the output. Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_master_gain(&mut self, gain: f32) -> bool {
+        self.producer.push(Command::SetMasterGain { gain }).is_ok()
+    }
+
     /// Queues a new local (within-group) unison coupling gain for every
     /// voice, live. See
     /// [`piano_core::UnisonGroup::set_local_coupling_gain`]. `gain` is

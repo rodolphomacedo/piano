@@ -41,6 +41,13 @@ const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
 /// this, i.e. leaves the engine at its own default.
 const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 
+/// Mirrors `piano_audio`'s crate-private `DEFAULT_MASTER_GAIN` — unity, the
+/// level everything else in the project was measured at (issue #79).
+/// Duplicated for the same reason as [`DEFAULT_SOUNDBOARD_MIX_GAIN`]: not
+/// part of `piano-audio`'s public API. A file with no `instrument.master_gain`
+/// resolves to this, leaving the engine at unity.
+const DEFAULT_MASTER_GAIN: f32 = 1.0;
+
 /// One string's fully resolved parameters, ready to drive
 /// `piano_audio::AudioSession`'s per-string setters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -80,6 +87,9 @@ pub struct ResolvedPiano {
     /// See [`piano_audio::AudioSession::set_soundboard_mix_gain`]. How much
     /// of the modal soundboard's output the engine mixes back in.
     pub soundboard_mix_gain: f32,
+    /// See [`piano_audio::AudioSession::set_master_gain`]. The master output
+    /// gain, applied just before the limiter.
+    pub master_gain: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -156,6 +166,7 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .instrument
             .soundboard_mix_gain
             .unwrap_or(DEFAULT_SOUNDBOARD_MIX_GAIN),
+        master_gain: file.instrument.master_gain.unwrap_or(DEFAULT_MASTER_GAIN),
     }
 }
 
@@ -343,6 +354,26 @@ mod tests {
         assert_eq!(
             overridden.soundboard_mix_gain, 0.9,
             "instrument.soundboard_mix_gain never reached resolution"
+        );
+    }
+
+    /// `instrument.master_gain` (issue #79): absent leaves the engine at
+    /// unity; present resolves to exactly that value, for `piano-cli`'s
+    /// studio loop to push as a `SetMasterGain`.
+    #[test]
+    fn the_master_gain_override_resolves_when_present_and_defaults_when_absent() {
+        let mut file = PianoFile::default();
+        let absent = resolve(&file, Tuning::default(), sample_rate());
+        assert_eq!(
+            absent.master_gain, DEFAULT_MASTER_GAIN,
+            "a file with no instrument.master_gain must leave the engine at unity"
+        );
+
+        file.instrument.master_gain = Some(1.8);
+        let overridden = resolve(&file, Tuning::default(), sample_rate());
+        assert_eq!(
+            overridden.master_gain, 1.8,
+            "instrument.master_gain never reached resolution"
         );
     }
 

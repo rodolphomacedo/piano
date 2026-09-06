@@ -67,6 +67,14 @@ pub(crate) enum Command {
         /// values above are a deliberate boost up to the engine's ceiling.
         gain: f32,
     },
+    /// Sets the master output gain, applied just before the output limiter,
+    /// live (issue #79). Clamped into `[0.0, 4.0]` engine-side; `NaN` or a
+    /// negative silences the output.
+    SetMasterGain {
+        /// New master gain. `1.0` is unity (the level everything else was
+        /// measured at); values above deliberately drive the limiter.
+        gain: f32,
+    },
     /// Sets how strongly each voice's own unison strings couple to each
     /// other, live, on every voice. See
     /// [`piano_core::UnisonGroup::set_local_coupling_gain`].

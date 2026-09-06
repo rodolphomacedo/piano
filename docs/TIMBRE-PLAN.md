@@ -392,9 +392,21 @@ further is out of F3's "24–32 modes" scope; left for a later pass.
 **F4. Pickup position.** A second comb, from where the bridge samples the
 string. Cheap once F2's geometry exists.
 
-**F5. Velocity curve + master gain.** A configurable curve (exponent or
-breakpoints) from MIDI velocity to strike velocity, and a master output
-gain. Today velocity is linear and there is no volume control at all.
+**F5. Velocity curve + master gain.** *Master gain done (#79).*
+`Engine::master_gain` is a linear gain applied to the mixed, soundboard-
+coloured signal **before** `limiter::soft_limit`, so turning down reduces
+limiting rather than feeding an already-engaged limiter. It is unity by
+default — the level M1/M4/#78/#87 were all measured at — clamped to
+`[0, 4]` on the audio thread (`NaN`/negative → silence, `soft_limit` bounds
+the top), and reachable through `AudioSession::set_master_gain` (live) and
+`.piano.json`'s `instrument.master_gain` (static), the same cascade
+`soundboard_mix_gain` uses. Gate, as met:
+`piano_audio::engine_tests::set_master_gain_changes_the_output_level`
+(gain 2.0 renders >2× the RMS of gain 0.25) and
+`set_master_gain_out_of_range_never_panics`. The **velocity curve** — a
+configurable exponent or breakpoint map from MIDI velocity to strike
+velocity — is still open: it needs a musical judgement made by ear, which a
+scalar gain does not, so it is deferred to a session that can listen.
 
 **F6. Re-tune the register anchors by ear** against F1–F5, and update
 `docs/PHYSICS.md`'s "Numbers worth having" with what the model actually

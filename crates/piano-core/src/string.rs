@@ -165,15 +165,19 @@ pub const DEFAULT_LOOP_ZERO_MIX: f32 = 0.5;
 /// gate #77 names — needs the noise term shaped by
 /// `hammer::excitation_cutoff_hz` to make up the difference. The other is
 /// upper-partial energy in the bass: the pulse's spectrum rolls off well
-/// below the 8th partial of a low note, and `engine_timbre` (#87) checks
-/// that H8 of A2 still rings a measurable fraction as long as its
-/// fundamental rather than dying inside one analysis window. Both bind
-/// around here — the bass check wants more noise, the treble brightness
-/// gate is satisfied by less — so this sits at the low end of what keeps
-/// every timbre gate green. Once the treble truncation is fixed the pulse
-/// can carry more of the load and this can drop toward the trace #77
-/// wanted; `voicing`'s F6 re-tune (#80) is where to move it by ear.
-pub const DEFAULT_EXCITATION_NOISE_MIX: f32 = 0.6;
+/// below the 8th partial of a low note, and the all-88 `engine_timbre`
+/// sweep (#87) checks that the bright partial still rings a measurable
+/// fraction as long as the fundamental rather than dying inside one
+/// analysis window. That check is the binding one, and it binds low in the
+/// bass — at `0.6` F2 (MIDI 41) failed it, its H8 decaying in ~0.17 s
+/// against a 6 s fundamental (a ratio of 35, past the sweep's 25 ceiling) —
+/// so the floor is `0.7`, the lowest even-tenth that clears every key of
+/// the sweep. The treble brightness gate is satisfied by less; the bass
+/// check wants more, and wins. Once the treble truncation is fixed the
+/// pulse can carry more of the load and this can drop toward the trace #77
+/// wanted; `voicing`'s F6 re-tune (#80) is where to move it by ear, per
+/// register rather than globally.
+pub const DEFAULT_EXCITATION_NOISE_MIX: f32 = 0.7;
 
 /// Tunable properties of a struck string.
 #[derive(Debug, Clone, Copy)]

@@ -50,11 +50,26 @@ this project keeps its reasoning in `docs/`, not in this file.
   `PluckedString::set_strike_position`, and clamped so the comb reach can
   never outrun the delay line. It moves no tuning — only the attack's
   spectral shape — and turns A2's ragged attack profile into a smooth arch
-  with a clear notch at H8. The deterministic force pulse that replaces the
-  noise underneath it (#77) still needs this geometry first and stays open,
-  as does putting `strike_position` on the file/live cascade (#82). See
-  `docs/PHYSICS.md` "Why the strike position notches out a partial",
-  `docs/TIMBRE-PLAN.md` F2, issue #32.
+  with a clear notch at H8. Putting `strike_position` on the file/live
+  cascade is still #82. See `docs/PHYSICS.md` "Why the strike position
+  notches out a partial", `docs/TIMBRE-PLAN.md` F2, issue #32.
+- The **deterministic hammer force pulse** (`StringConfig::excitation_noise_mix`),
+  the other half of F2 (#77). The delay line was filled with
+  `rng.next_bipolar() * velocity * contact_force`, so every partial got a
+  random amplitude and phase on every strike. The deterministic part of the
+  excitation is now the contact force's first difference, `dF/dt` (the
+  waveguide velocity-source form; Van Duyne & Smith 1995, Bank 2000), which
+  is DC-free by construction, and the RNG is rewound to the string's seed
+  before every strike, so a given velocity and seed renders bit-identical.
+  `excitation_noise_mix` (new `StringConfig` field, live setter, clamped
+  `[0, 1]`) keeps a broadband stochastic component: `1` is the old noise
+  excitation bit-for-bit, `0` is purely deterministic. The default is
+  `0.7` — the lowest even-tenth that clears every key of the all-88
+  `engine_timbre` sweep, which binds low in the bass (at `0.6` F2's 8th
+  partial was starved and its H1/H8 decay ratio ran past the sweep's
+  ceiling; F2 and A5 are now both in the normal-gate representative slice so
+  that regresses loudly). See `docs/PHYSICS.md` "Why the excitation is the
+  hammer's force pulse", `docs/TIMBRE-PLAN.md` F2, issues #77 / #80.
 
 **Changed**
 

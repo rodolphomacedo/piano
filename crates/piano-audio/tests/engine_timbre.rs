@@ -113,12 +113,15 @@ const LATE_RMS_FLOOR: f32 = 1.0e-4;
 const UNISON_ENERGY_BAND: std::ops::Range<f32> = 0.04..4.0;
 
 /// Keys spanning the compass, including the G5–B5 band where D10's single
-/// dispersion section makes a trichord unstable and A5 where it was worst.
-const REPRESENTATIVE_KEYS: &[u8] = &[21, 33, 45, 57, 69, 76, 79, 80, 81, 82, 83, 93, 100, 108];
+/// dispersion section makes a trichord unstable and A5 where it was worst,
+/// and F2 (41) where a too-low `DEFAULT_EXCITATION_NOISE_MIX` starves the
+/// bright partial and the H1/H8 ratio runs past its ceiling (#77 follow-up).
+const REPRESENTATIVE_KEYS: &[u8] = &[21, 33, 41, 45, 57, 69, 76, 79, 80, 81, 82, 83, 93, 100, 108];
 
 /// A far smaller set for the debug build, where 88-voice synthesis is an
-/// order of magnitude slower — still one key per register plus A5.
-const DEBUG_KEYS: &[u8] = &[21, 45, 69, 81, 108];
+/// order of magnitude slower — still one key per register, plus A5 for D10
+/// and F2 (41) for the #77 bright-partial-starvation regression.
+const DEBUG_KEYS: &[u8] = &[21, 41, 45, 69, 81, 108];
 
 fn tuning() -> Tuning {
     Tuning::default()

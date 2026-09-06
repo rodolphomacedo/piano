@@ -108,6 +108,24 @@ const BASS_INHARMONICITY: f32 = 0.000_1;
 /// [`MAX_INHARMONICITY`].
 const TREBLE_INHARMONICITY: f32 = MAX_INHARMONICITY;
 
+/// Hammer strike position at A0, as a fraction of the loop length. The
+/// classic ~1/8, which puts the strike-position comb's notch on the 8th
+/// partial — the one piano builders design the strike point to kill
+/// (Fletcher & Rossing, *The Physics of Musical Instruments*, 2nd ed.,
+/// §12.3; the striking point sits between 1/7 and 1/9 of the speaking length
+/// across the bass and middle of the compass). See
+/// [`StringConfig::strike_position`] and `piano_core::delay::DelayLine::
+/// apply_strike_comb`.
+const BASS_STRIKE_POSITION: f32 = 0.125;
+
+/// Hammer strike position at C8, as a fraction of the loop length. Real
+/// scaling moves the striking point closer to the end (a smaller fraction)
+/// in the top treble, where the note is short and its lowest partials are
+/// already all it has; a gentle drift to 1/10 keeps the comb's first notch
+/// above the handful of audible partials a treble note carries rather than
+/// cutting into them. Same references as [`BASS_STRIKE_POSITION`].
+const TREBLE_STRIKE_POSITION: f32 = 0.10;
+
 /// How the three fitted partials weigh against each other in
 /// [`fit_broadband_loss`]'s least squares, fundamental first.
 ///
@@ -189,6 +207,10 @@ pub struct KeyVoicing {
     pub inharmonicity: f32,
     /// See [`StringConfig::loop_zero_mix`].
     pub zero_mix: f32,
+    /// See [`StringConfig::strike_position`]. Interpolated between
+    /// [`BASS_STRIKE_POSITION`] and [`TREBLE_STRIKE_POSITION`] across the
+    /// keyboard, so the comb notch tracks the register (issue #32).
+    pub strike_position: f32,
 }
 
 /// The three ring-out times one key's loop is solved against — its
@@ -386,6 +408,13 @@ pub fn voicing_for_key_with_registers(
         sustain: losses.sustain,
         inharmonicity: inharmonicity_for(frequency, bass_hz, mid_hz, treble_hz, registers),
         zero_mix: losses.zero_mix,
+        strike_position: interpolate_log_frequency(
+            frequency,
+            bass_hz,
+            BASS_STRIKE_POSITION,
+            treble_hz,
+            TREBLE_STRIKE_POSITION,
+        ),
     }
 }
 
@@ -720,6 +749,7 @@ pub fn config_for_key(key: PianoKey, tuning: Tuning, sample_rate: SampleRate) ->
     config.sustain = voicing.sustain;
     config.inharmonicity = voicing.inharmonicity;
     config.loop_zero_mix = voicing.zero_mix;
+    config.strike_position = voicing.strike_position;
     config
 }
 

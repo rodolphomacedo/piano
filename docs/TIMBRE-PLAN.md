@@ -264,18 +264,23 @@ that harness's regression bands. Tracked as **#92**; its real fix is the
 bridge/soundboard coupling work (`docs/MODEL-REVIEW.md` P4, #89), not
 another dispersion constant.
 
-### D4 — The excitation is white noise, not a hammer.
+### D4 — The excitation is white noise, not a hammer. *(strike position now fixed, #32)*
 
 `PluckedString::write_excitation` fills the delay line with
 `rng.next_bipolar() * velocity * contact_force[i]`. Noise gives every
 harmonic a **random amplitude and phase** on every strike. A real hammer
 delivers a deterministic force pulse at **one point** on the string —
 canonically ~1/8 of its length, which puts a deep notch at the 8th partial
-and its multiples. That notch is a defining piano timbre feature and the
-model has no strike position at all, nor a pickup position.
+and its multiples. That notch is a defining piano timbre feature.
 
-This is why A2's measured attack profile is ragged (H1 −1, H2 0, H3 −1,
-H4 −13, H5 −34 dB) instead of smoothly falling with a notch.
+The **strike-position** half is now modelled (#32, F2): the excitation is
+summed with its inverted reflection from `strike_position · L` samples back,
+so the `1/strike_position` partial and its multiples are notched by geometry.
+A2's ragged profile is gone — it now reads a smooth arch peaking at H4–H5
+with a clear notch at H8 (−19 dB, an 11 dB drop from H7), against the old
+`H1 −1, H2 0, H3 −1, H4 −13, H5 −34 dB`. What is still white noise (rather
+than the deterministic force pulse) underneath the comb is #77, still open;
+a pickup-position comb (F4) is a cheap follow-on now the geometry exists.
 
 ### D5 — *Logic bug*: the `registers` block in `.piano.json` is parsed and ignored.
 
@@ -352,14 +357,33 @@ on. Achieved coefficients and per-partial times per register are in
 `docs/PHYSICS.md`, "Why the loop is solved against three decay times, not
 one".
 
-**F2. Deterministic hammer pulse + strike position.** Replace the noise
-excitation with the contact force itself injected at a strike position
-(`strike_position` ≈ 0.12 of the loop, per-key, configurable), summed with
-its inverted reflection so the comb notch falls out of the geometry rather
-than being applied as a filter. Keep a small noise component as a
-configurable `excitation_noise_mix` — real strikes do have a broadband
-component. Gate: the attack profile grows a visible notch near H8 and stops
-being ragged.
+**F2. Deterministic hammer pulse + strike position.** *Strike position done
+(#32); the pulse (#77) still open.* The two were always one plan step: a
+hammer's strike *position* notches a partial, and its force *pulse* replaces
+the noise burst, but the second cannot land first — a deterministic pulse
+with no strike-position comb under-excites the top octave, which is why an
+attempt at #77 alone regressed `voicing::treble_notes_no_longer_die_in_
+milliseconds` and was reverted. So the geometry landed first.
+
+The strike-position half sums the excitation with its own inverted
+reflection from `strike_position · L` samples back (`L` the loop length),
+so the comb notch on the `1/strike_position` partial and its multiples falls
+out of the geometry rather than being applied as a filter — the mode-`n`
+amplitude comes out weighted by `2·|sin(π · n · strike_position)|`, exactly
+the physical weighting. `strike_position` is a per-string `StringConfig`
+field, set by `piano_audio::voicing` from 1/8 in the bass to 1/10 in the top
+treble, and clamped so the comb reach never outruns the delay line
+`PluckedString::new` reserved for it. Applied to the first loop length only;
+a treble `PendingContact` continuation is left uncombed, inaudibly, since its
+notch is already past Nyquist. It moves no tuning (the loop length is
+untouched). See `docs/PHYSICS.md`, "Why the strike position notches out a
+partial". Gate, as met: on A2 the attack profile is now a smooth arch peaking
+at H4–H5 with a clear notch at H8 (−19 dB, an 11 dB drop from H7), replacing
+D4's ragged `H1 −1, H2 0, H3 −1, H4 −13, H5 −34`. Still open (#77): the
+excitation underneath the comb is still noise, not the contact force itself,
+so keep a configurable `excitation_noise_mix` when the pulse lands — real
+strikes do have a broadband component. `strike_position` is not yet on the
+file/live cascade either; that is #82's remit (see D6).
 
 **F3. A soundboard worth hearing. Done (#78).** `MODE_COUNT` raised 8 → 28
 (kept a compile-time constant — the audio thread cannot reallocate the
@@ -491,7 +515,7 @@ Every item above is a GitHub issue, ordered by priority label.
 |---|---|---|---|
 | M16 — Make it sound like a piano | [#76](https://github.com/rodolphomacedo/piano/issues/76) Loop filter solved against the wrong constraint — **done** | F1 | 1 — critical |
 | M16 | [#77](https://github.com/rodolphomacedo/piano/issues/77) Replace the white-noise excitation with a hammer pulse | F2 | 1 — critical |
-| M16 | [#32](https://github.com/rodolphomacedo/piano/issues/32) Model strike position and its comb filtering | F2 / F4 | 1 — critical |
+| M16 | [#32](https://github.com/rodolphomacedo/piano/issues/32) Model strike position and its comb filtering — **done** | F2 / F4 | 1 — critical |
 | M16 | [#78](https://github.com/rodolphomacedo/piano/issues/78) The soundboard is inaudible above 200 Hz | F3 | 1 — critical |
 | M16 | [#79](https://github.com/rodolphomacedo/piano/issues/79) No velocity curve and no master gain | F5 | 2 — high |
 | M16 | [#80](https://github.com/rodolphomacedo/piano/issues/80) Re-tune anchors by ear; update PHYSICS.md and the pt-BR material | F6 | 2 — high |

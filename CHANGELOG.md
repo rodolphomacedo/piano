@@ -35,6 +35,26 @@ this project keeps its reasoning in `docs/`, not in this file.
   `instrument.master_gain` (static), the same cascade `soundboard_mix_gain`
   uses. The companion velocity curve from issue #79 is left for a session
   that can listen. See `docs/TIMBRE-PLAN.md` F5, issue #79.
+- Hammer **strike position** (`StringConfig::strike_position`), the first
+  half of F2. A hammer strikes at one point — canonically ~1/8 of the
+  string — and a string takes no energy in a mode with a node there, so the
+  `1/strike_position` partial and its multiples are notched out; builders
+  put that first notch on the dissonant 8th partial on purpose.
+  `PluckedString::write_excitation` now sums the excitation with its own
+  inverted reflection `strike_position · L` samples back
+  (`DelayLine::apply_strike_comb`), so the notch falls out of the geometry —
+  the mode-`n` amplitude comes out weighted by `2·|sin(π·n·strike_position)|`
+  — rather than being an EQ fitted to imitate it. Set per key by
+  `piano_audio::voicing` (1/8 in the bass drifting to 1/10 in the top
+  treble), live-adjustable for the next strike via
+  `PluckedString::set_strike_position`, and clamped so the comb reach can
+  never outrun the delay line. It moves no tuning — only the attack's
+  spectral shape — and turns A2's ragged attack profile into a smooth arch
+  with a clear notch at H8. The deterministic force pulse that replaces the
+  noise underneath it (#77) still needs this geometry first and stays open,
+  as does putting `strike_position` on the file/live cascade (#82). See
+  `docs/PHYSICS.md` "Why the strike position notches out a partial",
+  `docs/TIMBRE-PLAN.md` F2, issue #32.
 
 **Changed**
 

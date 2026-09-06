@@ -105,6 +105,24 @@ pub const DEFAULT_DAMPING: f32 = 0.5;
 /// Sustain [`StringConfig::new`] uses when the caller does not choose one.
 pub const DEFAULT_SUSTAIN: f32 = 0.996;
 
+/// Where along the string the hammer lands, as a fraction of the loop
+/// length, at [`StringConfig::new`].
+///
+/// ~1/8 is the canonical piano strike ratio: it puts the strike-position
+/// comb's first notch on the 8th partial, the dissonant one builders design
+/// the strike point to suppress (Fletcher & Rossing, *The Physics of Musical
+/// Instruments*, 2nd ed., §12.3). `piano_audio::voicing` sets a per-key value
+/// that drifts across the keyboard; a caller building a [`StringConfig`]
+/// directly gets this classic single value.
+pub const DEFAULT_STRIKE_POSITION: f32 = 0.125;
+
+/// Widest [`StringConfig::strike_position`] the string honours — a strike at
+/// the loop's midpoint, which notches every even partial. Beyond it the
+/// geometry only mirrors, and [`PluckedString::new`] reserves delay-line
+/// headroom for exactly this much comb reach, so the strike-position comb
+/// (`DelayLine::apply_strike_comb`) can never wrap the ring.
+const MAX_STRIKE_POSITION: f32 = 0.5;
+
 /// Loop-filter zero mix [`StringConfig::new`] uses when the caller does not
 /// choose one — the loop filter's original, pre-per-register fixed value
 /// (`filter::LoopFilter`'s own `MAX_ZERO_MIX`, full Nyquist-null rolloff).
@@ -139,6 +157,12 @@ pub struct StringConfig {
     /// [`crate::filter::LoopFilter`]'s docs for why this had to become a
     /// per-string value rather than a fixed constant.
     pub loop_zero_mix: f32,
+    /// Where the hammer strikes, as a fraction of the loop length, in
+    /// `[0, MAX_STRIKE_POSITION]`. `write_excitation` sums the excitation
+    /// with its inverted reflection this far back to notch the partials with
+    /// a node at the strike point — the `1/strike_position` harmonic and its
+    /// multiples. `0` disables the comb. See [`DEFAULT_STRIKE_POSITION`].
+    pub strike_position: f32,
 }
 
 impl StringConfig {
@@ -153,6 +177,7 @@ impl StringConfig {
             seed: 0x2545_F491,
             hammer: hammer::DEFAULT_HAMMER,
             loop_zero_mix: DEFAULT_LOOP_ZERO_MIX,
+            strike_position: DEFAULT_STRIKE_POSITION,
         }
     }
 }
@@ -247,6 +272,11 @@ pub struct PluckedString {
     /// [`StringConfig::hammer`] and live-adjustable via
     /// [`PluckedString::set_hammer`].
     hammer: hammer::HammerConfig,
+    /// Where the hammer strikes, as a fraction of the loop length, clamped
+    /// into `[0, MAX_STRIKE_POSITION]`. Read by [`PluckedString::write_excitation`]
+    /// to size the strike-position comb; live-adjustable for the *next*
+    /// strike via [`PluckedString::set_strike_position`].
+    strike_position: f32,
 }
 
 impl PluckedString {
@@ -286,8 +316,16 @@ impl PluckedString {
             config.frequency.hertz() * math::powf(2.0, -MAX_LIVE_DETUNE_CENTS / 1200.0);
         let max_live_period = sample_rate.hertz() / lowest_live_frequency;
 
+        // Extra headroom past one loop length so the strike-position comb
+        // (`write_excitation`) can reach back up to `MAX_STRIKE_POSITION` of
+        // the loop without the `x[i - delay]` read wrapping the ring onto the
+        // burst's own far end. Sized for the lowest live frequency and the
+        // widest strike position together, so the comb delay never has to be
+        // clamped for any note or any live-set strike position.
+        let comb_headroom = max_live_period * MAX_STRIKE_POSITION;
+
         Ok(Self {
-            delay: DelayLine::with_capacity(max_live_period as usize + 4),
+            delay: DelayLine::with_capacity((max_live_period + comb_headroom) as usize + 4),
             loop_filter,
             dispersion,
             dc_blocker: DcBlocker::default(),
@@ -312,6 +350,7 @@ impl PluckedString {
             envelope: 0.0,
             sample_rate: sample_rate.hertz(),
             hammer: config.hammer,
+            strike_position: math::clamp_or_low(config.strike_position, 0.0, MAX_STRIKE_POSITION),
         })
     }
 
@@ -385,6 +424,18 @@ impl PluckedString {
         self.hammer = hammer;
     }
 
+    /// Moves where the hammer strikes, as a fraction of the loop length,
+    /// used by the *next* [`PluckedString::pluck`]. `strike_position` is
+    /// clamped into `[0, MAX_STRIKE_POSITION]`, `NaN` mapping to `0` (no
+    /// comb), the same convention every other live setter here uses. A
+    /// string already ringing is unaffected, since its excitation burst —
+    /// and so its strike-position comb — was already written into the delay
+    /// line. Lower values push the comb notch onto a higher partial
+    /// (`1/strike_position`), the audible direction issue #32 asks for.
+    pub fn set_strike_position(&mut self, strike_position: f32) {
+        self.strike_position = math::clamp_or_low(strike_position, 0.0, MAX_STRIKE_POSITION);
+    }
+
     /// Excites the string with a hammer-shaped noise burst at the given
     /// velocity.
     ///
@@ -413,9 +464,12 @@ impl PluckedString {
     }
 
     /// Fills the delay line with one strike's worth of excitation: white
-    /// noise, shaped in *time* by the felt-contact force envelope and in
+    /// noise, shaped in *time* by the felt-contact force envelope, in
     /// *frequency* by a lowpass whose corner that same contact duration
-    /// sets.
+    /// sets, and finally in *space* by the strike-position comb — the
+    /// inverted reflection from where the hammer lands, which notches the
+    /// partials with a node at the strike point (see the comb step at the
+    /// end of this method and `DelayLine::apply_strike_comb`).
     ///
     /// Both halves are needed and neither substitutes for the other. The
     /// envelope alone leaves the burst spectrally flat to Nyquist however
@@ -464,6 +518,21 @@ impl PluckedString {
                 .fold(excitation, |sample, stage| stage.process(sample));
             self.delay.write(shaped);
         }
+        // The hammer strikes at one point, not everywhere: sum the burst with
+        // its inverted reflection from the strike position so the modes with
+        // a node there — the `1/strike_position` partial and its multiples —
+        // fall out of the geometry (`DelayLine::apply_strike_comb`). The comb
+        // delay is `strike_position` of the loop, rounded; the reservation in
+        // `PluckedString::new` guarantees `burst_length + comb_delay` stays
+        // inside the delay line, so the `.min` here is a proof of that, not a
+        // limit that ever binds for a real note. It applies to this first
+        // loop length only — the `PendingContact` continuation of a treble
+        // strike is left uncombed, which is inaudible there because the comb's
+        // first notch (`1/strike_position ≈ 8` × a treble fundamental) already
+        // sits far above Nyquist. See `docs/PHYSICS.md`, "Strike position".
+        let comb_delay = (self.strike_position * self.loop_delay + 0.5) as usize;
+        let comb_delay = comb_delay.min(self.delay.max_delay().saturating_sub(burst_length));
+        self.delay.apply_strike_comb(burst_length, comb_delay);
         self.pending_contact = (contact_samples > burst_length).then_some(PendingContact {
             contact_samples,
             next_index: burst_length,

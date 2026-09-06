@@ -42,7 +42,7 @@ first in the plan.
 
 | # | Claim | Verdict |
 |---|---|---|
-| 1 | Excitation is white noise, not a localised hammer strike | **Accepted** |
+| 1 | Excitation is white noise, not a localised hammer strike | **Accepted** — strike position done (#32); force pulse open (#77) |
 | 2 | Hammer does not couple back to string motion | **Accepted** |
 | 3 | Bridge is an average, not a mechanical admittance | **Partly accepted** |
 | 4 | `BridgeBus` block latency is a physical error | **Rejected as a priority** |
@@ -78,7 +78,17 @@ implementation here, and it is `O(1)`. The modal formula is the right way to
 *verify* the result, not to implement it.
 
 Already tracked: **#77** (deterministic force pulse) and **#32** (strike
-position and comb filtering). They are one piece of work, not two.
+position and comb filtering). They are one piece of work, not two — but the
+comb half can land on the existing noise burst without the pulse, and now
+has: **#32 is done**. `DelayLine::apply_strike_comb` injects the excitation
+plus its inverted reflection from `strike_position · L` samples back, exactly
+the waveguide implementation this note prescribed (`O(1)`, no modal solve),
+and the modal formula above is what verifies it — `piano-core`'s
+`striking_at_one_eighth_attenuates_the_eighth_partial`. `strike_position` is
+per key from `piano_audio::voicing`. Still open: **#77**, the pulse itself —
+a deterministic pulse *without* this comb under-excites the treble (it
+regressed the treble-decay gate and was reverted), so the geometry had to
+come first.
 
 ### 2. No hammer↔string feedback — **accepted**
 
@@ -321,10 +331,13 @@ it measures and the A5 residual (#92) it surfaced on its first run.
 
 The single largest timbre win, and self-contained.
 
-1. **Strike position + deterministic force pulse** — #77 and #32 done together
-   as one change: inject the hammer's force pulse into the delay line at
-   `x_h/L`, replacing the noise burst. Verify against
-   `F_n ∝ sin(n·π·x_h/L)`.
+1. **Strike position** — #32, **done**: the excitation is summed with its
+   inverted reflection from `x_h/L` samples back
+   (`DelayLine::apply_strike_comb`), verified against `F_n ∝ sin(n·π·x_h/L)`.
+   These were meant to land together with the **deterministic force pulse**
+   (#77, still open), but a pulse without this comb under-excites the treble
+   and regressed the treble-decay gate, so the geometry came first; #77 now
+   builds on it.
 2. **Hammer↔string coupling** — #57. `F(t) = K(x_h − y(x_h,t))^p`, a fixed
    number of iterations, no unbounded loop. Needs a `PERF-xxx` entry.
 3. **Velocity→contact-time→brightness** falls out of 2; verify it explicitly

@@ -268,6 +268,44 @@ the rest of the keyboard. A real hammer stays in contact while the wave makes
 several round trips, adding force to a string that is already moving — the
 same back-reaction problem, seen from the other side.
 
+## Why the strike position notches out a partial (F2, #32)
+
+A hammer does not strike the whole string; it lands at one point, roughly
+1/7 to 1/9 of the way along (Fletcher & Rossing, *The Physics of Musical
+Instruments*, 2nd ed., §12.3). A string cannot be given any energy in a mode
+whose displacement is zero at the point it is struck, so striking at a
+fraction `β` of the length leaves the `n = 1/β, 2/β, …` partials silent — a
+comb of notches, the first and deepest at `1/β`. Piano builders choose `β ≈
+1/8` deliberately, to put that first notch on the 8th partial, whose interval
+above the fundamental (three octaves and a tone) is the most dissonant of the
+low harmonics; killing it is most of what keeps a piano from sounding harsh.
+
+In a bidirectional string this notch is pure geometry: the wave launched
+toward the near end returns inverted, and the launched pulse plus its
+inverted reflection cancel exactly at those partials. This model runs a
+single delay-line loop, not a bidirectional pair, so it reproduces the same
+geometry directly on the excitation. `PluckedString::write_excitation` fills
+the loop with the shaped burst as before, then
+`DelayLine::apply_strike_comb` sums it with its own inverted copy from `β · L`
+samples back (`L` the loop length): `y[i] = x[i] − x[i − round(β·L)]`. The
+mode-`n` amplitude comes out weighted by `2·|sin(π · n · β)|` — zero exactly
+at `n = 1/β` and its multiples — which *is* the physical strike-position
+weighting, not a filter fitted to imitate it. `β` is
+`StringConfig::strike_position`, set per key by `piano_audio::voicing`
+(1/8 in the bass, drifting to 1/10 in the top treble, where a note has too
+few partials to spend one on a notch) and clamped so the comb reach can never
+outrun the delay line the string reserved for it.
+
+The comb is applied to the first loop length only. A treble strike whose
+contact outlasts one loop (`PendingContact`, above) leaves its continuation
+uncombed — inaudible there, because that note's `1/β ≈ 8`th partial already
+sits far above Nyquist, so there is no notch left to impose. It changes the
+attack's *spectral shape*, never the loop length, so it does not move the
+tuning: the fundamental frequency is untouched, only its amplitude relative
+to its neighbours. The companion half of F2 — replacing the noise burst
+itself with the deterministic force pulse (#77) — is still open; it needs
+this geometry in place first, which is why the two were always one plan step.
+
 ## Why upper partials sit sharp (M4)
 
 A real string is stiff, not an idealised flexible one, so its restoring force

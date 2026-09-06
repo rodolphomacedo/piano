@@ -423,6 +423,89 @@ fn re_plucking_after_release_lifts_the_damper_again() {
     );
 }
 
+/// A string at `frequency` with a chosen strike position and no
+/// inharmonicity, so the strike-position comb's notch lands on an exact
+/// harmonic a test can measure without dispersion smearing it.
+fn harmonic_string_struck_at(frequency: f32, strike_position: f32) -> PluckedString {
+    let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
+    let mut config = StringConfig::new(Hz::new(frequency).expect("frequency is valid"));
+    config.inharmonicity = 0.0;
+    config.strike_position = strike_position;
+    PluckedString::new(config, rate).expect("frequency is representable at 48 kHz")
+}
+
+/// Windowed single-bin magnitude at `frequency_hz`, a dependency-free DFT so
+/// a `piano-core` test can weigh one partial without pulling in an FFT crate.
+/// A Hann window keeps a strong partial's energy from smearing into the bins
+/// this test compares against.
+fn magnitude_at(samples: &[f32], frequency_hz: f32, sample_rate: f32) -> f32 {
+    let n = samples.len() as f64;
+    let (mut re, mut im) = (0.0f64, 0.0f64);
+    for (index, &sample) in samples.iter().enumerate() {
+        let window = 0.5 - 0.5 * (core::f64::consts::TAU * index as f64 / n).cos();
+        let phase = core::f64::consts::TAU * f64::from(frequency_hz) * index as f64
+            / f64::from(sample_rate);
+        re += window * f64::from(sample) * phase.cos();
+        im -= window * f64::from(sample) * phase.sin();
+    }
+    (re * re + im * im).sqrt() as f32
+}
+
+/// Renders the attack of a struck string into a fresh buffer.
+fn render_attack(string: &mut PluckedString, samples: usize) -> alloc::vec::Vec<f32> {
+    let mut buffer = alloc::vec![0.0f32; samples];
+    string.pluck(1.0);
+    for slot in &mut buffer {
+        *slot = string.process();
+    }
+    buffer
+}
+
+#[test]
+fn striking_at_one_eighth_attenuates_the_eighth_partial() {
+    // A hammer at 1/8 of the string puts a node — a deep comb notch — on the
+    // 8th partial. Measured against the same note with the comb turned off
+    // (`strike_position` 0), so the loop filter's own spectral tilt is
+    // common to both sides and only the strike position differs: issue #32's
+    // "the expected partials are measurably attenuated". Compared to the
+    // *same* partial rather than to neighbours, since the loop's rolloff
+    // makes the spectrum slope so steeply that a lower neighbour outranks H8
+    // with or without a notch.
+    let fundamental = 220.0;
+    let sample_rate = 48_000.0;
+    let h8 = |strike: f32| {
+        let mut string = harmonic_string_struck_at(fundamental, strike);
+        let attack = render_attack(&mut string, 4_096);
+        magnitude_at(&attack, fundamental * 8.0, sample_rate)
+    };
+    assert!(
+        h8(0.125) < 0.4 * h8(0.0),
+        "the 1/8 strike's H8 ({}) should be a fraction of the no-comb H8 ({})",
+        h8(0.125),
+        h8(0.0)
+    );
+}
+
+#[test]
+fn moving_the_strike_position_moves_the_notch() {
+    // Issue #32's second half: "moving the strike position audibly changes
+    // the tone in the expected direction." Striking at 1/16 moves the notch
+    // to H16, so H8 — notched at 1/8 — is now left ringing.
+    let fundamental = 220.0;
+    let sample_rate = 48_000.0;
+    let h8_at = |strike: f32| {
+        let mut string = harmonic_string_struck_at(fundamental, strike);
+        let attack = render_attack(&mut string, 4_096);
+        magnitude_at(&attack, fundamental * 8.0, sample_rate)
+    };
+    assert!(
+        h8_at(1.0 / 16.0) > 2.0 * h8_at(1.0 / 8.0),
+        "H8 should be far louder struck at 1/16 ({}) than at 1/8 ({})",
+        h8_at(1.0 / 16.0),
+        h8_at(1.0 / 8.0)
+    );
+}
+
 proptest! {
     /// The stability claim `write_mixed_feedback` makes, checked rather
     /// than argued: for *any* `sustain` and *any* coupling weight in
@@ -544,6 +627,27 @@ proptest! {
             let sample = string.process();
             prop_assert!(sample.is_finite());
             prop_assert!(sample.abs() < 4.0, "sample {sample} escaped");
+        }
+    }
+
+    /// Whatever strike position a caller sets — NaN, +-infinity, negative,
+    /// past the loop's midpoint — the next strike's comb stays finite and
+    /// bounded, and the comb delay never reads outside the delay line
+    /// (`CLAUDE.md` rule 5, for the strike-position control of issue #32).
+    #[test]
+    fn any_strike_position_never_breaks_the_string(strike_position in proptest::num::f32::ANY) {
+        // Fuzz across the register too: a bass string has the longest loop
+        // and so the deepest comb reach, a treble string the shortest and a
+        // live `PendingContact` the comb does not touch — both must stay safe.
+        for frequency in [55.0, 220.0, 4_000.0] {
+            let mut string = harmonic_string_struck_at(frequency, 0.125);
+            string.set_strike_position(strike_position);
+            string.pluck(1.0);
+            for _ in 0..2_000 {
+                let sample = string.process();
+                prop_assert!(sample.is_finite());
+                prop_assert!(sample.abs() < 4.0, "sample {sample} escaped at {frequency} Hz");
+            }
         }
     }
 

@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "piano-audio"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "cpal",
  "piano-core",
@@ -1048,7 +1048,7 @@ dependencies = [
 
 [[package]]
 name = "piano-cli"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1063,7 +1063,7 @@ dependencies = [
 
 [[package]]
 name = "piano-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "criterion",
  "libm",
@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "piano-midi"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "midir",
  "rtrb",
@@ -1082,7 +1082,7 @@ dependencies = [
 
 [[package]]
 name = "piano-params"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "piano-core",
  "thiserror 2.0.20",
@@ -1090,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "piano-render"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "hound",
  "piano-core",
@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "piano-studio"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "piano-audio",
  "piano-core",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "piano-wasm"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "piano-core",
  "wasm-bindgen",

@@ -70,6 +70,7 @@ fn setting_a_soundboard_mode_live_measurably_shifts_the_spectral_centroid() {
             frequency_hz: 8_000.0,
             decay_seconds: 0.3,
             gain: 2.5,
+            bridge_coupling: 0.5,
         },
     );
 

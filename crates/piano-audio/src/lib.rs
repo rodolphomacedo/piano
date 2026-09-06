@@ -143,6 +143,17 @@ impl AudioSession {
             .is_ok()
     }
 
+    /// Queues a new soundboard mix gain, live (issue #78): how much of the
+    /// modal soundboard's radiated signal is added back to the direct
+    /// output. `gain` is clamped into `[0, 2]` on the audio thread — `NaN`
+    /// or a negative mutes the board. Same drop-not-block behaviour as
+    /// [`AudioSession::note_on`].
+    pub fn set_soundboard_mix_gain(&mut self, gain: f32) -> bool {
+        self.producer
+            .push(Command::SetSoundboardMixGain { gain })
+            .is_ok()
+    }
+
     /// Queues a new local (within-group) unison coupling gain for every
     /// voice, live. See
     /// [`piano_core::UnisonGroup::set_local_coupling_gain`]. `gain` is

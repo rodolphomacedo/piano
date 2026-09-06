@@ -1003,11 +1003,23 @@ literatura acadêmica de acústica (não medidos de nenhum piano específico).
 > de múltiplos), os modos de uma placa bidimensional são mais irregulares e
 > dependem do formato e material específicos da placa.
 
-O projeto usa 8 desses modos (`piano_core::soundboard::Soundboard`),
-somados ao sinal direto de cada corda (não substituindo-o) antes de virar
-som final — porque substituir completamente mudaria a afinação e o brilho
-medidos e testados em capítulos anteriores, uma troca (*trade-off*) que o
-projeto documenta abertamente em vez de mudar silenciosamente.
+O projeto usa 28 desses modos (`piano_core::soundboard::Soundboard`),
+espalhados de 52 Hz até 6,3 kHz. Eles são de propósito **irregulares** —
+tanto no espaçamento das frequências quanto no quanto cada um "chia" antes
+de calar (o `Q`) —, porque uma placa de madeira real não é uma curva lisa.
+O ganho de cada modo segue o formato da *eficiência de irradiação* de um
+tampo: os modos mais graves mexem muita madeira mas empurram pouco ar, então
+entram baixos; o pico fica na região médio-grave (~200–550 Hz) e a "cauda"
+aguda cai só uns 13 dB abaixo do pico, em vez dos ~34 dB da tabela antiga de
+8 modos, que deixava todo o agudo sem corpo nenhum.
+
+O resultado é somado ao sinal direto de cada corda (não substituindo-o)
+antes de virar som final — porque substituir completamente mudaria a
+afinação e o brilho medidos e testados em capítulos anteriores, uma troca
+(*trade-off*) que o projeto documenta abertamente em vez de mudar
+silenciosamente. O quanto de tampo entra nessa mistura tem um controle
+próprio (`soundboard_mix_gain`), ajustável ao vivo e no arquivo
+`.piano.json` do instrumento.
 
 ---
 
@@ -1107,7 +1119,7 @@ impacto perceptível para o menor:
 | **Posição da martelada e curvas por tecla** | Onde exatamente o martelo bate ao longo da corda muda o timbre (é por isso que "tocar perto das cordas" num piano de cauda soa diferente); hoje isso ainda não varia por nota | Marco M9 |
 | **Pedal una corda (esquerdo) e sostenuto (do meio)** | Hoje só existe o pedal de sustentação (direito); um piano de verdade tem três pedais, cada um com um efeito diferente | Marco M10 |
 | **Ressonância simpática mais rica** | O barramento único (capítulo 13) já funciona, mas uma versão mais fiel diferenciaria o quanto cada corda "sente" as outras | Marco M11 |
-| **Caixa de ressonância mais detalhada** | 8 modos (capítulo 14) já dão corpo ao som; um banco maior aproximaria ainda mais a complexidade real da madeira | Marco M11 |
+| **Caixa de ressonância mais detalhada** | 28 modos (capítulo 14) dão corpo ao som até 6,3 kHz; o agudo extremo (acima de ~C7) ainda recebe pouco, e o tampo ainda "colore" a saída em vez de puxar energia das cordas de volta | Marco M11 |
 | **Ruídos mecânicos** (o "clique" do mecanismo, o baque do fundo da tecla) | Um piano de verdade não é só corda — o mecanismo em si faz ruído, sempre sintetizado, nunca gravado | Marco M12 |
 | **Modelar um piano específico de verdade** | Hoje o projeto usa números "típicos" da literatura, não medidos de um instrumento físico específico; fazer isso exigiria decidir, antes de qualquer código, que tipo de dado medido é aceitável sem violar a regra de "nunca gravar áudio" | Marco M13 (uma decisão formal antes de qualquer implementação) |
 | **Um plugin de estúdio (CLAP)** | Hoje o piano roda como programa independente ou no navegador; um plugin permitiria usá-lo dentro de programas como Ableton, Logic ou Reaper | Marco M14 |

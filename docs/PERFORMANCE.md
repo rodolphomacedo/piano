@@ -80,7 +80,7 @@ than building a second, parallel timing mechanism just for benchmarking.
 | [PERF-006](#perf-006) | Polyphony and voice management | M5 | Mitigated (energy gating), **gate's saving measured (M7)** |
 | [PERF-007](#perf-007) | Hammer–string contact solver | M4 | Implemented, **measured (M7)** |
 | [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Implemented, **isolated cost measured (M7)** |
-| [PERF-009](#perf-009) | Soundboard convolution | M6 | Implemented (modal synthesis), **isolated cost measured (M7)** |
+| [PERF-009](#perf-009) | Soundboard convolution | M6 | Implemented (modal synthesis), **28-mode isolated cost measured (#78): 5.10 µs/block, <1%** |
 | [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | **Mitigated and measured — ~5% faster than naive** |
 | [PERF-011](#perf-011) | WASM has no SIMD by default | M3 | Mitigated, unmeasured |
 | [PERF-012](#perf-012) | Allocation at note-on | M2 | Closed |
@@ -592,8 +592,9 @@ measured impulse response — a recording of a real soundboard — and this
 project's own `CLAUDE.md` prohibits adding any recorded or sampled audio
 asset to the repository, unconditionally. `piano_core::soundboard::
 Soundboard` implements the third option: a fixed bank of
-[`MODE_COUNT`](../crates/piano-core/src/soundboard.rs) = 8 two-pole
-digital resonators (J. O. Smith III, *Physical Audio Signal Processing*),
+[`MODE_COUNT`](../crates/piano-core/src/soundboard.rs) two-pole
+digital resonators (J. O. Smith III, *Physical Audio Signal Processing*) —
+8 at M6/M7, raised to 28 for issue #78 (see the *Update* below) —
 fewer than a "faithful" soundboard model's dozens of resolvable low-order
 modes alone — explicitly the cheaper, more parametric trade this entry
 itself named as acceptable. Frequencies, decay times and gains are
@@ -618,6 +619,17 @@ measures the soundboard alone, one 128-sample block: **2.46 µs**, ≈ 19.3 ns
 soundboard accounts for well under 1 % of the total — confirming this
 entry's own prediction ("a small, bounded addition") with a real
 measurement rather than the argument it previously rested on.
+
+*Update (issue #78)*: **the bank is now 28 resonators, not 8** — a denser,
+irregular, radiation-shaped table reaching past 5 kHz so the treble has a
+body (`docs/TIMBRE-PLAN.md` F3). Re-benched: `soundboard_process_one_block`
+now measures **5.10 µs/block** (≈ 40 ns/sample for all 28 resonators;
+criterion, development machine). That is ≈ 2.1× the M7 8-mode figure for
+3.5× the modes — better than linear, since the per-block overhead is
+amortised over more work. By the same argument M7 used, against a full
+88-key/222-string block on the order of 1.3 ms this is still well under
+1 % of the total. The array is still fixed-size and heap-free, so the
+real-time properties are unchanged; only the constant moved. **Closed.**
 
 ---
 

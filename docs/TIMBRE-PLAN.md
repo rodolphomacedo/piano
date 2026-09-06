@@ -86,12 +86,25 @@ targets; weighting H1 higher, or adding a fourth partial, tightens it. Do
 not treat the table above as final values — treat it as proof the solve
 converges.
 
-### D3 — The soundboard is absent above 200 Hz.
+### D3 — The soundboard is absent above 200 Hz. **Addressed (#78).**
 
-`DEFAULT_MODES` is 8 modes, the highest at 1400 Hz. A real soundboard has
+`DEFAULT_MODES` was 8 modes, the highest at 1400 Hz. A real soundboard has
 hundreds, well past 5 kHz, and is a large part of why a piano sounds like a
-wooden box rather than a wire. The instrument has effectively no body above
+wooden box rather than a wire. The instrument had effectively no body above
 the low mid-range.
+
+**Done in #78 (F3):** the bank is now 28 modes, 52 Hz to 6.3 kHz,
+irregular in spacing and `Q`, with a `gain` column shaped like a
+radiator's efficiency (lowest modes held down, peak ~200–550 Hz, treble
+tail ~13 dB below the peak instead of ~34 dB). The body's own impulse
+response moved from a 189 Hz centroid to ~406 Hz and now carries real
+energy above 1.4 kHz (gated in `piano_core::soundboard::
+the_impulse_response_carries_energy_above_the_old_ceiling`). Mixed into a
+note it changes radiated energy by 3–10% in the low and mid register
+(`piano_audio::timbre_diagnostic::
+the_soundboard_makes_an_audible_difference_to_a_rendered_note`). It does
+*not* move a note's spectral centroid "by much more than 6%" — see F3 for
+why that half of the original gate was dropped.
 
 > **This entry originally opened "the soundboard is inaudible", on the
 > strength of its impulse response peaking at 0.015 for a unit impulse and a
@@ -275,14 +288,15 @@ this block as the register tier of the cascade. A user who edits
 
 ### D6 — Most sound-shaping values are not reachable from a file or the studio.
 
-Exposed today: 8 per-string parameters, 3 fields × 8 soundboard modes, 2
-bridge gains. Not exposed, and each of them changes the timbre:
+Exposed today: 8 per-string parameters, 4 fields × 28 soundboard modes,
+the soundboard mix gain, 2 bridge gains. Not exposed, and each of them
+changes the timbre:
 
 | Value | Where | What it does |
 |---|---|---|
 | `loop_zero_mix` | `string.rs` | loop-filter zero — added this week, wired nowhere |
-| `SOUNDBOARD_MIX_GAIN` = 0.5 | `engine.rs` | how much body is in the mix |
-| `MODE_COUNT` = 8 | `soundboard.rs` | fixed; cannot add modes |
+| ~~`SOUNDBOARD_MIX_GAIN` = 0.5~~ | `engine.rs` | **now `soundboard_mix_gain`, exposed live + file (#78)** |
+| ~~`MODE_COUNT` = 8~~ | `soundboard.rs` | **now 28; still a compile-time constant (audio thread cannot reallocate), but every mode's fields and the mix gain are on the cascade (#78)** |
 | `RELEASE_LOSS_MULTIPLIER` = 0.4 | `string.rs` | damper strength |
 | `EXCITATION_POLES` = 2 | `string.rs` | attack rolloff order |
 | `EXCITATION_BANDWIDTH_FACTOR` = 15.0 | `hammer.rs` | attack brightness |
@@ -347,10 +361,33 @@ configurable `excitation_noise_mix` — real strikes do have a broadband
 component. Gate: the attack profile grows a visible notch near H8 and stops
 being ragged.
 
-**F3. A soundboard worth hearing.** Raise `MODE_COUNT` to a configurable
-bank (24–32 modes), extend it past 5 kHz, and expose `SOUNDBOARD_MIX_GAIN`.
-Gate: the impulse response's centroid rises well above 170 Hz and the
-mixed-in centroid moves by much more than 6%.
+**F3. A soundboard worth hearing. Done (#78).** `MODE_COUNT` raised 8 → 28
+(kept a compile-time constant — the audio thread cannot reallocate the
+resonator array, so "configurable" here means the file/live cascade sets
+each mode's parameters and the mix gain, not the count); table extended to
+6.3 kHz, made irregular in spacing and `Q`, and given a radiation-shaped
+`gain` column. `SOUNDBOARD_MIX_GAIN` is now `Engine::soundboard_mix_gain`,
+exposed through `AudioSession::set_soundboard_mix_gain` (live) and
+`.piano.json`'s `instrument.soundboard_mix_gain` (static).
+
+Gate, as met: the impulse response's centroid rises from 189 Hz to
+~406 Hz, well clear of the 170 Hz thump, and carries >8% of its energy
+above the old 1.4 kHz ceiling — both asserted in
+`piano_core::soundboard::the_impulse_response_carries_energy_above_the_old_ceiling`.
+The second half of the original gate — "the mixed-in centroid moves by
+much more than 6%" — was **dropped**: it rested on the same
+centroid-as-detector assumption the D3 correction note already discredited,
+and at the mix level the instrument actually uses (`0.5`) a physically
+honest, fast-decaying body moves a broadband note's centroid only 2–3%.
+Reaching 6% would need the mix at ~1.5, which swamps the direct signal and
+breaks the M1/M4 and #87 measurements. Replaced with an energy-contribution
+gate: adding the board changes a low/mid note's attack and sustained-tail
+RMS by more than 2% (`piano_audio::timbre_diagnostic::
+the_soundboard_makes_an_audible_difference_to_a_rendered_note`).
+
+Not addressed: the top octave (above ~C7) still gets little body — the
+highest mode is 6.3 kHz and its partials run past that. Widening the bank
+further is out of F3's "24–32 modes" scope; left for a later pass.
 
 **F4. Pickup position.** A second comb, from where the bridge samples the
 string. Cheap once F2's geometry exists.

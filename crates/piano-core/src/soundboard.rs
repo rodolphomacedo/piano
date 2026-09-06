@@ -61,9 +61,22 @@ use crate::{math, units::SampleRate};
 
 /// How many resonant modes make up the bank.
 ///
-/// Deliberately small — see the module docs on why fewer modes than
-/// "faithful" is the expected, accepted cost of modal synthesis.
-pub const MODE_COUNT: usize = 8;
+/// A real grand soundboard has dozens of resolvable low-order modes alone
+/// and a modal density that keeps rising past 5 kHz (Wogram; Suzuki, cited
+/// in the module docs). This bank does not chase that — modal synthesis is
+/// the deliberately cheaper option (see the docs) — but eight modes topping
+/// out at 1.4 kHz left the whole treble a bare wire with no body under it
+/// (`docs/TIMBRE-PLAN.md` D3/F3, issue #78). Twenty-eight, reaching to
+/// ~6.3 kHz, is still an order of magnitude short of "faithful" and still
+/// `O(MODE_COUNT)` per sample (`PERF-009`), but it is a body rather than a
+/// hint of one.
+///
+/// This is a compile-time constant, not a runtime setting: the audio thread
+/// cannot reallocate [`Soundboard`]'s resonator array, so the bank size is
+/// fixed for the instrument's lifetime. Changing the bank means editing this
+/// number and [`DEFAULT_MODES`] together — the table has exactly this many
+/// entries and the compiler enforces it.
+pub const MODE_COUNT: usize = 28;
 
 /// Shortest decay time accepted for a mode.
 ///
@@ -75,7 +88,11 @@ pub const MODE_COUNT: usize = 8;
 /// is expressible rather than being silently clamped into ringing.
 const MIN_DECAY_SECONDS: f32 = 0.000_1;
 
-/// Quality factor every entry in [`DEFAULT_MODES`] is built at.
+/// Nominal quality factor for a soundboard mode — the centre of the range
+/// [`DEFAULT_MODES`]' per-mode `Q` values wander around, and the value a
+/// caller building a fresh [`SoundboardMode`] without a measured `Q` should
+/// reach for. Public for the same reason [`DEFAULT_MODES`] is: it is the
+/// only truthful default a live mode editor can offer.
 ///
 /// A ribbed spruce soundboard is a heavily damped structure: its modal loss
 /// factor `η` runs to roughly `0.02`-`0.05` (J. Berthaut, M. N. Ichchou &
@@ -83,14 +100,25 @@ const MIN_DECAY_SECONDS: f32 = 0.000_1;
 /// Acoustics* 64 (2003); consistent with the modal damping in Wogram and
 /// Suzuki, cited in the module docs), giving `Q = 1/η` of about 20-50.
 ///
-/// This table was previously written as hand-typed decay times which worked
-/// out to `Q` between 302 and 1100 — a struck metal bar, not a wooden box.
-/// Every note therefore rang with eight fixed, foreign, barely-damped
-/// pitches under it, and where one of them landed near a partial (the
-/// 420 Hz mode sits 81 cents from A4's fundamental) the two beat against
-/// each other. Deriving the table from one stated `Q` rather than eight
-/// independent numbers is what keeps that from silently returning.
-const DEFAULT_MODE_Q: f32 = 30.0;
+/// An earlier table was hand-typed decay times that worked out to `Q`
+/// between 302 and 1100 — a struck metal bar, not a wooden box — so every
+/// note rang with fixed, foreign, barely-damped pitches under it that beat
+/// against any partial they landed near. Each [`DEFAULT_MODES`] entry now
+/// carries its own `Q`, deliberately irregular but bounded to the 16–44
+/// band a real board occupies; the `no_default_mode_rings_like_a_bell` test
+/// guards the whole table against drifting back toward bell territory.
+pub const DEFAULT_MODE_Q: f32 = 30.0;
+
+/// The [`SoundboardMode::bridge_coupling`] value given to a mode that reaches
+/// the board from a source that does not yet carry a coupling of its own — a
+/// live `Soundboard::set_mode` from a control surface, or a
+/// `.piano.json` `soundboard_modes[]` override. Nothing reads coupling until
+/// `docs/MODEL-REVIEW.md` P4 (issue #91) lands, so this is a neutral
+/// placeholder in the middle of the [`DEFAULT_MODES`] table's range rather
+/// than a tuned figure; when P4 makes the board a mechanical load, the file
+/// schema grows a real per-mode field (issue #82) and this stops being the
+/// answer for overridden modes.
+pub const DEFAULT_MODE_BRIDGE_COUPLING: f32 = 0.5;
 
 /// The decay time a mode at `frequency_hz` must have to reach `q`.
 ///
@@ -132,6 +160,17 @@ pub struct SoundboardMode {
     pub decay_seconds: f32,
     /// Relative gain of this mode in the mixed output.
     pub gain: f32,
+    /// How strongly this mode loads the strings that drive it, `[0, 1]`.
+    ///
+    /// Groundwork for `docs/MODEL-REVIEW.md` P4 (issue #91): today the
+    /// soundboard only colours the output ([`Soundboard::process`] is a
+    /// post-mix effect), so nothing reads this yet. When the board becomes a
+    /// mechanical load on the strings, a mode near a string's partial with a
+    /// high coupling is where that string's energy goes — the per-mode term
+    /// that makes the loss derive from the board instead of being fitted in
+    /// `piano_audio::voicing`. Carried now so the parameter surface and the
+    /// default table do not need another breaking change when P4 lands.
+    pub bridge_coupling: f32,
 }
 
 /// The bank's default modal table — what [`Soundboard::new`] starts every
@@ -143,25 +182,70 @@ pub struct SoundboardMode {
 /// what the running board started at, and a [`Resonator`]'s parameters
 /// cannot be read back out of its coefficients — the starting table is the
 /// only truthful thing such a surface can display.
-/// Every mode's decay time comes from [`DEFAULT_MODE_Q`] rather than being
-/// written down separately — see that constant for why.
+///
+/// Twenty-eight modes from 52 Hz to 6.3 kHz, deliberately **irregular** in
+/// spacing, `Q` and gain: the old eight-mode table was a hand-drawn smooth
+/// curve topping out at 1.4 kHz, and a real board is neither smooth nor
+/// band-limited to the low mid-range (`docs/MODEL-REVIEW.md` claim 6, issue
+/// #78). Frequencies thin out with height rather than following a constant
+/// ratio; `Q` wanders in the 16–44 range a ribbed spruce board occupies
+/// (see [`DEFAULT_MODE_Q`]) instead of sitting on one value.
+///
+/// The `gain` column is shaped like a soundboard's **radiation
+/// efficiency**, not like the modes' raw mechanical amplitude. A board is a
+/// poor radiator well below its critical frequency — its lowest modes move
+/// a lot of wood but push little air, dipole-cancelling across the panel —
+/// so the 52–101 Hz entries are held *down*, near `0.3`. Efficiency climbs
+/// through the low mid-range and is near unity by 1–3 kHz (the piano
+/// soundboard's critical band; Wogram 1980, Suzuki 1986, cited in the
+/// module docs), so the peak sits at ~200–550 Hz and the treble tail only
+/// falls to about `0.15` — roughly 13 dB below the peak, where the old
+/// table's smooth curve fell 34 dB and left nothing audible above 1.4 kHz.
+/// The shape is non-monotonic on purpose. Still representative,
+/// literature-informed order-of-magnitude values, not a measurement of one
+/// instrument.
 pub const DEFAULT_MODES: [SoundboardMode; MODE_COUNT] = [
-    default_mode(80.0, 1.0),
-    default_mode(130.0, 0.8),
-    default_mode(190.0, 0.7),
-    default_mode(280.0, 0.6),
-    default_mode(420.0, 0.5),
-    default_mode(650.0, 0.4),
-    default_mode(950.0, 0.3),
-    default_mode(1_400.0, 0.25),
+    //   freq       Q    gain   bridge
+    mode(52.0, 20.0, 0.34, 0.95),
+    mode(55.0, 27.0, 0.30, 0.94),
+    mode(78.0, 18.0, 0.52, 0.90),
+    mode(96.0, 33.0, 0.60, 0.86),
+    mode(101.0, 24.0, 0.48, 0.84),
+    mode(132.0, 41.0, 0.72, 0.79),
+    mode(160.0, 22.0, 0.85, 0.75),
+    mode(164.0, 30.0, 0.66, 0.74),
+    mode(214.0, 17.0, 1.00, 0.67),
+    mode(262.0, 36.0, 0.78, 0.61),
+    mode(271.0, 26.0, 0.90, 0.60),
+    mode(348.0, 21.0, 0.72, 0.53),
+    mode(410.0, 38.0, 0.83, 0.48),
+    mode(505.0, 29.0, 0.60, 0.43),
+    mode(548.0, 19.0, 0.68, 0.40),
+    mode(690.0, 34.0, 0.50, 0.35),
+    mode(760.0, 44.0, 0.58, 0.32),
+    mode(930.0, 25.0, 0.42, 0.28),
+    mode(1_150.0, 40.0, 0.46, 0.24),
+    mode(1_210.0, 23.0, 0.36, 0.23),
+    mode(1_560.0, 31.0, 0.32, 0.19),
+    mode(1_760.0, 44.0, 0.38, 0.17),
+    mode(2_280.0, 27.0, 0.26, 0.14),
+    mode(2_560.0, 20.0, 0.30, 0.12),
+    mode(3_350.0, 37.0, 0.20, 0.10),
+    mode(4_020.0, 28.0, 0.24, 0.083),
+    mode(5_180.0, 35.0, 0.15, 0.064),
+    mode(6_280.0, 30.0, 0.18, 0.050),
 ];
 
-/// One entry of [`DEFAULT_MODES`], damped at [`DEFAULT_MODE_Q`].
-const fn default_mode(frequency_hz: f32, gain: f32) -> SoundboardMode {
+/// One entry of [`DEFAULT_MODES`]: `decay_seconds` derived from `q` (see
+/// [`decay_seconds_for_q`]) so the table stays honest per-mode rather than
+/// carrying a decay time that could drift out of the wooden-board range
+/// unnoticed.
+const fn mode(frequency_hz: f32, q: f32, gain: f32, bridge_coupling: f32) -> SoundboardMode {
     SoundboardMode {
         frequency_hz,
-        decay_seconds: decay_seconds_for_q(frequency_hz, DEFAULT_MODE_Q),
+        decay_seconds: decay_seconds_for_q(frequency_hz, q),
         gain,
+        bridge_coupling,
     }
 }
 
@@ -444,6 +528,7 @@ mod tests {
                 frequency_hz,
                 decay_seconds: decay_seconds_for_q(frequency_hz, DEFAULT_MODE_Q),
                 gain: 0.5,
+                bridge_coupling: 0.5,
             };
             let measured = measured_gain_at(mode, frequency_hz);
             let ratio = measured / mode.gain;
@@ -473,6 +558,103 @@ mod tests {
         }
     }
 
+    /// Issue #78: the eight-mode table stopped at 1.4 kHz, leaving the
+    /// treble a bare wire. The bank must now reach well past 5 kHz.
+    #[test]
+    fn the_bank_reaches_past_5_khz() {
+        let top = DEFAULT_MODES
+            .iter()
+            .map(|mode| mode.frequency_hz)
+            .fold(0.0f32, f32::max);
+        assert!(
+            top > 5_000.0,
+            "the highest mode is {top} Hz; the treble still has no body"
+        );
+    }
+
+    /// A hand-drawn smooth curve has a near-constant ratio between
+    /// consecutive modes and one shared `Q`. A real board has neither, and
+    /// the old table's regularity is part of why it read as a bell rather
+    /// than a box (issue #78, `docs/MODEL-REVIEW.md` claim 6).
+    #[test]
+    fn the_default_modes_are_irregular_in_spacing_and_q() {
+        let ratios: Vec<f32> = DEFAULT_MODES
+            .iter()
+            .zip(DEFAULT_MODES.iter().skip(1))
+            .map(|(lower, upper)| upper.frequency_hz / lower.frequency_hz)
+            .collect();
+        let tightest = ratios.iter().copied().fold(f32::MAX, f32::min);
+        let widest = ratios.iter().copied().fold(0.0f32, f32::max);
+        // The old eight-mode table's consecutive ratios all sat between 1.46
+        // and 1.63 — a spread of 1.11. Anything close to that is a drawn
+        // curve, not a board.
+        assert!(
+            widest / tightest > 1.35,
+            "consecutive-mode ratios run {tightest:.2}..{widest:.2} — too even to be a board"
+        );
+
+        let qs: Vec<f32> = DEFAULT_MODES
+            .iter()
+            .map(|mode| core::f32::consts::PI * mode.frequency_hz * mode.decay_seconds)
+            .collect();
+        let lowest_q = qs.iter().copied().fold(f32::MAX, f32::min);
+        let highest_q = qs.iter().copied().fold(0.0f32, f32::max);
+        assert!(
+            highest_q - lowest_q > 10.0,
+            "Q runs {lowest_q:.0}..{highest_q:.0} — that is one shared value, not a real spread"
+        );
+    }
+
+    /// The F3 gate (`docs/TIMBRE-PLAN.md`): with the bank reaching past
+    /// 5 kHz and its gain column shaped like a radiator's efficiency rather
+    /// than sliding straight down from the bass, the impulse response must
+    /// (a) carry real energy above the old 1.4 kHz ceiling — the eight-mode
+    /// table scored essentially zero there — and (b) have a spectral
+    /// centroid well clear of a low thump. The D3 write-up put that thump at
+    /// 170 Hz; the eight-mode bank sat at 189 Hz.
+    #[test]
+    fn the_impulse_response_carries_energy_above_the_old_ceiling() {
+        const RATE: f32 = 48_000.0;
+        let mut board = soundboard();
+        let mut response = Vec::with_capacity(1 << 13);
+        response.push(board.process(1.0));
+        for _ in 1..(1 << 13) {
+            response.push(board.process(0.0));
+        }
+
+        let probes: Vec<f32> = (1..=80).map(|step| step as f32 * 80.0).collect();
+        let magnitude = |hz: f32| {
+            let omega = core::f32::consts::TAU * hz / RATE;
+            let (mut real, mut imag) = (0.0f32, 0.0f32);
+            for (index, &sample) in response.iter().enumerate() {
+                let phase = omega * index as f32;
+                real += sample * math::cos(phase);
+                imag -= sample * math::sin(phase);
+            }
+            math::sqrt(real * real + imag * imag)
+        };
+
+        let total: f32 = probes.iter().map(|&hz| magnitude(hz)).sum();
+        let above_ceiling: f32 = probes
+            .iter()
+            .filter(|&&hz| hz > 1_400.0)
+            .map(|&hz| magnitude(hz))
+            .sum();
+        let centroid: f32 = probes.iter().map(|&hz| hz * magnitude(hz)).sum::<f32>() / total;
+
+        assert!(
+            above_ceiling / total > 0.08,
+            "only {:.1}% of the body's spectral energy is above 1.4 kHz (centroid {centroid:.0} Hz) \
+             — the treble is still a bare wire",
+            100.0 * above_ceiling / total
+        );
+        assert!(
+            centroid > 300.0,
+            "the body's impulse-response centroid is {centroid:.0} Hz — barely above the \
+             170 Hz thump the reshaped bank was meant to lift it clear of"
+        );
+    }
+
     /// `MIN_DECAY_SECONDS` must not silently turn a heavily damped high mode
     /// into a ringing one. Clamping a 5 kHz mode's 1.9 ms decay up to the old
     /// 10 ms floor would have quintupled its `Q` behind the caller's back.
@@ -496,6 +678,7 @@ mod tests {
                 frequency_hz: 5_000.0,
                 decay_seconds: 2.0,
                 gain: 3.0,
+                bridge_coupling: 0.5,
             },
         );
         board.process(1.0);
@@ -514,6 +697,7 @@ mod tests {
                 frequency_hz: 10_000.0,
                 decay_seconds: 0.3,
                 gain: 1.0,
+                bridge_coupling: 0.5,
             },
         );
         low.process(1.0);
@@ -540,9 +724,13 @@ mod tests {
             frequency_hz in proptest::num::f32::ANY,
             decay_seconds in proptest::num::f32::ANY,
             gain in proptest::num::f32::ANY,
+            bridge_coupling in proptest::num::f32::ANY,
         ) {
             let mut board = soundboard();
-            board.set_mode(index, SoundboardMode { frequency_hz, decay_seconds, gain });
+            board.set_mode(
+                index,
+                SoundboardMode { frequency_hz, decay_seconds, gain, bridge_coupling },
+            );
             board.process(1.0);
             for _ in 0..256 {
                 prop_assert!(board.process(0.0).is_finite());

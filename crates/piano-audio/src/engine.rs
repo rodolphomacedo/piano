@@ -39,7 +39,7 @@
 //! [`Engine::process_chunk`]'s skip condition.
 
 use piano_core::soundboard::SoundboardMode;
-use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer};
+use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer, math};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 use rtrb::Consumer;
 
@@ -64,8 +64,9 @@ const MAX_COMMANDS_PER_CALLBACK: usize = 64;
 /// — see the module docs on why that is negligible for this effect.
 const BRIDGE_BLOCK_SAMPLES: usize = 128;
 
-/// How strongly the soundboard's radiated signal is mixed back into the
-/// direct one at [`Engine::process_chunk`]'s post-mix stage.
+/// Default for [`Engine::soundboard_mix_gain`]: how strongly the
+/// soundboard's radiated signal is mixed back into the direct one at
+/// [`Engine::process_chunk`]'s post-mix stage.
 ///
 /// A parallel mix, not a replacement — `docs/PHYSICS.md` explains the
 /// choice: replacing the direct signal entirely would be more faithful to
@@ -74,8 +75,19 @@ const BRIDGE_BLOCK_SAMPLES: usize = 128;
 /// measured tuning/inharmonicity test this project has (M1, M4). This
 /// value was chosen by ear, not measured or fit, so the soundboard's
 /// resonant colour is clearly present without dominating — an honest,
-/// reasoned choice in the same spirit as `voicing`'s decay anchors.
-const SOUNDBOARD_MIX_GAIN: f32 = 0.5;
+/// reasoned choice in the same spirit as `voicing`'s decay anchors. It is
+/// the starting point, not a fixed constant: `.piano.json`'s
+/// `instrument.soundboard_mix_gain` and
+/// [`crate::AudioSession::set_soundboard_mix_gain`] both move it (issue
+/// #78).
+pub(crate) const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
+
+/// Ceiling for [`Engine::soundboard_mix_gain`]. The denser mode bank (issue
+/// #78) can radiate more than the old eight modes did, so a caller pushing
+/// the mix well past unity is asking for the soundboard to swamp the direct
+/// signal and, with it, the limiter; `2.0` is generous headroom for
+/// deliberate voicing without handing over that failure mode.
+const MAX_SOUNDBOARD_MIX_GAIN: f32 = 2.0;
 
 /// One key's permanent voice. `None` only when `sample_rate` could not
 /// represent that key's frequency at construction (see
@@ -109,6 +121,11 @@ pub(crate) struct Engine {
     /// Post-mix modal-synthesis soundboard (`PERF-009`). See the module
     /// docs.
     soundboard: Soundboard,
+    /// How much of [`Engine::soundboard`]'s output is mixed back into the
+    /// direct signal. Starts at [`DEFAULT_SOUNDBOARD_MIX_GAIN`]; moved live
+    /// by [`Command::SetSoundboardMixGain`], clamped to
+    /// `[0, MAX_SOUNDBOARD_MIX_GAIN]`.
+    soundboard_mix_gain: f32,
 }
 
 impl Engine {
@@ -145,6 +162,7 @@ impl Engine {
             pedal_down: false,
             bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
             soundboard: Soundboard::new(sample_rate),
+            soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
         }
     }
 
@@ -195,7 +213,7 @@ impl Engine {
             }
         }
         for sample in chunk.iter_mut() {
-            *sample += SOUNDBOARD_MIX_GAIN * self.soundboard.process(*sample);
+            *sample += self.soundboard_mix_gain * self.soundboard.process(*sample);
             *sample = soft_limit(*sample, OUTPUT_LIMITER_THRESHOLD);
         }
     }
@@ -209,6 +227,7 @@ impl Engine {
             Command::NoteOff { midi } => self.note_off(midi),
             Command::SustainPedal { down } => self.set_sustain_pedal(down),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
+            Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetLocalCouplingGain { gain } => self.set_local_coupling_gain(gain),
             Command::SetGlobalCouplingGain { gain } => self.set_global_coupling_gain(gain),
             Command::SetStringDamping {
@@ -397,6 +416,14 @@ impl Engine {
     /// [`Engine::voices`].
     fn set_soundboard_mode(&mut self, index: usize, mode: SoundboardMode) {
         self.soundboard.set_mode(index, mode);
+    }
+
+    /// Sets how much of the soundboard's radiated signal is mixed back in,
+    /// live. `gain` is clamped into `[0, MAX_SOUNDBOARD_MIX_GAIN]` by
+    /// [`math::clamp_or_low`], so `NaN` and a negative both land on `0`
+    /// (soundboard muted) rather than poisoning the output bus.
+    fn set_soundboard_mix_gain(&mut self, gain: f32) {
+        self.soundboard_mix_gain = math::clamp_or_low(gain, 0.0, MAX_SOUNDBOARD_MIX_GAIN);
     }
 
     /// Applies a new local (within-group) coupling gain to every voice,

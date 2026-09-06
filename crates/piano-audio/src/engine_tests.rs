@@ -415,6 +415,7 @@ fn set_soundboard_mode_out_of_range_index_never_panics() {
                 frequency_hz: f32::NAN,
                 decay_seconds: f32::NAN,
                 gain: f32::NAN,
+                bridge_coupling: f32::NAN,
             },
         })
         .expect("queue has room");
@@ -436,6 +437,7 @@ fn set_soundboard_mode_measurably_changes_the_soundboard_tail() {
                 frequency_hz: 300.0,
                 decay_seconds: 2.0,
                 gain: 3.0,
+                bridge_coupling: 0.5,
             },
         })
         .expect("queue has room");
@@ -459,6 +461,66 @@ fn set_soundboard_mode_measurably_changes_the_soundboard_tail() {
         quiet_out.to_vec(),
         loud_out.to_vec(),
         "SetSoundboardMode had no audible effect"
+    );
+}
+
+#[test]
+fn set_soundboard_mix_gain_changes_how_much_board_reaches_the_output() {
+    let mut muted = engine();
+    let mut boosted = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+
+    producer
+        .push(Command::SetSoundboardMixGain { gain: 0.0 })
+        .expect("queue has room");
+    muted.drain_commands(&mut consumer);
+    producer
+        .push(Command::SetSoundboardMixGain { gain: 1.5 })
+        .expect("queue has room");
+    boosted.drain_commands(&mut consumer);
+
+    for engine in [&mut muted, &mut boosted] {
+        producer
+            .push(Command::NoteOn {
+                midi: 69,
+                velocity: 1.0,
+            })
+            .expect("queue has room");
+        engine.drain_commands(&mut consumer);
+    }
+
+    let mut muted_out = [0.0f32; 512];
+    let mut boosted_out = [0.0f32; 512];
+    muted.process_block(&mut muted_out);
+    boosted.process_block(&mut boosted_out);
+    assert_ne!(
+        muted_out.to_vec(),
+        boosted_out.to_vec(),
+        "SetSoundboardMixGain had no audible effect"
+    );
+}
+
+#[test]
+fn set_soundboard_mix_gain_out_of_range_never_panics() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    for gain in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -5.0, 1.0e30] {
+        producer
+            .push(Command::SetSoundboardMixGain { gain })
+            .expect("queue has room");
+    }
+    producer
+        .push(Command::NoteOn {
+            midi: 69,
+            velocity: 1.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut buffer = [0.0f32; 512];
+    engine.process_block(&mut buffer);
+    assert!(
+        buffer.iter().all(|sample| sample.is_finite()),
+        "an out-of-range soundboard mix gain poisoned the output bus"
     );
 }
 

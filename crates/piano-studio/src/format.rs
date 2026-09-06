@@ -129,6 +129,14 @@ pub struct SoundboardModeOverride {
     pub decay_seconds: f32,
     /// Relative gain of this mode in the mixed output.
     pub gain: f32,
+    /// How strongly this mode loads the strings that drive it, `[0, 1]`
+    /// (issue #78). `None` — including a file written before this field
+    /// existed — resolves to
+    /// [`piano_core::soundboard::DEFAULT_MODE_BRIDGE_COUPLING`]. Nothing
+    /// reads it until `docs/MODEL-REVIEW.md` P4 (issue #91); carried now so
+    /// the file schema does not need another breaking change then.
+    #[serde(default)]
+    pub bridge_coupling: Option<f32>,
 }
 
 /// The `instrument.bridge` block. See
@@ -153,6 +161,11 @@ pub struct Instrument {
     /// their position in this list.
     #[serde(default)]
     pub soundboard_modes: Vec<SoundboardModeOverride>,
+    /// How much of the modal soundboard's radiated signal the engine mixes
+    /// back into the direct output. `None` leaves the engine at its own
+    /// built-in default. See
+    /// [`piano_audio::AudioSession::set_soundboard_mix_gain`] (issue #78).
+    pub soundboard_mix_gain: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

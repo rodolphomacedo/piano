@@ -8,7 +8,7 @@ use piano_audio::voicing::{
 use piano_core::SampleRate;
 use piano_core::dispersion::DEFAULT_INHARMONICITY;
 use piano_core::hammer::{DEFAULT_HAMMER, HammerConfig};
-use piano_core::soundboard::SoundboardMode;
+use piano_core::soundboard::{DEFAULT_MODE_BRIDGE_COUPLING, SoundboardMode};
 use piano_core::string::{DEFAULT_DAMPING, DEFAULT_SUSTAIN};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
@@ -32,6 +32,14 @@ const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.15;
 /// Mirrors `piano_core::unison`'s private `DEFAULT_GLOBAL_COUPLING_GAIN`.
 /// See [`DEFAULT_LOCAL_COUPLING_GAIN`].
 const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
+
+/// Mirrors `piano_audio`'s crate-private `DEFAULT_SOUNDBOARD_MIX_GAIN` —
+/// the engine's starting mix level for the modal soundboard (issue #78).
+/// Duplicated, not imported, for the same reason as
+/// [`DEFAULT_LOCAL_COUPLING_GAIN`]: it is not part of `piano-audio`'s
+/// public API. A file with no `instrument.soundboard_mix_gain` resolves to
+/// this, i.e. leaves the engine at its own default.
+const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 
 /// One string's fully resolved parameters, ready to drive
 /// `piano_audio::AudioSession`'s per-string setters.
@@ -69,6 +77,9 @@ pub struct ResolvedPiano {
     pub local_coupling_gain: f32,
     /// See [`piano_core::UnisonGroup::set_global_coupling_gain`].
     pub global_coupling_gain: f32,
+    /// See [`piano_audio::AudioSession::set_soundboard_mix_gain`]. How much
+    /// of the modal soundboard's output the engine mixes back in.
+    pub soundboard_mix_gain: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -126,6 +137,9 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
                 frequency_hz: mode.frequency_hz,
                 decay_seconds: mode.decay_seconds,
                 gain: mode.gain,
+                // Nothing reads coupling before P4 (issue #91); an entry
+                // that omits it takes the neutral placeholder.
+                bridge_coupling: mode.bridge_coupling.unwrap_or(DEFAULT_MODE_BRIDGE_COUPLING),
             })
             .collect(),
         local_coupling_gain: file
@@ -138,6 +152,10 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .bridge
             .global_coupling_gain
             .unwrap_or(DEFAULT_GLOBAL_COUPLING_GAIN),
+        soundboard_mix_gain: file
+            .instrument
+            .soundboard_mix_gain
+            .unwrap_or(DEFAULT_SOUNDBOARD_MIX_GAIN),
     }
 }
 
@@ -305,6 +323,26 @@ mod tests {
         assert_eq!(
             baseline_treble.sustain, overridden_treble.sustain,
             "a bass-only register override changed the treble string too"
+        );
+    }
+
+    /// `instrument.soundboard_mix_gain` (issue #78): absent leaves the
+    /// engine at its own default; present resolves to exactly that value,
+    /// for `piano-cli`'s studio loop to push as a `SetSoundboardMixGain`.
+    #[test]
+    fn the_soundboard_mix_gain_override_resolves_when_present_and_defaults_when_absent() {
+        let mut file = PianoFile::default();
+        let absent = resolve(&file, Tuning::default(), sample_rate());
+        assert_eq!(
+            absent.soundboard_mix_gain, DEFAULT_SOUNDBOARD_MIX_GAIN,
+            "a file with no instrument.soundboard_mix_gain must leave the engine default"
+        );
+
+        file.instrument.soundboard_mix_gain = Some(0.9);
+        let overridden = resolve(&file, Tuning::default(), sample_rate());
+        assert_eq!(
+            overridden.soundboard_mix_gain, 0.9,
+            "instrument.soundboard_mix_gain never reached resolution"
         );
     }
 

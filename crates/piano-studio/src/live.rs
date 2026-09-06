@@ -42,6 +42,7 @@ pub struct LiveState {
     modes: [SoundboardMode; MODE_COUNT],
     local_coupling_gain: f32,
     global_coupling_gain: f32,
+    soundboard_mix_gain: f32,
     groups: Vec<Group>,
 }
 
@@ -70,6 +71,7 @@ impl LiveState {
             modes,
             local_coupling_gain: resolved.local_coupling_gain,
             global_coupling_gain: resolved.global_coupling_gain,
+            soundboard_mix_gain: resolved.soundboard_mix_gain,
             groups: file.groups.clone(),
         }
     }
@@ -95,13 +97,16 @@ impl LiveState {
     /// of them on the floor.
     #[must_use]
     pub fn commands(&self) -> Vec<StudioCommand> {
-        let mut commands = Vec::with_capacity(self.strings.len() * 6 + MODE_COUNT + 2);
+        let mut commands = Vec::with_capacity(self.strings.len() * 6 + MODE_COUNT + 3);
         for string in &self.strings {
             commands.extend(commands_for_string(string));
         }
         for (index, mode) in self.modes.iter().enumerate() {
             commands.push(StudioCommand::SetSoundboardMode { index, mode: *mode });
         }
+        commands.push(StudioCommand::SetSoundboardMixGain {
+            gain: self.soundboard_mix_gain,
+        });
         commands.push(StudioCommand::SetLocalCouplingGain {
             gain: self.local_coupling_gain,
         });
@@ -278,6 +283,7 @@ impl LiveState {
             strings: self.strings.iter().map(string_override).collect(),
             instrument: Instrument {
                 soundboard_modes: self.modes.iter().map(mode_override).collect(),
+                soundboard_mix_gain: Some(self.soundboard_mix_gain),
                 bridge: BridgeOverrides {
                     local_coupling_gain: Some(self.local_coupling_gain),
                     global_coupling_gain: Some(self.global_coupling_gain),
@@ -430,6 +436,7 @@ fn mode_override(mode: &SoundboardMode) -> SoundboardModeOverride {
         frequency_hz: mode.frequency_hz,
         decay_seconds: mode.decay_seconds,
         gain: mode.gain,
+        bridge_coupling: Some(mode.bridge_coupling),
     }
 }
 
@@ -622,7 +629,9 @@ mod tests {
     #[test]
     fn the_full_command_list_covers_every_string_mode_and_gain() {
         let state = state();
-        let expected = state.strings.len() * 6 + MODE_COUNT + 2;
+        // six per string, one per soundboard mode, plus the soundboard mix
+        // gain and the two coupling gains.
+        let expected = state.strings.len() * 6 + MODE_COUNT + 3;
         assert_eq!(state.commands().len(), expected);
     }
 

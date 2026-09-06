@@ -395,14 +395,34 @@ literature-informed order-of-magnitude values (see the module's own
 honesty note on where they come from and what they are not), not fit to
 any instrument's measured response.
 
+The bank is **28 modes** from 52 Hz to 6.3 kHz (issue #78; it was 8,
+topping out at 1.4 kHz, which left the whole treble a bare wire). The
+table is deliberately irregular in frequency spacing and in `Q` — a real
+board is neither a smooth curve nor a single damping value — and its
+`gain` column is shaped like a soundboard's **radiation efficiency**, not
+its raw modal amplitude: the lowest modes move a lot of wood but push
+little air (dipole cancellation across the panel), so they are held down;
+efficiency climbs through the low mid-range and is near unity by 1–3 kHz
+(the soundboard's critical band), so the peak sits around 200–550 Hz and
+the treble tail only falls ~13 dB below it, where the old smooth curve
+fell ~34 dB. `Q` stays in the 16–44 range a ribbed spruce board occupies,
+so every mode decays in tens of milliseconds — a damped wooden box, not a
+struck bar.
+
 The soundboard's output is **mixed in**, not substituted for the direct
-signal (`piano_audio::engine::Engine::process_chunk`'s
-`SOUNDBOARD_MIX_GAIN`): replacing the direct signal entirely would be more
-faithful to how a real piano is *only* ever heard through its soundboard,
-but would also change the level and shape of the fundamental partial in
-every already-measured tuning and inharmonicity test this project has
-(M1's cents figure, M4's partial-sharpening and brightness measurements)
-— an honest trade stated here rather than silently made.
+signal (`piano_audio::engine::Engine`'s `soundboard_mix_gain`, default
+`0.5`, live-adjustable via `AudioSession::set_soundboard_mix_gain` and
+`.piano.json`'s `instrument.soundboard_mix_gain`): replacing the direct
+signal entirely would be more faithful to how a real piano is *only* ever
+heard through its soundboard, but would also change the level and shape of
+the fundamental partial in every already-measured tuning and inharmonicity
+test this project has (M1's cents figure, M4's partial-sharpening and
+brightness measurements) — an honest trade stated here rather than
+silently made. At that mix level the board colours a note's attack and
+adds sustained body without dominating its spectrum: it shifts a rendered
+note's spectral centroid only a few percent (a spectral centroid is a
+poor detector of a fast-decaying body under a broadband note), but changes
+its radiated energy by 3–10% in the low and mid register.
 
 ## What the current model still does not do
 

@@ -59,6 +59,14 @@ pub(crate) enum Command {
         /// The mode's new frequency, decay time and gain.
         mode: piano_core::soundboard::SoundboardMode,
     },
+    /// Sets how much of the soundboard's radiated signal is mixed back into
+    /// the direct output, live (issue #78). Clamped into
+    /// `[0.0, 2.0]` engine-side; `NaN` or a negative mutes the soundboard.
+    SetSoundboardMixGain {
+        /// New soundboard mix gain. `0.0` mutes the board, `1.0` is unity,
+        /// values above are a deliberate boost up to the engine's ceiling.
+        gain: f32,
+    },
     /// Sets how strongly each voice's own unison strings couple to each
     /// other, live, on every voice. See
     /// [`piano_core::UnisonGroup::set_local_coupling_gain`].

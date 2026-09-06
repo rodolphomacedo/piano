@@ -26,7 +26,35 @@ this project keeps its reasoning in `docs/`, not in this file.
   `(partial, seconds)` decay targets, so a test can measure against the same
   intent the loop-filter solve was given.
 
+**Changed**
+
+- The modelled soundboard went from 8 resonant modes topping out at
+  1.4 kHz to 28, reaching 6.3 kHz. The table is now deliberately irregular
+  in frequency spacing and `Q`, and its gain column is shaped like a
+  soundboard's radiation efficiency — lowest modes held down, peak in the
+  low mid-range, treble tail ~13 dB below the peak instead of ~34 — so the
+  treble has a body instead of a bare wire. The board's own impulse
+  response moves from a 189 Hz spectral centroid to ~406 Hz. Isolated
+  cost re-benched: 5.10 µs per 128-sample block, still well under 1% of a
+  full-instrument block. `SoundboardMode` gained a `bridge_coupling` field
+  (carried for the future bridge/soundboard-load work, read nowhere yet).
+  See `docs/TIMBRE-PLAN.md` F3, `docs/MODEL-REVIEW.md` claim 6.
+- `SOUNDBOARD_MIX_GAIN`, a hardcoded `0.5` in `engine.rs`, is now
+  `Engine::soundboard_mix_gain`: live-adjustable through
+  `AudioSession::set_soundboard_mix_gain` and settable per instrument in
+  `.piano.json` as `instrument.soundboard_mix_gain`.
+
 **Known**
+
+- F3's original gate had a second clause — "the mixed-in centroid moves by
+  much more than 6%" — that was dropped rather than met. At the mix level
+  the instrument uses, a physically honest fast-decaying body moves a
+  broadband note's spectral centroid only 2–3%; a spectral centroid is a
+  poor detector of that kind of contribution (the same point D3's own
+  correction note makes). It is gated on radiated-energy change instead.
+- The top octave (above ~C7) still gets little soundboard body — the
+  highest mode is 6.3 kHz. Widening the bank further is left for a later
+  pass.
 
 - The all-88 sweep's first run showed the D10 region is not fully clear:
   across the upper treble a trichord radiates less sustained energy than its

@@ -251,6 +251,44 @@ fn report_spectral_centroid_over_the_life_of_a_note() {
     }
 }
 
+/// F3 gate (`docs/TIMBRE-PLAN.md`), engine side. The bank's own character
+/// is gated in `piano_core::soundboard` (impulse-response centroid clear of
+/// a thump, real energy above the old 1.4 kHz ceiling). This checks the
+/// half that only shows up once the board is mixed into a note: adding it
+/// must make an *audible* difference to the rendered sound, not the ~0%
+/// the eight-mode table managed once its gain bug was fixed.
+///
+/// Measured as an energy change, not the centroid shift F3 originally
+/// named: the D3 correction note in the plan already found a spectral
+/// centroid to be a poor detector of a fast-decaying body sitting under a
+/// broadband note, and at the mix level the instrument actually uses the
+/// centroid moves only 2–3%. The board's contribution to the note's
+/// radiated energy is the honest, direction-stable measurement.
+#[test]
+fn the_soundboard_makes_an_audible_difference_to_a_rendered_note() {
+    let window_rms = |samples: &[f32], range: std::ops::Range<usize>| -> f32 {
+        let slice = &samples[range];
+        (slice.iter().map(|s| s * s).sum::<f32>() / slice.len() as f32).sqrt()
+    };
+    // Low mid-register (F2, F3), where a soundboard does most of its
+    // audible work and the mode bank is densest.
+    for midi in [41u8, 53] {
+        let dry = render(midi, 2.0, false);
+        let wet = render(midi, 2.0, true);
+        let attack = |s: &[f32]| window_rms(s, 0..WINDOW / 2);
+        let tail = |s: &[f32]| window_rms(s, SAMPLE_RATE_HZ as usize..SAMPLE_RATE_HZ as usize * 2);
+        let attack_change = (attack(&wet) - attack(&dry)).abs() / attack(&dry);
+        let tail_change = (tail(&wet) - tail(&dry)).abs() / tail(&dry);
+        assert!(
+            attack_change > 0.02 && tail_change > 0.02,
+            "midi {midi}: adding the soundboard changed the attack by {:.1}% and the \
+             sustained tail by {:.1}% — the body is still inaudible in a real note",
+            attack_change * 100.0,
+            tail_change * 100.0
+        );
+    }
+}
+
 #[test]
 fn report_soundboard_ring_on_its_own() {
     println!("\n=== SOUNDBOARD IMPULSE RESPONSE ===");

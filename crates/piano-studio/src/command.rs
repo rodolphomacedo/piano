@@ -100,6 +100,12 @@ pub enum StudioCommand {
         /// The mode's new frequency, decay time and gain.
         mode: SoundboardMode,
     },
+    /// See [`piano_audio::AudioSession::set_soundboard_mix_gain`].
+    SetSoundboardMixGain {
+        /// The new soundboard mix gain: how much radiated soundboard
+        /// signal is added back to the direct output.
+        gain: f32,
+    },
     /// See [`piano_audio::AudioSession::set_local_coupling_gain`].
     SetLocalCouplingGain {
         /// The new within-unison coupling gain.

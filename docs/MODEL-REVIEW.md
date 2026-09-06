@@ -47,7 +47,7 @@ first in the plan.
 | 3 | Bridge is an average, not a mechanical admittance | **Partly accepted** |
 | 4 | `BridgeBus` block latency is a physical error | **Rejected as a priority** |
 | 5 | Soundboard is a post-mix effect, not a mechanical load | **Accepted — deepest item** |
-| 6 | 8 soundboard modes, too few and too smooth | **Accepted** |
+| 6 | 8 soundboard modes, too few and too smooth | **Done (#78)** — 28 modes, irregular, radiation-shaped, to 6.3 kHz |
 | 7 | Per-key parameters are over-interpolated | **Accepted** |
 | 8 | Fit parameters against real recordings | **Accepted with a hard constraint** |
 | 9 | Do not spend effort on performance now | **Accepted with a caveat** |
@@ -142,12 +142,23 @@ from a shared admittance means re-deriving the entire per-key voicing solve.
 It is the most invasive change in this document and it should be attempted
 against a working measurement harness and a fixed hammer, not before.
 
-### 6. Eight soundboard modes, too few and too smooth — **accepted**
+### 6. Eight soundboard modes, too few and too smooth — **accepted; done (#78)**
 
-The table is a hand-drawn smooth curve (80/130/190/280/420/650/950/1400 Hz,
+The table was a hand-drawn smooth curve (80/130/190/280/420/650/950/1400 Hz,
 gains falling 1.0 → 0.25). Real soundboard modes are irregular in frequency,
 `Q` and radiation efficiency. The module's own docs already admit the numbers
 are representative rather than measured.
+
+**Done (#78).** `DEFAULT_MODES` is now 28 modes, 52 Hz to 6.3 kHz,
+irregular in spacing and `Q` (bounded to the 16–44 band a spruce board
+occupies), with a `gain` column shaped like a radiator's efficiency curve
+rather than a monotone slide from the bass — peak ~200–550 Hz, treble tail
+~13 dB down instead of ~34. `SoundboardMode` gained the `bridge_coupling`
+field below (carried, not yet read — that is P4). The soundboard mix gain
+became `Engine::soundboard_mix_gain`, live- and file-adjustable. `MODE_COUNT`
+stayed a compile-time constant: the audio thread cannot reallocate the
+resonator array, so "configurable" means the parameter cascade, not the
+count. Gate and what was dropped from it: `TIMBRE-PLAN.md` F3.
 
 The review's suggested shape is right:
 
@@ -332,11 +343,13 @@ instrument stretched across 88 notes. **New issue needed.**
 The deepest change; attempt only with P1 in place and P2 landed.
 
 1. Frequency-dependent bridge admittance replacing the scalar *(claim 3)*.
-2. Soundboard modes gain a `bridge_coupling` term and **load** the strings
-   rather than only colouring the output *(claim 5)*. Resolve **N2** here: the
+2. Soundboard modes **load** the strings rather than only colouring the
+   output *(claim 5)*. The `bridge_coupling` term is already on
+   `SoundboardMode` and the `DEFAULT_MODES` table (done in #78), carried but
+   read nowhere — this step is what makes it live. Resolve **N2** here: the
    voicing solve must account for the coupling loss, or derive from it.
-3. More modes, irregular, reaching above 5 kHz *(claim 6, #78 — rewrite its
-   premise first)*.
+3. ~~More modes, irregular, reaching above 5 kHz~~ *(claim 6)* — **done in
+   #78**; the bank is 28 modes to 6.3 kHz. This point is closed.
 
 ### P5 — Calibration *(claim 8)*
 

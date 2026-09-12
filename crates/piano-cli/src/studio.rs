@@ -131,8 +131,20 @@ pub(crate) fn run(args: &StudioArgs) -> Result<()> {
     };
     println!("Esc or Ctrl+C (in this terminal) to quit.\n");
 
-    let raw_mode = RawModeGuard::enable().context("could not enable terminal raw mode")?;
-    let outcome = run_until_quit(&mut session, listener.as_mut(), &commands);
+    // A backgrounded/headless process (no controlling terminal — the exact
+    // shape `make run-studio &` or a systemd unit runs under) has no tty to
+    // put in raw mode. That is not fatal: the web UI and MIDI still work,
+    // only computer-keyboard play and the Esc quit key need a real
+    // terminal. Falling back rather than erroring out is what lets the
+    // studio run as a plain background server.
+    let raw_mode = RawModeGuard::enable();
+    if raw_mode.is_err() {
+        println!(
+            "no terminal attached — computer-keyboard play and Esc are unavailable; \
+             the browser and MIDI still work. Ctrl+C (or a signal) quits."
+        );
+    }
+    let outcome = run_until_quit(&mut session, listener.as_mut(), &commands, raw_mode.is_ok());
     drop(raw_mode);
     outcome?;
 
@@ -230,17 +242,28 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
 }
 
 /// Services MIDI (when connected) and the web server's command channel
-/// until Esc or Ctrl+C is pressed in this terminal.
+/// until Esc or Ctrl+C is pressed in this terminal — or, with
+/// `keyboard_available` false (no controlling tty, see
+/// [`RawModeGuard::enable`]'s call site), runs the same loop without ever
+/// touching `crossterm::event`, since polling a terminal that is not there
+/// is itself the failure this is working around. That case only returns on
+/// a process signal (Ctrl+C still reaches the default handler outside raw
+/// mode), which is the right shape for a backgrounded server.
 fn run_until_quit(
     session: &mut AudioSession,
     mut listener: Option<&mut MidiListener>,
     commands: &Receiver<StudioCommand>,
+    keyboard_available: bool,
 ) -> Result<()> {
     loop {
         if let Some(listener) = listener.as_deref_mut() {
             drain_midi(session, listener);
         }
         drain_studio_commands(session, commands);
+        if !keyboard_available {
+            std::thread::sleep(POLL_INTERVAL);
+            continue;
+        }
         if !event::poll(POLL_INTERVAL)? {
             continue;
         }

@@ -44,6 +44,7 @@ use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 use rtrb::Consumer;
 
 use crate::limiter::{OUTPUT_LIMITER_THRESHOLD, soft_limit};
+use crate::velocity_curve::{self, DEFAULT_VELOCITY_CURVE_EXPONENT};
 
 use crate::commands::Command;
 use crate::voicing;
@@ -151,6 +152,11 @@ pub(crate) struct Engine {
     /// [`soft_limit`]. Starts at [`DEFAULT_MASTER_GAIN`] (unity); moved live
     /// by [`Command::SetMasterGain`], clamped to `[0, MAX_MASTER_GAIN]`.
     master_gain: f32,
+    /// Exponent [`Engine::note_on`] warps a strike velocity through before
+    /// plucking. Starts at [`DEFAULT_VELOCITY_CURVE_EXPONENT`]; moved live
+    /// by [`Command::SetVelocityCurve`], clamped to
+    /// `[MIN_VELOCITY_CURVE_EXPONENT, MAX_VELOCITY_CURVE_EXPONENT]`.
+    velocity_curve_exponent: f32,
 }
 
 impl Engine {
@@ -189,6 +195,7 @@ impl Engine {
             soundboard: Soundboard::new(sample_rate),
             soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
             master_gain: DEFAULT_MASTER_GAIN,
+            velocity_curve_exponent: DEFAULT_VELOCITY_CURVE_EXPONENT,
         }
     }
 
@@ -255,6 +262,7 @@ impl Engine {
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),
+            Command::SetVelocityCurve { exponent } => self.set_velocity_curve_exponent(exponent),
             Command::SetLocalCouplingGain { gain } => self.set_local_coupling_gain(gain),
             Command::SetGlobalCouplingGain { gain } => self.set_global_coupling_gain(gain),
             Command::SetStringDamping {
@@ -296,6 +304,7 @@ impl Engine {
     /// throughout the audio path, since the audio thread cannot report an
     /// error to anyone.
     pub(crate) fn note_on(&mut self, midi: u8, velocity: f32) {
+        let pluck_velocity = velocity_curve::warp_velocity(velocity, self.velocity_curve_exponent);
         let Some(voice) = self.voice_for_midi(midi) else {
             return;
         };
@@ -307,7 +316,7 @@ impl Engine {
         let Some(strings) = voice.strings.as_mut() else {
             return;
         };
-        strings.pluck(velocity);
+        strings.pluck(pluck_velocity);
     }
 
     /// Releases `midi`'s voice — a MIDI note-off or a computer-keyboard
@@ -459,6 +468,18 @@ impl Engine {
     /// bus; [`soft_limit`] downstream bounds the high end.
     fn set_master_gain(&mut self, gain: f32) {
         self.master_gain = math::clamp_or_low(gain, 0.0, MAX_MASTER_GAIN);
+    }
+
+    /// Sets the velocity-curve exponent, live. `exponent` is clamped into
+    /// `[MIN_VELOCITY_CURVE_EXPONENT, MAX_VELOCITY_CURVE_EXPONENT]` by
+    /// [`math::clamp_or_low`], so `NaN` or a non-positive value falls back
+    /// to the low bound rather than making [`velocity_curve`] degenerate.
+    fn set_velocity_curve_exponent(&mut self, exponent: f32) {
+        self.velocity_curve_exponent = math::clamp_or_low(
+            exponent,
+            velocity_curve::MIN_VELOCITY_CURVE_EXPONENT,
+            velocity_curve::MAX_VELOCITY_CURVE_EXPONENT,
+        );
     }
 
     /// Applies a new local (within-group) coupling gain to every voice,

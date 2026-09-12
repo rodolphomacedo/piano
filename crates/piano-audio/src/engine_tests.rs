@@ -563,6 +563,91 @@ fn set_master_gain_out_of_range_never_panics() {
     );
 }
 
+/// Early-window RMS, in dB, for `midi` struck at `velocity` under
+/// `curve_exponent` — the measurement `velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT`'s
+/// own doc comment cites.
+fn velocity_response_db(midi: u8, velocity: f32, curve_exponent: f32) -> f32 {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    producer
+        .push(Command::SetVelocityCurve {
+            exponent: curve_exponent,
+        })
+        .expect("queue has room");
+    producer
+        .push(Command::NoteOn { midi, velocity })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut samples = vec![0.0f32; (DIAGNOSTIC_SAMPLE_RATE_HZ * 0.4) as usize];
+    for chunk in samples.chunks_mut(512) {
+        engine.process_block(chunk);
+    }
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+    20.0 * rms.log10()
+}
+
+/// Documents issue #79's root cause: with no curve at all (`exponent =
+/// 1.0`), A4's felt-hammer response is far steeper across the bottom of the
+/// velocity range than across the top, which is exactly what makes soft
+/// playing collapse into a narrow sliver near silence while everything past
+/// mezzo-forte sounds the same. See `velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT`'s
+/// doc comment for the full measured table this locks in.
+#[test]
+fn a_linear_velocity_map_is_far_from_even_in_decibels() {
+    let quiet_half = velocity_response_db(69, 0.4, 1.0) - velocity_response_db(69, 0.1, 1.0);
+    let loud_half = velocity_response_db(69, 1.0, 1.0) - velocity_response_db(69, 0.55, 1.0);
+    assert!(
+        quiet_half > loud_half * 3.0,
+        "bottom-of-range step {quiet_half:.1} dB is not far past top-of-range step \
+         {loud_half:.1} dB — the defect #79's velocity curve exists to compensate for \
+         may have changed"
+    );
+}
+
+#[test]
+fn the_default_velocity_curve_widens_the_gap_between_a_soft_and_a_hard_strike() {
+    let identity_gap = velocity_response_db(69, 1.0, 1.0) - velocity_response_db(69, 0.25, 1.0);
+    let default_gap =
+        velocity_response_db(69, 1.0, velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT)
+            - velocity_response_db(69, 0.25, velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT);
+    assert!(
+        default_gap > identity_gap,
+        "default curve's soft-to-hard gap ({default_gap:.1} dB) is not wider than the linear \
+         map's ({identity_gap:.1} dB)"
+    );
+}
+
+#[test]
+fn set_velocity_curve_out_of_range_never_panics() {
+    let mut engine = engine();
+    let (mut producer, mut consumer) = ring_buffer();
+    for exponent in [
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        -5.0,
+        0.0,
+        1.0e30,
+    ] {
+        producer
+            .push(Command::SetVelocityCurve { exponent })
+            .expect("queue has room");
+    }
+    producer
+        .push(Command::NoteOn {
+            midi: 69,
+            velocity: 1.0,
+        })
+        .expect("queue has room");
+    engine.drain_commands(&mut consumer);
+    let mut buffer = [0.0f32; 512];
+    engine.process_block(&mut buffer);
+    assert!(
+        buffer.iter().all(|sample| sample.is_finite()),
+        "an out-of-range velocity-curve exponent poisoned the output bus"
+    );
+}
+
 #[test]
 fn set_soundboard_mix_gain_out_of_range_never_panics() {
     let mut engine = engine();

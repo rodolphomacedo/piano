@@ -146,6 +146,7 @@ strings[]  (explicit, one entry per string)
     ],
     "soundboard_mix_gain": 0.5,
     "master_gain": 1.0,
+    "velocity_curve_exponent": 1.8,
     "bridge": { "local_coupling_gain": 0.15, "global_coupling_gain": 0.08 }
   }
 }

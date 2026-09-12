@@ -111,6 +111,12 @@ pub enum StudioCommand {
         /// The new master output gain, applied just before the limiter.
         gain: f32,
     },
+    /// See [`piano_audio::AudioSession::set_velocity_curve`].
+    SetVelocityCurve {
+        /// The new exponent a strike velocity is warped through before it
+        /// reaches the string.
+        exponent: f32,
+    },
     /// See [`piano_audio::AudioSession::set_local_coupling_gain`].
     SetLocalCouplingGain {
         /// The new within-unison coupling gain.

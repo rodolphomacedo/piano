@@ -1,5 +1,7 @@
 # Real-time audio rules
 
+> 🇧🇷 [Leia em português](pt-BR/REALTIME-AUDIO-RULES.md)
+
 The audio callback is not ordinary code. It runs on a thread with a hard deadline
 supplied by the operating system, and the consequence of missing that deadline is
 not a slow program — it is an audible click, or silence.

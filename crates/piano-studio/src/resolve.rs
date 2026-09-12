@@ -48,6 +48,14 @@ const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 /// resolves to this, leaving the engine at unity.
 const DEFAULT_MASTER_GAIN: f32 = 1.0;
 
+/// Mirrors `piano_audio`'s crate-private `DEFAULT_VELOCITY_CURVE_EXPONENT` —
+/// the exponent a strike velocity is warped through before it reaches the
+/// string (issue #79). Duplicated for the same reason as
+/// [`DEFAULT_MASTER_GAIN`]: not part of `piano-audio`'s public API. A file
+/// with no `instrument.velocity_curve_exponent` resolves to this, leaving
+/// the engine at its own default.
+const DEFAULT_VELOCITY_CURVE_EXPONENT: f32 = 1.8;
+
 /// One string's fully resolved parameters, ready to drive
 /// `piano_audio::AudioSession`'s per-string setters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -90,6 +98,9 @@ pub struct ResolvedPiano {
     /// See [`piano_audio::AudioSession::set_master_gain`]. The master output
     /// gain, applied just before the limiter.
     pub master_gain: f32,
+    /// See [`piano_audio::AudioSession::set_velocity_curve`]. The exponent a
+    /// strike velocity is warped through before it reaches the string.
+    pub velocity_curve_exponent: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -167,6 +178,10 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .soundboard_mix_gain
             .unwrap_or(DEFAULT_SOUNDBOARD_MIX_GAIN),
         master_gain: file.instrument.master_gain.unwrap_or(DEFAULT_MASTER_GAIN),
+        velocity_curve_exponent: file
+            .instrument
+            .velocity_curve_exponent
+            .unwrap_or(DEFAULT_VELOCITY_CURVE_EXPONENT),
     }
 }
 
@@ -374,6 +389,26 @@ mod tests {
         assert_eq!(
             overridden.master_gain, 1.8,
             "instrument.master_gain never reached resolution"
+        );
+    }
+
+    /// `instrument.velocity_curve_exponent` (issue #79): absent leaves the
+    /// engine at its own default; present resolves to exactly that value,
+    /// for `piano-cli`'s studio loop to push as a `SetVelocityCurve`.
+    #[test]
+    fn the_velocity_curve_exponent_override_resolves_when_present_and_defaults_when_absent() {
+        let mut file = PianoFile::default();
+        let absent = resolve(&file, Tuning::default(), sample_rate());
+        assert_eq!(
+            absent.velocity_curve_exponent, DEFAULT_VELOCITY_CURVE_EXPONENT,
+            "a file with no instrument.velocity_curve_exponent must leave the engine default"
+        );
+
+        file.instrument.velocity_curve_exponent = Some(2.5);
+        let overridden = resolve(&file, Tuning::default(), sample_rate());
+        assert_eq!(
+            overridden.velocity_curve_exponent, 2.5,
+            "instrument.velocity_curve_exponent never reached resolution"
         );
     }
 

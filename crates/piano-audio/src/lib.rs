@@ -26,6 +26,7 @@ mod stream;
 #[cfg(test)]
 mod tests_no_allocation;
 mod timing;
+mod velocity_curve;
 pub mod voicing;
 
 use std::sync::Arc;
@@ -162,6 +163,19 @@ impl AudioSession {
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_master_gain(&mut self, gain: f32) -> bool {
         self.producer.push(Command::SetMasterGain { gain }).is_ok()
+    }
+
+    /// Queues a new velocity-curve exponent, live (issue #79): every strike
+    /// arriving through [`AudioSession::note_on`] afterwards is warped
+    /// through `pluck_velocity = velocity.powf(exponent)` before it reaches
+    /// the string, rather than the previous straight pass-through. `1.0` is
+    /// the old linear behaviour; `exponent` is clamped on the audio thread —
+    /// `NaN` or a non-positive value falls back to a documented low bound.
+    /// Same drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_velocity_curve(&mut self, exponent: f32) -> bool {
+        self.producer
+            .push(Command::SetVelocityCurve { exponent })
+            .is_ok()
     }
 
     /// Queues a new local (within-group) unison coupling gain for every

@@ -416,7 +416,7 @@ further is out of F3's "24–32 modes" scope; left for a later pass.
 **F4. Pickup position.** A second comb, from where the bridge samples the
 string. Cheap once F2's geometry exists.
 
-**F5. Velocity curve + master gain.** *Master gain done (#79).*
+**F5. Velocity curve + master gain — done (#79).**
 `Engine::master_gain` is a linear gain applied to the mixed, soundboard-
 coloured signal **before** `limiter::soft_limit`, so turning down reduces
 limiting rather than feeding an already-engaged limiter. It is unity by
@@ -427,10 +427,32 @@ the top), and reachable through `AudioSession::set_master_gain` (live) and
 `soundboard_mix_gain` uses. Gate, as met:
 `piano_audio::engine_tests::set_master_gain_changes_the_output_level`
 (gain 2.0 renders >2× the RMS of gain 0.25) and
-`set_master_gain_out_of_range_never_panics`. The **velocity curve** — a
-configurable exponent or breakpoint map from MIDI velocity to strike
-velocity — is still open: it needs a musical judgement made by ear, which a
-scalar gain does not, so it is deferred to a session that can listen.
+`set_master_gain_out_of_range_never_panics`.
+
+The **velocity curve** — `Engine::note_on` warping a strike velocity through
+`piano_audio::velocity_curve::warp_velocity` before it reaches `pluck` — has
+also landed. With no curve at all (`exponent = 1.0`), A4's early-window RMS
+across the velocity range measures:
+
+| velocity | 0.10 | 0.25 | 0.40 | 0.55 | 0.70 | 0.85 | 1.00 |
+|---|---|---|---|---|---|---|---|
+| dB | −34.0 | −22.8 | −17.4 | −16.0 | −15.8 | −14.2 | −11.7 |
+
+Two-thirds of the range (0.10 → 0.40) already covers 16.6 of the total 22.3
+dB span; the top half (0.55 → 1.00) covers under 4.3 dB — a felt hammer's
+own convex (Hertzian) contact response, not a bug in the strike. A
+least-squares fit of candidate exponents against that table put `1.8` at
+the lowest residual (`2.16` dB, against `1.0`'s own `2.92`), so
+`DEFAULT_VELOCITY_CURVE_EXPONENT = 1.8` is the new default, clamped to
+`[0.25, 6.0]`, reachable through `AudioSession::set_velocity_curve` (live)
+and `.piano.json`'s `instrument.velocity_curve_exponent` (static). Gate, as
+met: `piano_audio::velocity_curve::tests` (totality, monotonicity, the
+fixed endpoints, and that an exponent above `1.0` pulls every interior
+velocity down) and
+`engine_tests::a_linear_velocity_map_is_far_from_even_in_decibels` /
+`the_default_velocity_curve_widens_the_gap_between_a_soft_and_a_hard_strike`.
+This only reshapes *loudness* per velocity — `docs/MODEL-REVIEW.md`'s N3
+(velocity → *spectrum*) is a separate, still-open concern.
 
 **F6. Re-tune the register anchors by ear** against F1–F5, and update
 `docs/PHYSICS.md`'s "Numbers worth having" with what the model actually
@@ -517,7 +539,7 @@ Every item above is a GitHub issue, ordered by priority label.
 | M16 | [#77](https://github.com/rodolphomacedo/piano/issues/77) Replace the white-noise excitation with a hammer pulse | F2 | 1 — critical |
 | M16 | [#32](https://github.com/rodolphomacedo/piano/issues/32) Model strike position and its comb filtering — **done** | F2 / F4 | 1 — critical |
 | M16 | [#78](https://github.com/rodolphomacedo/piano/issues/78) The soundboard is inaudible above 200 Hz | F3 | 1 — critical |
-| M16 | [#79](https://github.com/rodolphomacedo/piano/issues/79) No velocity curve and no master gain | F5 | 2 — high |
+| M16 | [#79](https://github.com/rodolphomacedo/piano/issues/79) No velocity curve and no master gain — **done** | F5 | 2 — high |
 | M16 | [#80](https://github.com/rodolphomacedo/piano/issues/80) Re-tune anchors by ear; update PHYSICS.md and the pt-BR material | F6 | 2 — high |
 | M17 — Everything configurable | [#81](https://github.com/rodolphomacedo/piano/issues/81) *Bug*: `registers` parsed and silently ignored | P1 | 1 — critical |
 | M17 | [#82](https://github.com/rodolphomacedo/piano/issues/82) Move every remaining constant into the cascade | P2 | 2 — high |

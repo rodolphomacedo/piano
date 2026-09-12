@@ -170,6 +170,11 @@ pub struct Instrument {
     /// leaves the engine at unity. See
     /// [`piano_audio::AudioSession::set_master_gain`] (issue #79).
     pub master_gain: Option<f32>,
+    /// Exponent a strike velocity is warped through before it reaches the
+    /// string. `None` — including a file written before this field
+    /// existed — leaves the engine at its own default. See
+    /// [`piano_audio::AudioSession::set_velocity_curve`] (issue #79).
+    pub velocity_curve_exponent: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

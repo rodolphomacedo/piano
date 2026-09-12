@@ -75,6 +75,19 @@ pub(crate) enum Command {
         /// measured at); values above deliberately drive the limiter.
         gain: f32,
     },
+    /// Sets the velocity-curve exponent a strike velocity is warped through
+    /// on its way into [`Command::NoteOn`]'s handling, live (issue #79).
+    /// Clamped engine-side; `NaN` or a non-positive value falls back to the
+    /// low bound rather than producing a degenerate (constant or inverted)
+    /// curve.
+    SetVelocityCurve {
+        /// New exponent. `1.0` is a linear map; above `1.0` spreads the
+        /// bottom of the velocity range out (softer touches separate more)
+        /// at the cost of compressing the top further — see
+        /// `engine::DEFAULT_VELOCITY_CURVE_EXPONENT` for why that is the
+        /// direction a felt hammer's own response needs.
+        exponent: f32,
+    },
     /// Sets how strongly each voice's own unison strings couple to each
     /// other, live, on every voice. See
     /// [`piano_core::UnisonGroup::set_local_coupling_gain`].

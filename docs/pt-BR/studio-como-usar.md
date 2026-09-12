@@ -112,12 +112,18 @@ cargo run --release -p piano-cli -- studio --piano meu-piano.piano.json --midi
   (frequência, tempo de decaimento, ganho), o quanto da caixa entra de volta
   na mistura (`soundboard_mix_gain`), o volume geral de saída
   (`master_gain`, aplicado logo antes do limitador, então abaixá-lo reduz a
-  limitação em vez de alimentar um limitador já saturado) e os dois ganhos
-  de acoplamento da ponte (entre as cordas da mesma tecla, e entre teclas
-  diferentes, responsável pela ressonância por simpatia). Por enquanto esses
-  dois ganhos do instrumento só têm campo no `.piano.json`
-  (`instrument.master_gain`, `instrument.soundboard_mix_gain`) e comando ao
-  vivo; ainda não têm controle deslizante próprio na página.
+  limitação em vez de alimentar um limitador já saturado), a curva de
+  velocidade (`velocity_curve_exponent`: `1.0` é o mapeamento linear
+  original; o padrão, `1.8`, afasta o toque suave do forte porque a resposta
+  do próprio martelo de feltro comprime o topo da faixa e deixa o fundo
+  praticamente mudo — ver o comentário de
+  `piano_audio::velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT` para a
+  medição) e os dois ganhos de acoplamento da ponte (entre as cordas da
+  mesma tecla, e entre teclas diferentes, responsável pela ressonância por
+  simpatia). Por enquanto esses três parâmetros do instrumento só têm campo
+  no `.piano.json` (`instrument.master_gain`,
+  `instrument.soundboard_mix_gain`, `instrument.velocity_curve_exponent`) e
+  comando ao vivo; ainda não têm controle deslizante próprio na página.
 - **Salvar**: digite um caminho no campo do topo e clique "Save" — grava um
   `.piano.json` novo com todo o instrumento já resolvido (nunca uma
   "diferença" em cima do que foi carregado, então o arquivo salvo sempre

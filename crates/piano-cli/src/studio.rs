@@ -217,6 +217,9 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
         StudioCommand::SetMasterGain { gain } => {
             session.set_master_gain(gain);
         }
+        StudioCommand::SetVelocityCurve { exponent } => {
+            session.set_velocity_curve(exponent);
+        }
         StudioCommand::SetLocalCouplingGain { gain } => {
             session.set_local_coupling_gain(gain);
         }

@@ -300,10 +300,16 @@ the only authority, and it is closely related to item 5.
 
 A consequence of item 2, but worth stating on its own because it is what a
 player notices first: striking harder should change the *spectrum*, not just
-the level. Partly tracked by **#79** (no velocity curve), but #79 is about
-gain mapping, not about timbre — and its master-output-gain half has now
-landed (`Engine::master_gain`, `docs/TIMBRE-PLAN.md` F5); the velocity curve
-itself is still open.
+the level. Tracked by **#79**, now fully landed
+(`Engine::master_gain`, `piano_audio::velocity_curve::warp_velocity`,
+`docs/TIMBRE-PLAN.md` F5) — but #79 was about *gain* mapping (how loud a
+strike sounds), not about timbre, and `warp_velocity` only reshapes the
+strike velocity `pluck` receives, not the spectrum a given velocity
+produces. **This item is still open**: velocity already reaches the
+hammer's own contact model (harder strikes are shorter and brighter, see
+`piano_core::hammer`'s velocity → brightness cue), but nothing measures
+whether that spectral change is *audible enough*, only that a curve now
+exists to make it *loud enough*.
 
 ---
 

@@ -128,11 +128,20 @@ fixed-point iteration — never a `while !converged`, per
   differentiated and injected each step now comes from the coupled force,
   not `contact_force[index]` directly.
 
-### `crates/piano-core/src/voicing.rs`
+### `crates/piano-studio/src/format.rs` and `crates/piano-studio/src/resolve.rs`
 
-- `string_impedance` joins the per-register anchor table (bass/mid/treble)
-  the same way `contact_exponent` already does — no new mechanism, one more
-  column.
+- **Correction to an earlier draft of this design**: `contact_exponent`/
+  `stiffness`/`mass` are **not** register-anchor-interpolated —
+  `voicing_for_key_with_registers` only computes `damping`/`sustain`/
+  `inharmonicity`. Hammer fields instead go through a flat cascade:
+  `piano_core::hammer::DEFAULT_HAMMER` < `file.defaults.hammer` <
+  `group.overrides.hammer` < per-string `overrides.hammer`
+  (`format.rs::HammerOverrides`, resolved by `resolve.rs::resolve_hammer`).
+  `string_impedance` joins that same cascade as a fourth `Option<f32>`
+  field on `HammerOverrides`, resolved the same way the other three are —
+  no register-anchor mechanism involved. Per-register *defaults* for
+  `string_impedance`, if wanted later, would be a `.piano.json` authoring
+  concern (setting `groups` per register), not new resolver code.
 
 ### `crates/piano-core/benches/components.rs`
 

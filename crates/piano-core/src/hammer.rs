@@ -439,12 +439,12 @@ pub(crate) fn couple_contact_step(
     };
     let dt = 1.0 / usable_sample_rate(sample_rate_hz);
 
+    let compression = state.compression;
     // Sanitize state to ensure all values are finite. A caller or proptest fuzzer
     // can hand back a ContactState with NaN or ±∞ hammer_velocity from a prior
     // malformed or pathological state; without the guard, these leak straight
     // through to the output force via `hammer_velocity - force / hammer.mass * dt`,
     // violating the totality contract (couple_contact_step must return finite output).
-    let compression = state.compression;
     let hammer_velocity = if state.hammer_velocity.is_finite() {
         state.hammer_velocity
     } else {

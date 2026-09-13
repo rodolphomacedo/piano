@@ -997,6 +997,7 @@ mod tests {
                     contact_exponent: 6.0,
                     stiffness: 1.0e8,
                     mass: 20.0,
+                    ..hammer::DEFAULT_HAMMER
                 },
             );
         });

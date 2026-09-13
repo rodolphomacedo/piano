@@ -298,7 +298,7 @@ fn resolve_hammer(base: HammerConfig, overrides: &HammerOverrides) -> HammerConf
         contact_exponent: overrides.contact_exponent.unwrap_or(base.contact_exponent),
         stiffness: overrides.stiffness.unwrap_or(base.stiffness),
         mass: overrides.mass.unwrap_or(base.mass),
-        ..base
+        string_impedance: overrides.string_impedance.unwrap_or(base.string_impedance),
     }
 }
 
@@ -495,5 +495,32 @@ mod tests {
         assert_eq!(a4.damping, expected.damping);
         assert_eq!(a4.sustain, expected.sustain);
         assert_eq!(a4.inharmonicity, expected.inharmonicity);
+    }
+
+    #[test]
+    fn string_impedance_resolves_through_the_same_cascade_as_the_other_hammer_fields() {
+        let mut file = PianoFile::default();
+        file.defaults.hammer.string_impedance = Some(2.0e9);
+        let resolved = resolve(&file, Tuning::default(), sample_rate());
+        let string = resolved
+            .strings
+            .iter()
+            .find(|s| s.midi == 60 && s.string_index == 0)
+            .expect("middle C has a string 0");
+        assert_eq!(string.hammer.string_impedance, 2.0e9);
+    }
+
+    #[test]
+    fn string_impedance_defaults_to_the_uncoupled_ceiling_when_absent() {
+        let file = PianoFile::default();
+        let resolved = resolve(&file, Tuning::default(), sample_rate());
+        let string = resolved
+            .strings
+            .first()
+            .expect("piano has at least one string");
+        assert_eq!(
+            string.hammer.string_impedance,
+            piano_core::hammer::DEFAULT_HAMMER.string_impedance
+        );
     }
 }

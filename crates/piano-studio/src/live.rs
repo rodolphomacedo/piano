@@ -438,6 +438,7 @@ fn string_override(string: &ResolvedString) -> StringOverride {
                 contact_exponent: Some(string.hammer.contact_exponent),
                 stiffness: Some(string.hammer.stiffness),
                 mass: Some(string.hammer.mass),
+                string_impedance: Some(string.hammer.string_impedance),
             },
         },
     }

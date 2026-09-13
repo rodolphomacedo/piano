@@ -20,6 +20,8 @@ pub struct HammerOverrides {
     pub stiffness: Option<f32>,
     /// See [`piano_core::hammer::HammerConfig::mass`].
     pub mass: Option<f32>,
+    /// See [`piano_core::hammer::HammerConfig::string_impedance`].
+    pub string_impedance: Option<f32>,
 }
 
 /// The parameters one cascade tier (`defaults`, a group's `overrides`, or

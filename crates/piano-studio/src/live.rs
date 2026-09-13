@@ -354,11 +354,12 @@ fn write_string_field(string: &mut ResolvedString, parameter: StringParameter, v
         StringParameter::HammerContactExponent => string.hammer.contact_exponent = value as f32,
         StringParameter::HammerStiffness => string.hammer.stiffness = value as f32,
         StringParameter::HammerMass => string.hammer.mass = value as f32,
+        StringParameter::HammerStringImpedance => string.hammer.string_impedance = value as f32,
     }
 }
 
 /// The single command carrying `parameter`'s new value to the engine. All
-/// three hammer fields ride one [`StudioCommand::SetStringHammer`],
+/// four hammer fields ride one [`StudioCommand::SetStringHammer`],
 /// because a whole hammer is the granularity `piano-core` offers.
 fn command_for_field(string: &ResolvedString, parameter: StringParameter) -> StudioCommand {
     let (midi, string_index) = (string.midi, string.string_index);
@@ -390,7 +391,8 @@ fn command_for_field(string: &ResolvedString, parameter: StringParameter) -> Stu
         },
         StringParameter::HammerContactExponent
         | StringParameter::HammerStiffness
-        | StringParameter::HammerMass => StudioCommand::SetStringHammer {
+        | StringParameter::HammerMass
+        | StringParameter::HammerStringImpedance => StudioCommand::SetStringHammer {
             midi,
             string_index,
             hammer: string.hammer,
@@ -421,6 +423,7 @@ fn string_snapshot(string: &ResolvedString) -> StringSnapshot {
         hammer_contact_exponent: string.hammer.contact_exponent,
         hammer_stiffness: string.hammer.stiffness,
         hammer_mass: string.hammer.mass,
+        hammer_string_impedance: string.hammer.string_impedance,
     }
 }
 

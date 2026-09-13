@@ -298,6 +298,7 @@ fn resolve_hammer(base: HammerConfig, overrides: &HammerOverrides) -> HammerConf
         contact_exponent: overrides.contact_exponent.unwrap_or(base.contact_exponent),
         stiffness: overrides.stiffness.unwrap_or(base.stiffness),
         mass: overrides.mass.unwrap_or(base.mass),
+        ..base
     }
 }
 

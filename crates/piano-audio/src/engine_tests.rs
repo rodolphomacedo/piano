@@ -878,6 +878,7 @@ fn set_string_hammer_changes_the_next_strike() {
                 contact_exponent: 6.0,
                 stiffness: 1.0e8,
                 mass: 20.0,
+                ..piano_core::hammer::DEFAULT_HAMMER
             },
         })
         .expect("queue has room");

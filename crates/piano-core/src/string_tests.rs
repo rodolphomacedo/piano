@@ -68,6 +68,69 @@ fn plucking_produces_signal() {
 }
 
 #[test]
+fn a_hard_strike_on_the_highest_key_still_produces_signal_once_coupled() {
+    // #57's audible claim shows up most in the upper treble, where
+    // contact outlasts one round trip (loop_delay ≈ 0.24 ms at C8's
+    // 4186 Hz, 48 kHz) — this is the sanity floor before the real
+    // behavioural comparison in
+    // `coupling_changes_a_high_key_s_pending_contact_versus_an_uncoupled_run`
+    // below: coupling must not silence the note outright.
+    let mut string = string_at(4_186.0);
+    string.pluck(0.9);
+    let samples: Vec<f32> = (0..2_000).map(|_| string.process()).collect();
+    assert!(
+        samples.iter().any(|sample| sample.abs() > 1e-6),
+        "a hard strike on the highest key produced no audible signal at all"
+    );
+}
+
+#[test]
+fn coupling_changes_a_high_key_s_pending_contact_versus_an_uncoupled_run() {
+    let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
+    let frequency = Hz::new(4_186.0).expect("C8 is representable");
+
+    let mut coupled_config = StringConfig::new(frequency);
+    coupled_config.hammer.string_impedance = 5.0e8;
+    let mut coupled = PluckedString::new(coupled_config, rate).expect("C8 is representable");
+    coupled.pluck(0.9);
+
+    // `StringConfig::new` already starts `hammer` at `DEFAULT_HAMMER`,
+    // whose `string_impedance` is `MAX_STRING_IMPEDANCE` (Task 1) — the
+    // rigid-wall case needs no override.
+    let rigid_config = StringConfig::new(frequency);
+    let mut rigid = PluckedString::new(rigid_config, rate).expect("C8 is representable");
+    rigid.pluck(0.9);
+
+    let coupled_samples: Vec<f32> = (0..512).map(|_| coupled.process()).collect();
+    let rigid_samples: Vec<f32> = (0..512).map(|_| rigid.process()).collect();
+    assert_ne!(
+        coupled_samples, rigid_samples,
+        "a finite string_impedance produced the same output as the rigid-wall default"
+    );
+}
+
+#[test]
+fn handing_the_contact_over_to_the_pending_tail_injects_no_step_in_force() {
+    // The excitation is the contact force's first difference scaled by
+    // `contact_force_diff_inv_peak`, which is calibrated to the *largest*
+    // step the reference curve takes between two adjacent samples. A tail
+    // that restarts its `prev` at `0.0` therefore fakes a step the size of
+    // the whole pulse — 56x a real one for this note — and the loop plays
+    // it back one round trip later as a single full-scale spike. A4 at 0.8
+    // is the case that caught it: 178 contact samples against a 105-sample
+    // loop, so the tail runs for most of the contact.
+    let mut string = string_at(440.0);
+    string.pluck(0.8);
+    let samples: Vec<f32> = (0..1_000).map(|_| string.process()).collect();
+    let peak = samples.iter().copied().map(f32::abs).fold(0.0, f32::max);
+    assert!(
+        peak < 1.0,
+        "a single string peaks at {peak}, so the hand-off to the pending contact is injecting a \
+         step rather than continuing the force pulse"
+    );
+}
+
+#[test]
 fn output_stays_bounded_for_a_full_second() {
     let mut string = string_at(27.5);
     string.pluck(1.0);

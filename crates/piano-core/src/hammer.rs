@@ -370,7 +370,7 @@ const COUPLING_FIXPOINT_STEPS: usize = 3;
 /// velocity a precomputed curve never exposed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
-pub(crate) struct ContactState {
+pub struct ContactState {
     pub(crate) compression: f32,
     pub(crate) hammer_velocity: f32,
     /// Once `true`, the hammer has left the string for the rest of this
@@ -385,7 +385,7 @@ impl ContactState {
     /// `velocity`: no compression yet, moving at `strike_mps_for(velocity)`.
     #[must_use]
     #[allow(dead_code)]
-    pub(crate) fn starting(velocity: f32) -> Self {
+    pub fn starting(velocity: f32) -> Self {
         Self {
             compression: 0.0,
             hammer_velocity: strike_mps_for(velocity),
@@ -422,7 +422,7 @@ impl ContactState {
 /// proven by `couple_contact_step_is_total`, not argued.
 #[must_use]
 #[allow(dead_code)]
-pub(crate) fn couple_contact_step(
+pub fn couple_contact_step(
     state: ContactState,
     hammer: HammerConfig,
     v_incoming: f32,

@@ -231,6 +231,30 @@ impl StringConfig {
     }
 }
 
+/// Hard cap on how many samples, total across the burst and the
+/// [`PendingContact`] tail together, one strike's contact may run for
+/// before it is forced to end — regardless of whether
+/// [`hammer::ContactState::separated`] has physically latched yet.
+///
+/// Before #57, contact duration came from `hammer::simulate_contact`'s own
+/// bounded array: [`PluckedString::next_contact_sample`]'s predecessor
+/// could never inject past [`hammer::MAX_CONTACT_SAMPLES`] because the
+/// curve it indexed did not run any longer either. Real per-sample coupling
+/// (`hammer::couple_contact_step`) replaced that array with a `separated`
+/// flag that is only guaranteed to latch *eventually* — force stays
+/// non-negative, so `hammer_velocity` is monotonically non-increasing — not
+/// within any fixed number of samples: a `v_incoming` sequence that tracks
+/// the hammer's own velocity one tick behind keeps compression
+/// asymptotically near zero without ever quite reaching it, for tens of
+/// thousands of samples in a row (`string_tests::
+/// a_pending_contact_tail_is_forced_to_end_within_the_total_contact_sample_
+/// cap`). This restores the bound the array gave for free, so a contact
+/// still cannot run forever, whatever one particular sample's physics says.
+/// Reusing [`hammer::MAX_CONTACT_SAMPLES`] rather than picking a fresh
+/// number keeps the restored guarantee identical to the pre-#57 one, not
+/// merely similar to it.
+const MAX_TOTAL_CONTACT_SAMPLES: u16 = hammer::MAX_CONTACT_SAMPLES as u16;
+
 /// A felt hammer's contact force still being injected past the first loop
 /// length.
 ///
@@ -284,6 +308,15 @@ struct PendingContact {
     /// [`PluckedString::write_excitation`] started, so the spectrum does not
     /// discontinuously change where the first loop length's worth left off.
     felt: [OnePoleLowpass; EXCITATION_POLES],
+    /// Total samples of contact elapsed since this strike began (the burst
+    /// plus every tail sample since), so
+    /// [`PluckedString::next_contact_sample`] can force the tail to end at
+    /// [`MAX_TOTAL_CONTACT_SAMPLES`] even if
+    /// [`hammer::ContactState::separated`] never physically latches — see
+    /// that constant's doc comment for why this bound has to exist at all.
+    /// `u16` comfortably covers it: [`MAX_TOTAL_CONTACT_SAMPLES`] is 512,
+    /// and every increment is a saturating add, so this can never wrap.
+    samples_elapsed: u16,
 }
 
 /// A single struck string voice.
@@ -379,6 +412,22 @@ fn diff_inv_peak_of(force: &[f32; hammer::MAX_CONTACT_SAMPLES], active: usize) -
         .map(|(a, b)| math::abs(b - a))
         .fold(0.0f32, f32::max);
     if peak > f32::EPSILON { 1.0 / peak } else { 0.0 }
+}
+
+/// `raw_force / peak`, or `0.0` when `peak` is too small to divide by
+/// safely — the single-sample form of [`hammer::normalize_by_peak`]'s own
+/// branch, shared by [`PluckedString::write_excitation`] and
+/// [`PluckedString::next_contact_sample`] so a live coupled sample lands on
+/// exactly the scale the reference curve was normalised to (see
+/// [`PendingContact::peak`]'s doc comment for why that scale, not the
+/// coupled force's own peak, is the one both call sites divide by).
+#[inline]
+fn normalized_force(raw_force: f32, peak: f32) -> f32 {
+    if peak > f32::EPSILON {
+        raw_force / peak
+    } else {
+        0.0
+    }
 }
 
 impl PluckedString {
@@ -686,11 +735,7 @@ impl PluckedString {
             // Same peak the reference curve above was normalised by, so
             // `contact_force_diff_inv_peak` stays on the scale it was
             // calibrated against — see `PendingContact::peak`'s doc comment.
-            let shape = if peak > f32::EPSILON {
-                raw_force / peak
-            } else {
-                0.0
-            };
+            let shape = normalized_force(raw_force, peak);
             let excitation = self.blended_excitation(shape, prev_shape) * velocity;
             prev_shape = shape;
             let shaped = felt
@@ -698,6 +743,18 @@ impl PluckedString {
                 .fold(excitation, |sample, stage| stage.process(sample));
             self.delay.write(shaped);
         }
+        // The hammer strikes at one point, not everywhere: sum the burst with
+        // its inverted reflection from the strike position so the modes with
+        // a node there — the `1/strike_position` partial and its multiples —
+        // fall out of the geometry (`DelayLine::apply_strike_comb`). The comb
+        // delay is `strike_position` of the loop, rounded; the reservation in
+        // `PluckedString::new` guarantees `burst_length + comb_delay` stays
+        // inside the delay line, so the `.min` here is a proof of that, not a
+        // limit that ever binds for a real note. It applies to this first
+        // loop length only — the `PendingContact` continuation of a treble
+        // strike is left uncombed, which is inaudible there because the comb's
+        // first notch (`1/strike_position ≈ 8` × a treble fundamental) already
+        // sits far above Nyquist. See `docs/PHYSICS.md`, "Strike position".
         let comb_delay = (self.strike_position * self.loop_delay + 0.5) as usize;
         let comb_delay = comb_delay.min(self.delay.max_delay().saturating_sub(burst_length));
         self.delay.apply_strike_comb(burst_length, comb_delay);
@@ -709,6 +766,10 @@ impl PluckedString {
                 velocity,
                 prev_shape,
                 felt,
+                // `burst_length < contact_samples <= hammer::MAX_CONTACT_SAMPLES`
+                // whenever this branch runs (the `then_some` guard above), so
+                // `burst_length` is always well under `u16::MAX` here.
+                samples_elapsed: burst_length as u16,
             });
     }
 
@@ -725,12 +786,24 @@ impl PluckedString {
     /// so its state advances by the same amount whatever the mix, keeping a
     /// live `set_excitation_noise_mix` from desynchronising a seed.
     ///
-    /// Total: one finite multiply-add of finite inputs
-    /// ([`Xorshift32::next_bipolar`] is bounded, `shape`/`prev` come from
-    /// [`hammer::simulate_contact`]'s `[0, 1]` output,
-    /// `contact_force_diff_inv_peak` is finite and non-negative by
+    /// Total, regardless of what `shape`/`prev` carry: one finite
+    /// multiply-add of finite inputs ([`Xorshift32::next_bipolar`] is
+    /// bounded, `contact_force_diff_inv_peak` is finite and non-negative by
     /// construction, `excitation_noise_mix` is clamped into `[0, 1]` at
     /// every entry point) — it cannot panic or return a non-finite value.
+    ///
+    /// `shape`/`prev` are *not* [`hammer::simulate_contact`]'s own strictly
+    /// `[0, 1]`-bounded output — both call sites ([`PluckedString::
+    /// write_excitation`], [`PluckedString::next_contact_sample`]) compute
+    /// them by [`normalized_force`], peak-normalising a *live coupled*
+    /// force against the *uncoupled reference curve's* peak. That
+    /// normalisation keeps `shape` nominally near `[0, 1]`, but it is not a
+    /// strict bound once real coupling is live: a sufficiently negative
+    /// `v_incoming` can push the coupled force above the reference peak it
+    /// is divided by (measured up to ~1.56× at `v_incoming = -2.0`), so
+    /// `shape` can transiently exceed `1.0`. This function's own math does
+    /// not care either way — the multiply-add above stays finite and total
+    /// for any finite `shape`/`prev`, in or out of `[0, 1]`.
     #[inline]
     fn blended_excitation(&mut self, shape: f32, prev: f32) -> f32 {
         let deterministic = (shape - prev) * self.contact_force_diff_inv_peak;
@@ -751,6 +824,12 @@ impl PluckedString {
     /// force up exactly where the burst put it down or the hand-off itself
     /// reads as a step change in force — see that field's doc comment.
     ///
+    /// Ends the tail — dropping `pending_contact` — once either
+    /// [`hammer::ContactState::separated`] physically latches, *or*
+    /// [`PendingContact::samples_elapsed`] reaches
+    /// [`MAX_TOTAL_CONTACT_SAMPLES`], whichever comes first; see that
+    /// constant's doc comment for why the second exit has to exist at all.
+    ///
     /// Total: every branch returns a plain `f32`,
     /// [`hammer::couple_contact_step`] is itself total for any input, and
     /// [`OnePoleLowpass::process`] cannot return non-finite output for a
@@ -768,13 +847,10 @@ impl PluckedString {
             self.sample_rate,
         );
         contact.contact = next_state;
+        contact.samples_elapsed = contact.samples_elapsed.saturating_add(1);
         // Same peak `write_excitation` normalised this strike's reference
         // curve by (`PendingContact::peak`'s doc comment).
-        let shape = if contact.peak > f32::EPSILON {
-            raw_force / contact.peak
-        } else {
-            0.0
-        };
+        let shape = normalized_force(raw_force, contact.peak);
         let prev = contact.prev_shape;
         contact.prev_shape = shape;
         let excitation = self.blended_excitation(shape, prev) * contact.velocity;
@@ -782,7 +858,8 @@ impl PluckedString {
             .felt
             .iter_mut()
             .fold(excitation, |sample, stage| stage.process(sample));
-        if !next_state.separated {
+        let contact_capped = contact.samples_elapsed >= MAX_TOTAL_CONTACT_SAMPLES;
+        if !next_state.separated && !contact_capped {
             self.pending_contact = Some(contact);
         }
         shaped

@@ -484,10 +484,27 @@ resolving the contact force against the string's own returning velocity
 instead of assuming a rigid wall. `crates/piano-core/benches/components.rs`'s
 Criterion benchmark measures **239.01 ns/iteration** (95% CI 232.45–247.11
 ns) for one `couple_contact_step` call — a genuine per-sample cost, unlike
-`simulate_contact`'s per-strike 11.01 µs above, but still small next to the
-2.67 ms callback budget: even a full ~4 ms contact window (the longest
-Chaigne & Askenfelt report) at 48 kHz is under 200 samples, so worst case
-this adds under 48 µs of work, once, at the start of a strike. Fixed-point
+`simulate_contact`'s per-strike 11.01 µs above. It is **not** a one-off lump
+paid once at the start of a strike: every voice currently mid-contact pays
+this cost on *every* sample for as long as its contact lasts, whether that
+sample is filled by `write_excitation`'s burst loop or by
+`next_contact_sample` continuing a `PendingContact` tail. For one voice, a
+full ~4 ms contact window (the longest Chaigne & Askenfelt report) at 48 kHz
+is under 200 samples, so the worst case for that single voice is under
+48 µs spread across those ~200 samples, not incurred instantaneously. The
+real multiplier that matters for "does this fit the budget" is polyphony:
+roughly *N* simultaneous strikes each still in contact costs approximately
+*N* × 239.01 ns of this work in a single sample, and so *N* × that per-sample
+figure per callback block. Concretely, at a 128-sample callback (2.67 ms
+budget at 48 kHz) with 10 simultaneous note-ons all still mid-contact on the
+same sample, this entry alone costs roughly 10 × 239.01 ns ≈ 2.39 µs of that
+sample's share of the block, or up to 128 × 2.39 µs ≈ 306 µs across the
+whole block if every sample in it has all 10 voices still in contact
+(contact durations under 200 samples in practice make that upper bound
+conservative) — still comfortably inside the 2.67 ms budget at this
+polyphony, but the multiplier is *N*, not fixed, so it is the one to
+re-check if a future change raises typical simultaneous-contact counts.
+Fixed-point
 step count checked, not assumed: a targeted convergence check at the hardest
 case this model's own parameter range allows (`MIN_STRING_IMPEDANCE`,
 `MAX_STRIKE_MPS`, `MIN_MASS`) found `3` steps already converged — 3-step vs.

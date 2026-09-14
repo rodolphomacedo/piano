@@ -470,9 +470,17 @@ per-string through the same file/live cascade `stiffness`/`mass`/
 `contact_exponent` already use; `DEFAULT_HAMMER` starts at the ceiling
 (`MAX_STRING_IMPEDANCE`), which reproduces the pre-#57 uncoupled curve
 exactly (`with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_
-reproduces_the_uncoupled_curve`) — a strictly additive change with no
-default-behaviour regression; the register-by-register calibration of lower
-values is left open for a future pass.
+reproduces_the_uncoupled_curve`) — but only when there is no returning wave
+to couple against (`v_incoming ≡ 0.0`), which is true for any string/strike
+where `PendingContact` never activates, i.e. most of the keyboard.
+Wherever `PendingContact`'s tail *is* live (the upper treble), `v_incoming`
+reaches the coupling formula unscaled by `string_impedance`, so the default
+configuration there measurably differs from the pre-#57 curve — validated
+to stay inside the 88-key sweep's committed bands (#87), not unchanged by
+it. The register-by-register calibration of lower `string_impedance` values
+is left open for a future pass; `hammer.rs`'s doc comments on
+`string_impedance`/`MIN_STRING_IMPEDANCE` explain why that range, as
+sanctioned today, is inert and would have nothing to calibrate against yet.
 
 Cost, measured via Criterion (`crates/piano-core/benches/components.rs`):
 **239.01 ns/iteration** (95% CI 232.45–247.11 ns) for one

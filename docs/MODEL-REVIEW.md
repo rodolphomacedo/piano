@@ -341,6 +341,26 @@ perceptual question no measurement in this repository has asked yet, and it
 should not be read as answered just because the mechanism now exists and its
 effect is measurable.
 
+**A separate, known limitation — not the perceptual question above**:
+`string_impedance`'s sanctioned range (`MIN_STRING_IMPEDANCE`–
+`MAX_STRING_IMPEDANCE`, `1.0e6`–`1.0e13`) does not currently reach the
+regime where this field measurably shortens contact duration. An
+independent reimplementation of `couple_contact_step`, swept across that
+whole range, found `force / string_impedance` contributes only ~7e-3 to
+~7e-10 m/s of back-reaction against hammer velocities of 0.5-6 m/s —
+essentially flat, changing peak force by only ~0.13% end to end — while the
+physically "interesting" band, where this term would actually shorten
+contact the way real string loading does, sits around 1e3-1e5, three
+decades below the sanctioned minimum. Concretely: all of the audible
+coupling this branch delivers today comes from `v_incoming` itself,
+unscaled by `string_impedance`, not from tuning this field. Recalibrating
+the range down to the interesting band is a deliberate follow-up, out of
+scope for this branch — it would change contact duration by up to ~65% in
+the reimplementation above and needs its own fresh 88-key sweep (#87) and
+render-and-listen pass, not a change bundled into this one. See
+`hammer::MIN_STRING_IMPEDANCE`'s doc comment for the same note at the code
+site.
+
 ---
 
 ## The plan

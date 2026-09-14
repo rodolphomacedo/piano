@@ -96,15 +96,45 @@ const MAX_MASS: f32 = 100.0;
 /// model's `stiffness`/`mass`/`contact_exponent` range can produce — the
 /// ceiling [`DEFAULT_HAMMER`] starts at, and the value
 /// `with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_reproduces_
-/// the_uncoupled_curve` checks against `simulate_contact`. Provisional:
+/// the_uncoupled_curve` checks against `simulate_contact`, under that
+/// test's own `v_incoming ≡ 0.0` — the regime that covers most of the
+/// keyboard. Wherever a string's `PendingContact` tail is live (the upper
+/// treble), `v_incoming` is no longer `0.0` and enters the coupling formula
+/// unscaled by this field, so the default configuration there measurably
+/// differs from the pre-#57 curve — inside the 88-key sweep's committed
+/// bands (#87), not identical to it. Provisional:
 /// `docs/superpowers/specs/2026-09-13-hammer-string-coupling-design.md`
 /// flags the exact register-by-register calibration of this field as an
 /// open question for the validation task, same as `CONTACT_STIFFNESS` was
-/// before it was checked empirically.
+/// before it was checked empirically — see [`MIN_STRING_IMPEDANCE`]'s doc
+/// comment for why, today, that calibration would have nothing to bite: the
+/// whole range this field is clamped into is inert against the force/
+/// velocity scales this model produces.
 pub(crate) const MAX_STRING_IMPEDANCE: f32 = 1.0e13;
 /// Lowest [`HammerConfig::string_impedance`] `sanitize_hammer` allows —
 /// bounded away from zero for the same reason [`MIN_MASS`] is: it is a
 /// divisor in [`couple_contact_step`]'s `force / string_impedance` term.
+///
+/// **This sanctioned range is currently inert.** An independent
+/// reimplementation of `couple_contact_step`, swept across the whole
+/// `[MIN_STRING_IMPEDANCE, MAX_STRING_IMPEDANCE]` band, found
+/// `force / string_impedance` contributes only ~7e-3 to ~7e-10 m/s of
+/// back-reaction against hammer velocities of 0.5-6 m/s
+/// (`[MIN_STRIKE_MPS, MAX_STRIKE_MPS]`) — essentially flat across the whole
+/// range, changing peak force by only ~0.13% end to end — while the
+/// physically "interesting" band, where this term would actually shorten
+/// contact duration the way real string loading does, sits around 1e3-1e5,
+/// three decades below this constant. Concretely: **all** of the audible
+/// coupling this branch (#57) delivers today comes from `v_incoming`
+/// itself, unscaled by `string_impedance`, not from tuning this field —
+/// varying `string_impedance` anywhere in its sanctioned range is not a
+/// meaningful test of whether the coupling mechanism works (see
+/// `hammer::tests::a_returning_wave_changes_the_force_a_still_ringing_
+/// string_gets`, which varies `v_incoming` instead, for that). Recalibrating
+/// this range down to the interesting band is a deliberate follow-up, out
+/// of scope for this branch: the reviewer's own model found it would change
+/// contact duration by up to ~65%, which needs its own fresh 88-key sweep
+/// (#87) and render-and-listen pass, not a change bundled into this one.
 pub(crate) const MIN_STRING_IMPEDANCE: f32 = 1.0e6;
 
 /// Hard cap on the contact simulation's compression state, in the model's
@@ -144,10 +174,18 @@ pub struct HammerConfig {
     /// 2026-09-13-hammer-string-coupling-design.md`). Large values make
     /// the string act as the rigid wall this model assumed before #57;
     /// [`MAX_STRING_IMPEDANCE`] is chosen to reproduce that curve exactly
-    /// (`with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_
-    /// reproduces_the_uncoupled_curve`), so [`DEFAULT_HAMMER`] starts
-    /// there rather than pre-empting the calibration this field still
-    /// needs.
+    /// when there is no returning wave to couple against
+    /// (`v_incoming ≡ 0.0`) — the case
+    /// `with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_
+    /// reproduces_the_uncoupled_curve` checks, and the one that holds for
+    /// most of the keyboard, where a string's `PendingContact` tail never
+    /// activates. Wherever it does (the upper treble), `v_incoming` reaches
+    /// the coupling formula unscaled by this field, so [`DEFAULT_HAMMER`]'s
+    /// behaviour there measurably differs from the pre-#57 curve — inside
+    /// the 88-key sweep's committed bands (#87), not identical to it. See
+    /// [`MIN_STRING_IMPEDANCE`]'s doc comment for why this field's whole
+    /// sanctioned range does not, by itself, reach a regime where tuning it
+    /// (as opposed to `v_incoming`) audibly matters.
     pub string_impedance: f32,
 }
 
@@ -357,7 +395,6 @@ fn strike_mps_for(velocity: f32) -> f32 {
 /// the velocity/impedance range this model allows, the same way
 /// `CONTACT_STIFFNESS` was checked against simulated output rather than
 /// derived.
-#[allow(dead_code)]
 const COUPLING_FIXPOINT_STEPS: usize = 3;
 
 /// The hammer's own state between one coupled contact sample and the next.
@@ -366,7 +403,6 @@ const COUPLING_FIXPOINT_STEPS: usize = 3;
 /// array index: [`couple_contact_step`] needs the compression and hammer
 /// velocity a precomputed curve never exposed.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
 pub struct ContactState {
     pub(crate) compression: f32,
     pub(crate) hammer_velocity: f32,
@@ -381,7 +417,6 @@ impl ContactState {
     /// The hammer's state the instant it first touches the string at
     /// `velocity`: no compression yet, moving at `strike_mps_for(velocity)`.
     #[must_use]
-    #[allow(dead_code)]
     pub fn starting(velocity: f32) -> Self {
         Self {
             compression: 0.0,
@@ -418,7 +453,6 @@ impl ContactState {
 /// compression is clamped into `[0.0, MAX_COMPRESSION]` on every pass —
 /// proven by `couple_contact_step_is_total`, not argued.
 #[must_use]
-#[allow(dead_code)]
 pub fn couple_contact_step(
     state: ContactState,
     hammer: HammerConfig,
@@ -744,13 +778,26 @@ mod tests {
     fn a_returning_wave_changes_the_force_a_still_ringing_string_gets() {
         // The whole point of #57: two otherwise identical strikes differ
         // once one of them has real energy coming back through the loop.
+        // A bare `f32::EPSILON` threshold would pass today for the right
+        // reason (the real difference measures ~18%), but would keep
+        // passing even if the coupling weakened by orders of magnitude —
+        // it only proves the two floats differ in some low bit, not that
+        // the effect is load-bearing. Asserting a relative difference well
+        // above noise (5%, comfortably under the ~18% observed) actually
+        // encodes the intent: this fails if `v_incoming`'s contribution to
+        // the coupling were removed or nearly vanished.
         let hammer = DEFAULT_HAMMER;
         let state = ContactState::starting(0.6);
         let (_, silent) = couple_contact_step(state, hammer, 0.0, 48_000.0);
         let (_, loaded) = couple_contact_step(state, hammer, 0.3, 48_000.0);
+        let scale = silent.max(loaded).max(f32::EPSILON);
+        let relative_difference = math::abs(silent - loaded) / scale;
         assert!(
-            (silent - loaded).abs() > f32::EPSILON,
-            "a nonzero v_incoming produced the same force as silence"
+            relative_difference > 0.05,
+            "a nonzero v_incoming changed the force by only {:.2}% relative \
+             to silence (silent {silent}, loaded {loaded}) — the coupling \
+             looks nearly inert, not merely small",
+            relative_difference * 100.0
         );
     }
 

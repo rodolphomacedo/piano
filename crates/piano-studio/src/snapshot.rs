@@ -41,6 +41,8 @@ pub struct StringSnapshot {
     pub hammer_stiffness: f32,
     /// See [`StringParameter::HammerMass`].
     pub hammer_mass: f32,
+    /// See [`StringParameter::HammerStringImpedance`].
+    pub hammer_string_impedance: f32,
 }
 
 /// One key and the one to three strings under it.
@@ -98,6 +100,8 @@ pub struct StringRanges {
     pub hammer_stiffness: ParameterRange,
     /// See [`StringParameter::HammerMass`].
     pub hammer_mass: ParameterRange,
+    /// See [`StringParameter::HammerStringImpedance`].
+    pub hammer_string_impedance: ParameterRange,
 }
 
 /// Every soundboard-mode slider's ends. See [`ModeParameter`].
@@ -154,6 +158,7 @@ impl StringRanges {
             hammer_contact_exponent: StringParameter::HammerContactExponent.range(),
             hammer_stiffness: StringParameter::HammerStiffness.range(),
             hammer_mass: StringParameter::HammerMass.range(),
+            hammer_string_impedance: StringParameter::HammerStringImpedance.range(),
         }
     }
 }
@@ -238,11 +243,21 @@ mod tests {
             hammer_contact_exponent: 2.5,
             hammer_stiffness: 1.7e9,
             hammer_mass: 1.0,
+            hammer_string_impedance: piano_core::hammer::DEFAULT_HAMMER.string_impedance,
         };
         let json = serde_json::to_value(snapshot).expect("serialises");
         for parameter in STRING_PARAMETERS {
             let name = wire_name(parameter);
             assert!(json.get(&name).is_some(), "no value served for {name}");
         }
+    }
+
+    #[test]
+    fn hammer_string_impedance_range_matches_the_definition() {
+        let ranges = StringRanges::from_definitions();
+        assert_eq!(
+            ranges.hammer_string_impedance,
+            StringParameter::HammerStringImpedance.range()
+        );
     }
 }

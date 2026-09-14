@@ -88,6 +88,7 @@ total on a full instrument):
 | `hammer.contact_exponent` | No — `hammer::CONTACT_EXPONENT`, a module constant shared by all 230 strings |
 | `hammer.stiffness` | No — `hammer::CONTACT_STIFFNESS`, same |
 | `hammer.mass` | No — `hammer::HAMMER_MASS`, same |
+| `hammer.string_impedance` | Yes, since #57 — `piano_studio`'s `StringParameter::HammerStringImpedance` (`HammerOverrides::string_impedance` in the file cascade); the other three hammer fields above are still shared constants |
 
 **Per-instrument** (a single value shared by the whole piano, not per
 string — because the physical thing they model is a single wooden board or
@@ -123,7 +124,7 @@ strings[]  (explicit, one entry per string)
     "damping": 0.5,
     "sustain": 0.996,
     "inharmonicity": 0.0004,
-    "hammer": { "contact_exponent": 2.5, "stiffness": 1.7e9, "mass": 1.0 }
+    "hammer": { "contact_exponent": 2.5, "stiffness": 1.7e9, "mass": 1.0, "string_impedance": 1.0e13 }
   },
   "registers": {
     "bass":   { "anchor_midi": 21,  "decay_seconds": 35.0, "damping": 0.6, "inharmonicity": 0.0001 },

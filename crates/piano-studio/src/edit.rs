@@ -74,11 +74,13 @@ pub enum StringParameter {
     HammerStiffness,
     /// See [`piano_core::hammer::HammerConfig::mass`].
     HammerMass,
+    /// See [`piano_core::hammer::HammerConfig::string_impedance`].
+    HammerStringImpedance,
 }
 
 /// Every [`StringParameter`], for callers that need to walk them all —
 /// the snapshot's range table and the tests that check none was forgotten.
-pub const STRING_PARAMETERS: [StringParameter; 8] = [
+pub const STRING_PARAMETERS: [StringParameter; 9] = [
     StringParameter::Damping,
     StringParameter::Sustain,
     StringParameter::Inharmonicity,
@@ -87,6 +89,7 @@ pub const STRING_PARAMETERS: [StringParameter; 8] = [
     StringParameter::HammerContactExponent,
     StringParameter::HammerStiffness,
     StringParameter::HammerMass,
+    StringParameter::HammerStringImpedance,
 ];
 
 /// Highest excitation seed a slider offers. `u32::MAX` would make every
@@ -109,6 +112,12 @@ const STIFFNESS_RANGE: ParameterRange = ParameterRange::new(1.7e7, 1.7e11, 1.7e7
 /// [`CONTACT_EXPONENT_RANGE`].
 const MASS_RANGE: ParameterRange = ParameterRange::new(0.01, 100.0, 0.01);
 
+/// Mirrors `piano_core::hammer`'s private `MIN_STRING_IMPEDANCE`/
+/// `MAX_STRING_IMPEDANCE`. See [`CONTACT_EXPONENT_RANGE`]. Provisional
+/// until the validation task in `docs/superpowers/plans/
+/// 2026-09-13-hammer-string-coupling.md` calibrates real defaults.
+const STRING_IMPEDANCE_RANGE: ParameterRange = ParameterRange::new(1.0e6, 1.0e13, 1.0e6);
+
 impl StringParameter {
     /// The span a slider for this parameter should cover.
     #[must_use]
@@ -121,6 +130,7 @@ impl StringParameter {
             Self::HammerContactExponent => CONTACT_EXPONENT_RANGE,
             Self::HammerStiffness => STIFFNESS_RANGE,
             Self::HammerMass => MASS_RANGE,
+            Self::HammerStringImpedance => STRING_IMPEDANCE_RANGE,
         }
     }
 }
@@ -364,5 +374,12 @@ mod tests {
         let json =
             serde_json::to_string(&StringParameter::HammerContactExponent).expect("serialises");
         assert_eq!(json, "\"hammer_contact_exponent\"");
+    }
+
+    #[test]
+    fn hammer_string_impedance_serialises_snake_case() {
+        let json =
+            serde_json::to_string(&StringParameter::HammerStringImpedance).expect("serialises");
+        assert_eq!(json, "\"hammer_string_impedance\"");
     }
 }

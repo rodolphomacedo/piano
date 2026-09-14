@@ -80,6 +80,17 @@ fn bench_hammer_contact(c: &mut Criterion) {
             ))
         });
     });
+    c.bench_function("hammer_couple_contact_step_one_sample", |b| {
+        let state = piano_core::hammer::ContactState::starting(0.8);
+        b.iter(|| {
+            black_box(piano_core::hammer::couple_contact_step(
+                black_box(state),
+                black_box(piano_core::hammer::DEFAULT_HAMMER),
+                black_box(0.1),
+                black_box(48_000.0),
+            ))
+        });
+    });
 }
 
 fn bench_bridge_bus(c: &mut Criterion) {

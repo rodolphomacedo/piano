@@ -68,6 +68,191 @@ fn plucking_produces_signal() {
 }
 
 #[test]
+fn a_hard_strike_on_the_highest_key_still_produces_signal_once_coupled() {
+    // #57's audible claim shows up most in the upper treble, where
+    // contact outlasts one round trip (loop_delay ≈ 0.24 ms at C8's
+    // 4186 Hz, 48 kHz) — this is the sanity floor before the real
+    // behavioural comparison in
+    // `a_pending_contacts_tail_is_measurably_coupled_to_the_real_bridge_tap`
+    // below: coupling must not silence the note outright.
+    let mut string = string_at(4_186.0);
+    string.pluck(0.9);
+    let samples: Vec<f32> = (0..2_000).map(|_| string.process()).collect();
+    assert!(
+        samples.iter().any(|sample| sample.abs() > 1e-6),
+        "a hard strike on the highest key produced no audible signal at all"
+    );
+}
+
+#[test]
+fn a_pending_contacts_tail_is_measurably_coupled_to_the_real_bridge_tap() {
+    // The design doc's own testing plan (`docs/superpowers/specs/
+    // 2026-09-13-hammer-string-coupling-design.md`, "Testing plan") asks
+    // for exactly this: "a second strike's injected force differs
+    // measurably from the same strike computed with `v_incoming` forced to
+    // `0.0`" — proof the coupling is live, not inert.
+    //
+    // This test's predecessor instead varied `string_impedance` between two
+    // full `process()` runs (`5.0e8` vs. the `MAX_STRING_IMPEDANCE`
+    // default) and asserted `assert_ne!` on the raw `f32` output vectors.
+    // That is not the comparison the design doc asked for, and it does not
+    // honestly test coupling: `hammer::MIN_STRING_IMPEDANCE`'s doc comment
+    // documents that `string_impedance`'s *entire* sanctioned range is
+    // nearly inert (the reactive `force / string_impedance` term contributes
+    // only ~7e-3 to ~7e-10 m/s against hammer velocities of 0.5-6 m/s,
+    // changing peak force ~0.13% end to end) — so `assert_ne!` on two such
+    // runs was only ever detecting float noise in low bits, and would keep
+    // passing even if the actual coupling mechanism (`v_incoming`, unscaled
+    // by impedance) were five-plus orders of magnitude weaker than intended
+    // or removed outright.
+    //
+    // What actually varies the coupling is `v_incoming`, so this test
+    // drives a real, hard C8 strike sample by sample with the exact public
+    // pipeline `PluckedString::process` uses internally
+    // (`read_bridge_tap`/`disperse`/`write_mixed_feedback`), captures the
+    // live `PendingContact` state and the real bridge tap it is about to be
+    // coupled against partway through the tail, and calls
+    // `hammer::couple_contact_step` directly with that real tap versus the
+    // same call with `v_incoming` forced to `0.0` — the comparison the
+    // design doc specified, for the exact hammer/state/velocity a live tail
+    // carries, with no `string_impedance` axis involved at all.
+    let mut string = string_at(4_186.0);
+    string.pluck(0.9);
+
+    // At every sample the tail is still pending, compare what
+    // `couple_contact_step` actually injects against the real tap versus
+    // what it would inject with `v_incoming` forced to `0.0` — the exact
+    // design-doc comparison — and keep the sample where that difference is
+    // largest. An early tap (numerically indistinguishable from the
+    // silence the delay line started at) or a moment where the reference
+    // force happens to be huge would understate the effect; scanning the
+    // whole tail for its strongest moment is what actually tests whether
+    // the mechanism is load-bearing anywhere in a real strike, not just at
+    // one arbitrarily chosen sample.
+    let mut largest_relative_difference = 0.0f32;
+    let mut worst_case = None;
+    for _ in 0..2_000 {
+        let Some(contact) = string.pending_contact else {
+            break;
+        };
+        let tap = string.read_bridge_tap();
+        let (_, coupled_force) =
+            hammer::couple_contact_step(contact.contact, contact.hammer, tap, string.sample_rate);
+        let (_, silent_force) =
+            hammer::couple_contact_step(contact.contact, contact.hammer, 0.0, string.sample_rate);
+        let scale = coupled_force.max(silent_force).max(f32::EPSILON);
+        let relative_difference = math::abs(coupled_force - silent_force) / scale;
+        if relative_difference > largest_relative_difference {
+            largest_relative_difference = relative_difference;
+            worst_case = Some((tap, coupled_force, silent_force));
+        }
+        let dispersed = string.disperse(tap);
+        string.write_mixed_feedback(tap, dispersed, 0.0);
+    }
+    let (tap, coupled_force, silent_force) = worst_case.expect(
+        "a hard C8 strike should leave a pending contact tail with at least \
+         one nonzero bridge tap to compare against",
+    );
+    assert!(
+        // The strongest moment actually measures ~35% for this strike —
+        // 2% is a wide margin below that (room for legitimate run-to-run
+        // float variance) while still failing hard if the coupling nearly
+        // vanished or were removed.
+        largest_relative_difference > 0.02,
+        "the largest difference the real bridge tap made to the pending \
+         tail's injected force, anywhere across the tail, was only \
+         {:.4}% relative to `v_incoming` forced to 0.0 (at tap {tap}: \
+         coupled {coupled_force}, silent {silent_force}) — the coupling \
+         looks nearly inert at every state a live tail carries",
+        largest_relative_difference * 100.0
+    );
+}
+
+#[test]
+fn a_pending_contact_tail_is_forced_to_end_within_the_total_contact_sample_cap() {
+    // Without `MAX_TOTAL_CONTACT_SAMPLES`, a pending tail's only exit is
+    // `hammer::ContactState::separated`, which is guaranteed to happen
+    // *eventually* (force stays non-negative, so `hammer_velocity` is
+    // monotonically non-increasing) but not within any fixed sample count.
+    // A `v_incoming` sequence that tracks the hammer's own velocity one
+    // tick behind (`hammer_velocity - epsilon`, recomputed every sample
+    // from the live state) keeps `compression` asymptotically near zero
+    // without ever quite reaching it. Proven directly against
+    // `hammer::couple_contact_step` first, bypassing `PendingContact`
+    // entirely, for 5x `hammer::MAX_CONTACT_SAMPLES` steps without
+    // separating once — this is the pathological sequence the sample cap
+    // exists for.
+    let hammer = hammer::DEFAULT_HAMMER;
+    let epsilon = 0.01f32;
+    let adversarial_bound = hammer::MAX_CONTACT_SAMPLES * 5;
+    let mut state = hammer::ContactState::starting(0.9);
+    for _ in 0..adversarial_bound {
+        let v_incoming = state.hammer_velocity - epsilon;
+        let (next, _) = hammer::couple_contact_step(state, hammer, v_incoming, 48_000.0);
+        state = next;
+    }
+    assert!(
+        !state.separated,
+        "the adversarial v_incoming sequence separated on its own within \
+         {adversarial_bound} steps — this no longer demonstrates the defect \
+         the sample cap fixes; pick a more adversarial sequence"
+    );
+
+    // Same sequence, now driving the real `PendingContact` tail on a hard
+    // C8 strike through `PluckedString::next_contact_sample` directly: the
+    // tail must still end at or before `MAX_TOTAL_CONTACT_SAMPLES` total
+    // samples (burst + tail), even though `separated` never physically
+    // latches for this `v_incoming` sequence.
+    let mut string = string_at(4_186.0);
+    string.pluck(0.9);
+    assert!(
+        string.pending_contact.is_some(),
+        "a hard C8 strike should leave a pending contact tail to test against"
+    );
+    let burst_length = string.loop_delay as usize + 1;
+    let mut tail_samples = 0usize;
+    for _ in 0..adversarial_bound {
+        let Some(contact) = string.pending_contact else {
+            break;
+        };
+        let v_incoming = contact.contact.hammer_velocity - epsilon;
+        string.next_contact_sample(v_incoming);
+        tail_samples += 1;
+    }
+    assert!(
+        string.pending_contact.is_none(),
+        "the pending tail never ended within {adversarial_bound} samples"
+    );
+    let total_samples = burst_length + tail_samples;
+    assert!(
+        total_samples <= MAX_TOTAL_CONTACT_SAMPLES as usize,
+        "contact ran for {total_samples} total samples, past the \
+         {MAX_TOTAL_CONTACT_SAMPLES}-sample cap"
+    );
+}
+
+#[test]
+fn handing_the_contact_over_to_the_pending_tail_injects_no_step_in_force() {
+    // The excitation is the contact force's first difference scaled by
+    // `contact_force_diff_inv_peak`, which is calibrated to the *largest*
+    // step the reference curve takes between two adjacent samples. A tail
+    // that restarts its `prev` at `0.0` therefore fakes a step the size of
+    // the whole pulse — 56x a real one for this note — and the loop plays
+    // it back one round trip later as a single full-scale spike. A4 at 0.8
+    // is the case that caught it: 178 contact samples against a 105-sample
+    // loop, so the tail runs for most of the contact.
+    let mut string = string_at(440.0);
+    string.pluck(0.8);
+    let samples: Vec<f32> = (0..1_000).map(|_| string.process()).collect();
+    let peak = samples.iter().copied().map(f32::abs).fold(0.0, f32::max);
+    assert!(
+        peak < 1.0,
+        "a single string peaks at {peak}, so the hand-off to the pending contact is injecting a \
+         step rather than continuing the force pulse"
+    );
+}
+
+#[test]
 fn output_stays_bounded_for_a_full_second() {
     let mut string = string_at(27.5);
     string.pluck(1.0);

@@ -97,12 +97,15 @@ const MAX_MASS: f32 = 100.0;
 /// ceiling [`DEFAULT_HAMMER`] starts at, and the value
 /// `with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_reproduces_
 /// the_uncoupled_curve` checks against `simulate_contact`, under that
-/// test's own `v_incoming ≡ 0.0` — the regime that covers most of the
-/// keyboard. Wherever a string's `PendingContact` tail is live (the upper
-/// treble), `v_incoming` is no longer `0.0` and enters the coupling formula
-/// unscaled by this field, so the default configuration there measurably
-/// differs from the pre-#57 curve — inside the 88-key sweep's committed
-/// bands (#87), not identical to it. Provisional:
+/// test's own `v_incoming ≡ 0.0` — the regime that holds only for roughly
+/// the bottom third of the keyboard (below about F3/G#3), where a strike's
+/// contact fits inside one loop length and `PendingContact` never
+/// activates. From there upward — the majority of the keyboard, measured
+/// at 50-56 of 88 keys depending on strike velocity (`voicing::
+/// config_for_key`, 48 kHz) — `v_incoming` is no longer `0.0` and enters
+/// the coupling formula unscaled by this field, so the default
+/// configuration there measurably differs from the pre-#57 curve — inside
+/// the 88-key sweep's committed bands (#87), not identical to it. Provisional:
 /// `docs/superpowers/specs/2026-09-13-hammer-string-coupling-design.md`
 /// flags the exact register-by-register calibration of this field as an
 /// open question for the validation task, same as `CONTACT_STIFFNESS` was
@@ -177,12 +180,15 @@ pub struct HammerConfig {
     /// when there is no returning wave to couple against
     /// (`v_incoming ≡ 0.0`) — the case
     /// `with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_
-    /// reproduces_the_uncoupled_curve` checks, and the one that holds for
-    /// most of the keyboard, where a string's `PendingContact` tail never
-    /// activates. Wherever it does (the upper treble), `v_incoming` reaches
-    /// the coupling formula unscaled by this field, so [`DEFAULT_HAMMER`]'s
-    /// behaviour there measurably differs from the pre-#57 curve — inside
-    /// the 88-key sweep's committed bands (#87), not identical to it. See
+    /// reproduces_the_uncoupled_curve` checks, and the one that holds only
+    /// for roughly the bottom third of the keyboard (below about F3/G#3),
+    /// where a string's `PendingContact` tail never activates. From there
+    /// upward — the majority of the keyboard, not just the upper treble;
+    /// measured at 50-56 of 88 keys depending on strike velocity — the tail
+    /// is live and `v_incoming` reaches the coupling formula unscaled by
+    /// this field, so [`DEFAULT_HAMMER`]'s behaviour there measurably
+    /// differs from the pre-#57 curve — inside the 88-key sweep's committed
+    /// bands (#87), not identical to it. See
     /// [`MIN_STRING_IMPEDANCE`]'s doc comment for why this field's whole
     /// sanctioned range does not, by itself, reach a regime where tuning it
     /// (as opposed to `v_incoming`) audibly matters.

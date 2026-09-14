@@ -90,13 +90,13 @@ a deterministic pulse *without* this comb under-excites the treble (it
 regressed the treble-decay gate and was reverted), so the geometry had to
 come first.
 
-### 2. No hammer↔string feedback — **accepted**
+### 2. No hammer↔string feedback — **accepted; done (#57)**
 
-Verified in `crates/piano-core/src/hammer.rs:35`, which states the
-simplification in its own words: *"the string is treated as immobile during
-the contact."*
+Verified, at the time this review was written, in
+`crates/piano-core/src/hammer.rs:35`, which stated the simplification in its
+own words: *"the string is treated as immobile during the contact."*
 
-So the model solves roughly `m·ẍ_h = −K·x^p` and never the real coupled form
+So the model solved roughly `m·ẍ_h = −K·x^p` and never the real coupled form
 `F(t) = K(x_h(t) − y(x_h, t))^p`.
 
 **Why this matters more than it looks.** Contact duration is what sets the
@@ -105,7 +105,29 @@ which is why fortissimo is **brighter**, not merely louder. Without the
 feedback loop, velocity mostly scales amplitude. This is the single largest
 missing piece of *expressiveness*.
 
-Already tracked: **#57**.
+**Done (#57).** `hammer::couple_contact_step` resolves the contact force
+against the string's own returning velocity every sample of contact
+(`v_string = v_incoming + force / string_impedance`), via a hard-capped
+3-step fixed-point iteration rather than the rigid-wall assumption above —
+`PERF-007` tracks its cost, closed by measurement below. Confirmed still
+brighter under real, per-sample coupling (not just the uncoupled envelope
+claim 1 already produced), rendered soft (velocity 0.15) vs. hard (velocity
+0.95), attack-window spectral centroid:
+
+| Note | Soft attack centroid | Hard attack centroid | Δ |
+|---|---|---|---|
+| A1 | 2883.7 Hz | 4307.9 Hz | +1424.2 Hz |
+| A4 | 3896.5 Hz | 5088.4 Hz | +1191.8 Hz |
+| C8 | 776.5 Hz | 2810.7 Hz | +2034.2 Hz |
+
+No clicks, pops or instability across any of the six renders (largest
+sample-to-sample jump, relative to that render's own peak: 0.434, well under
+1.0), and the full 88-key release sweep stayed inside every committed band
+(fundamental decay, per-partial ratio, radiated energy, monochord-vs-trichord)
+with no exceptions. A4's fundamental measured -2.15 cents from 440 Hz
+(tolerance <5 cents) — tuning unaffected. What this does **not** establish:
+whether the spectral difference above is *large enough* to matter to a
+listener — see N3.
 
 ### 3. The bridge is an average, not an admittance — **partly accepted**
 
@@ -305,11 +327,19 @@ the level. Tracked by **#79**, now fully landed
 `docs/TIMBRE-PLAN.md` F5) — but #79 was about *gain* mapping (how loud a
 strike sounds), not about timbre, and `warp_velocity` only reshapes the
 strike velocity `pluck` receives, not the spectrum a given velocity
-produces. **This item is still open**: velocity already reaches the
-hammer's own contact model (harder strikes are shorter and brighter, see
-`piano_core::hammer`'s velocity → brightness cue), but nothing measures
-whether that spectral change is *audible enough*, only that a curve now
-exists to make it *loud enough*.
+produces. The piece #79 could not close on its own — a real, per-sample
+coupling between the hammer's force and the string's own motion, not just a
+velocity-shaped envelope — **has now landed** (#57, see item 2's "Done"
+note): every one of A1/A4/C8's hard strikes measured a higher attack-window
+spectral centroid than its own soft strike, confirming velocity still
+changes the excitation's *shape*, not just its level, under real coupling.
+**What remains open is narrower and different in kind**: none of Task 6's
+checks (the 88-key sweep, the fixed-point convergence check, the A1/A4/C8
+render/measure pass) establish whether that spectral difference is *large
+enough* to be perceptible to a listener as increased brightness — that is a
+perceptual question no measurement in this repository has asked yet, and it
+should not be read as answered just because the mechanism now exists and its
+effect is measurable.
 
 ---
 

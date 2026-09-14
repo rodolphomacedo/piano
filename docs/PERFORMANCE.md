@@ -78,7 +78,7 @@ than building a second, parallel timing mechanism just for benchmarking.
 | [PERF-004](#perf-004) | Linear interpolation in the fractional delay | M4 | Implemented, unmeasured |
 | [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Implemented, **measured (M7)** |
 | [PERF-006](#perf-006) | Polyphony and voice management | M5 | Mitigated (energy gating), **gate's saving measured (M7)** |
-| [PERF-007](#perf-007) | Hammer–string contact solver | M4 | Implemented, **measured (M7)** |
+| [PERF-007](#perf-007) | Hammer–string contact solver | M4 | **Closed — coupled solve implemented and measured (#57): 239.01 ns/iteration** |
 | [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Implemented, **isolated cost measured (M7)** |
 | [PERF-009](#perf-009) | Soundboard convolution | M6 | Implemented (modal synthesis), **28-mode isolated cost measured (#78): 5.10 µs/block, <1%** |
 | [PERF-010](#perf-010) | Cache behaviour of the delay-line working set | M7 | **Mitigated and measured — ~5% faster than naive** |
@@ -475,6 +475,34 @@ nowhere near the 2.67 ms callback budget. Still open: whether a true
 coupled hammer/string solve would sound meaningfully different remains
 unmeasured — this milestone answered the *cost* question `PERF-007` asked,
 not the *fidelity* one.
+
+*Update (issue #57)*: **implemented and measured — closed.** `hammer::
+couple_contact_step` is the true coupled solve the paragraph above still
+called unmeasured: a bounded, 3-step (`COUPLING_FIXPOINT_STEPS`) fixed-point
+iteration, run once per sample of contact rather than once per strike,
+resolving the contact force against the string's own returning velocity
+instead of assuming a rigid wall. `crates/piano-core/benches/components.rs`'s
+Criterion benchmark measures **239.01 ns/iteration** (95% CI 232.45–247.11
+ns) for one `couple_contact_step` call — a genuine per-sample cost, unlike
+`simulate_contact`'s per-strike 11.01 µs above, but still small next to the
+2.67 ms callback budget: even a full ~4 ms contact window (the longest
+Chaigne & Askenfelt report) at 48 kHz is under 200 samples, so worst case
+this adds under 48 µs of work, once, at the start of a strike. Fixed-point
+step count checked, not assumed: a targeted convergence check at the hardest
+case this model's own parameter range allows (`MIN_STRING_IMPEDANCE`,
+`MAX_STRIKE_MPS`, `MIN_MASS`) found `3` steps already converged — 3-step vs.
+6-step peak force identical to 10 significant digits, worst per-sample
+divergence in the tail ~4.8e-6 relative, five to six orders of magnitude
+under the 1% threshold this entry's mitigation originally asked for; the
+full 88-key release sweep stayed inside every committed band with this step
+count, with no exceptions. **This entry now closes**: the hard constraint (a
+compile-time-bounded iteration, never `while !converged`) was met from the
+first commit; the cost is measured or bounded on both sides (envelope and
+per-sample coupling); and the step count the bound depends on is verified
+converged rather than merely chosen. What remains open belongs to
+`docs/MODEL-REVIEW.md`'s N3, not to this entry: whether the resulting
+spectral change is *large enough* to matter perceptually is a fidelity
+question this entry never asked and closing it does not answer.
 
 ---
 

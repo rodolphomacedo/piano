@@ -458,6 +458,44 @@ This only reshapes *loudness* per velocity — `docs/MODEL-REVIEW.md`'s N3
 `docs/PHYSICS.md`'s "Numbers worth having" with what the model actually
 achieves.
 
+**F7. Hammer↔string coupling during contact — done (#57).**
+`hammer::couple_contact_step` replaces the rigid-wall assumption
+`simulate_contact` made: every sample of contact now resolves the contact
+force against the string's own returning velocity
+(`v_string = v_incoming + force / string_impedance`), via a hard-capped
+3-step (`COUPLING_FIXPOINT_STEPS`) fixed-point iteration rather than an
+unbounded solve. `HammerConfig` gained a `string_impedance` field
+(`MIN_STRING_IMPEDANCE`–`MAX_STRING_IMPEDANCE`, `1.0e6`–`1.0e13`), reachable
+per-string through the same file/live cascade `stiffness`/`mass`/
+`contact_exponent` already use; `DEFAULT_HAMMER` starts at the ceiling
+(`MAX_STRING_IMPEDANCE`), which reproduces the pre-#57 uncoupled curve
+exactly (`with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_
+reproduces_the_uncoupled_curve`) — a strictly additive change with no
+default-behaviour regression; the register-by-register calibration of lower
+values is left open for a future pass.
+
+Cost, measured via Criterion (`crates/piano-core/benches/components.rs`):
+**239.01 ns/iteration** (95% CI 232.45–247.11 ns) for one
+`couple_contact_step` call — closes `PERF-007`. The 3-step fixed-point count
+was checked, not assumed: at the hardest case this model's parameter range
+allows (`MIN_STRING_IMPEDANCE`, `MAX_STRIKE_MPS`, `MIN_MASS`), 3 steps vs. 6
+give an identical peak force to 10 significant digits, worst per-sample tail
+divergence ~4.8e-6 relative — five to six orders of magnitude under the 1%
+threshold this bound needed to clear. Gate, as met: the full 88-key release
+sweep stayed inside every committed band (fundamental decay, per-partial
+ratio, radiated energy, monochord-vs-trichord) with no exceptions; rendered
+A1/A4/C8 soft (velocity 0.15) vs. hard (velocity 0.95) each showed a
+measurably higher attack-window spectral centroid for the hard strike (A1
++1424 Hz, A4 +1192 Hz, C8 +2034 Hz), confirming velocity still brightens
+under real per-sample coupling, not just the uncoupled envelope F2 already
+produced; A4's fundamental measured -2.15 cents from 440 Hz (tolerance <5),
+tuning unaffected.
+
+Still open, and deliberately not claimed here: whether this spectral
+difference is *large enough* to be audibly meaningful to a listener —
+`docs/MODEL-REVIEW.md`'s N3 leaves that question open on purpose, since
+nothing measured in this pass was a perceptual test.
+
 ### Part 2 — Make everything configurable
 
 **P1. Fix D5 first.** **Done.** Wire the `registers` block into resolution so
@@ -541,6 +579,7 @@ Every item above is a GitHub issue, ordered by priority label.
 | M16 | [#78](https://github.com/rodolphomacedo/piano/issues/78) The soundboard is inaudible above 200 Hz | F3 | 1 — critical |
 | M16 | [#79](https://github.com/rodolphomacedo/piano/issues/79) No velocity curve and no master gain — **done** | F5 | 2 — high |
 | M16 | [#80](https://github.com/rodolphomacedo/piano/issues/80) Re-tune anchors by ear; update PHYSICS.md and the pt-BR material | F6 | 2 — high |
+| M16 | [#57](https://github.com/rodolphomacedo/piano/issues/57) No hammer↔string feedback during contact — **done** | F7 | 1 — critical |
 | M17 — Everything configurable | [#81](https://github.com/rodolphomacedo/piano/issues/81) *Bug*: `registers` parsed and silently ignored | P1 | 1 — critical |
 | M17 | [#82](https://github.com/rodolphomacedo/piano/issues/82) Move every remaining constant into the cascade | P2 | 2 — high |
 | M17 | [#83](https://github.com/rodolphomacedo/piano/issues/83) Ranges and display curves worth dragging | P3 | 3 — medium |

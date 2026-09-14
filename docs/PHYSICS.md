@@ -205,11 +205,18 @@ Hertzian-contact nonlinear spring (Chaigne & Askenfelt 1994,
 `F = K·x^p`, `p ≈ 2–3`): harder strikes compress the felt more, which makes
 the effective spring stiffer, which makes contact both shorter *and* higher
 in peak force — exactly the two effects that make a hard-struck note brighter
-rather than merely louder. The string's own motion is not solved
-simultaneously (that full coupled problem is `PERF-007`'s harder,
-not-yet-built form); this shapes the existing excitation noise rather than
-replacing it, which keeps every partial excited (still noise under the hood)
-while making the excitation's spectral balance a function of strike velocity.
+rather than merely louder. The string's own motion **is now solved
+alongside the hammer's** (#57): `hammer::couple_contact_step` resolves the
+contact force against the string's own returning velocity every sample of
+contact, via the bounded fixed-point iteration `PERF-007` describes — see
+that function's own doc comment, and `docs/superpowers/specs/
+2026-09-13-hammer-string-coupling-design.md`, for the coupling itself rather
+than repeating it here. `simulate_contact` still runs the *uncoupled* curve
+this module used before #57 — kept as the peak-normalisation reference and
+as the sole input the excitation's bandwidth calibration (below) reads — so
+this shapes the existing excitation noise rather than replacing it, which
+keeps every partial excited (still noise under the hood) while making the
+excitation's spectral balance a function of strike velocity.
 
 ### Why the envelope alone was not enough
 
@@ -246,9 +253,14 @@ finally a property of the output rather than of this document.
 The proportionality constant between `1/τ` and the corner is calibrated, not
 derived, and the reason is the simplification stated above: a real strike's
 energy well above `1/τ` comes largely from the string pushing back on the
-hammer during contact, and that back-reaction is precisely what this model
-does not solve. Taking the force pulse's own corner literally would put a
-*fortissimo* strike near 300 Hz and mute the instrument.
+hammer during contact, and that back-reaction is precisely what *this
+bandwidth calibration* does not draw on — it is derived from
+`simulate_contact`'s uncoupled contact-duration curve, not from
+`couple_contact_step`'s per-sample coupled force (#57), so the calibration
+gap this paragraph describes still stands even though the force itself is no
+longer solved against a rigid wall. Taking the force pulse's own corner
+literally would put a *fortissimo* strike near 300 Hz and mute the
+instrument.
 
 Measured on A4 at velocity 0.8, before and after, over the first 5 ms:
 spectral centroid 11.2 kHz → 5.9 kHz, peak 1.97 → 0.65. The second number
@@ -265,8 +277,14 @@ A4's is 2.27 ms and holds about a third of it; C6's is 1 ms and holds a
 seventh. Two consequences: velocity's effect on the attack is weakest exactly
 where the truncation is worst, and the top octave is markedly quieter than
 the rest of the keyboard. A real hammer stays in contact while the wave makes
-several round trips, adding force to a string that is already moving — the
-same back-reaction problem, seen from the other side.
+several round trips, adding force to a string that is already moving.
+`couple_contact_step` (#57) now supplies exactly that during the
+pending-contact tail — `PluckedString::next_contact_sample` feeds it the
+string's real, current returning velocity, not silence — so what remains
+open here is the truncation above, not the back-reaction: the burst `pluck`
+writes up front, and the total duration the tail continues toward, are still
+bounded by `simulate_contact`'s uncoupled curve rather than shaped by what
+the string is actually doing.
 
 ## Why the strike position notches out a partial (F2, #32)
 

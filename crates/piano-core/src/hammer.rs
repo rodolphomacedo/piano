@@ -25,27 +25,24 @@
 //! shape. That is heard as a hard, dry knock rather than as felt. See
 //! [`excitation_cutoff_hz`] for the measurement and the correction.
 //!
-//! # The simplification this makes, stated plainly
+//! # The string is no longer treated as immobile (#57)
 //!
-//! A full simultaneous hammer/string solve is an implicit problem — the
-//! string's own motion feeds back into the contact force — and belongs, if
-//! ever built, inside the per-sample loop with a hard-capped fixed-point
-//! iteration; `PERF-007` in `docs/PERFORMANCE.md` describes exactly that and
-//! why it must stay bounded. This module instead solves only the hammer's
-//! side of the contact (the string is treated as immobile during the
-//! ~1-4 ms contact window, i.e. no back-reaction), producing a
-//! velocity-shaped force envelope and a bandwidth that together shape the
-//! existing excitation noise rather than replacing it. The excitation stays
-//! broadband enough that every partial the string can hold still gets
-//! excited — which is what makes a delay-line loop ring at all — while its
-//! *shape*, and therefore its brightness, becomes a function of how hard the
-//! key was struck, which scaling a flat-amplitude burst can never achieve
-//! regardless of the scale factor.
+//! Earlier revisions solved only the hammer's side of the contact against a
+//! rigid wall. [`couple_contact_step`] closes that gap: it resolves the
+//! contact force against the string's own returning velocity every sample,
+//! via a hard-capped fixed-point iteration — `PERF-007` in
+//! `docs/PERFORMANCE.md` tracks the cost of doing that per sample. See that
+//! function's own doc comment for the coupling itself, and
+//! `docs/superpowers/specs/2026-09-13-hammer-string-coupling-design.md` for
+//! the design it implements, rather than repeating either here.
 //!
-//! Omitting the back-reaction is also why [`EXCITATION_BANDWIDTH_FACTOR`]
-//! has to be calibrated rather than derived: a real strike's energy well
-//! above `1/τ` comes largely from the string pushing back during contact,
-//! which is exactly the term this module does not solve.
+//! [`simulate_contact`] below still solves the *uncoupled* problem this
+//! module used before #57 — the reference curve [`couple_contact_step`]'s
+//! force is normalised against, and the only input `excitation_cutoff_hz`'s
+//! bandwidth calibration reads. That is why [`EXCITATION_BANDWIDTH_FACTOR`]'s
+//! own doc comment still says this model omits the back-reaction: it is
+//! correct for that constant specifically, even though the force the string
+//! actually receives during a real strike no longer is.
 //!
 //! The contact simulation itself is a bounded explicit (semi-implicit Euler)
 //! integration, capped at [`MAX_CONTACT_SAMPLES`] steps — a compile-time

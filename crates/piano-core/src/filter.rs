@@ -241,6 +241,14 @@ impl OnePoleLowpass {
     pub fn reset(&mut self) {
         self.state = 0.0;
     }
+
+    /// Steady-state gain at `frequency_hz`: `(1 − p)/|1 − p·e^{−jω}|`.
+    #[must_use]
+    pub fn magnitude_at(&self, frequency_hz: f32, sample_rate_hz: f32) -> f32 {
+        let omega = core::f32::consts::TAU * frequency_hz / sample_rate_hz;
+        let denominator = 1.0 - 2.0 * self.pole * math::cos(omega) + self.pole * self.pole;
+        (1.0 - self.pole) / math::sqrt(denominator.max(f32::MIN_POSITIVE))
+    }
 }
 
 /// A one-pole highpass that removes the DC offset a feedback loop accumulates.

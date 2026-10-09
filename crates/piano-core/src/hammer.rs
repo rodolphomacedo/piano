@@ -67,27 +67,30 @@ pub const MAX_CONTACT_SAMPLES: usize = 512;
 /// compression above 1 can overflow `powf` to infinity. 0.5-8.0 comfortably
 /// covers the 2-3 real felt range Chaigne & Askenfelt report plus enough
 /// slack either side for a deliberately exaggerated, non-physical voicing.
-const MIN_CONTACT_EXPONENT: f32 = 0.5;
+pub const MIN_CONTACT_EXPONENT: f32 = 0.5;
 /// See [`MIN_CONTACT_EXPONENT`].
-const MAX_CONTACT_EXPONENT: f32 = 8.0;
+pub const MAX_CONTACT_EXPONENT: f32 = 8.0;
 
 /// Widest [`HammerConfig::stiffness`] `sanitize_hammer` allows — two orders
-/// of magnitude either side of [`DEFAULT_HAMMER`]'s value, chosen together
-/// with [`MAX_COMPRESSION`], [`MIN_MASS`] and [`MAX_CONTACT_EXPONENT`] so
-/// `simulate_contact`'s per-step force can never exceed `f32`'s range (see
-/// the derivation in that function's doc comment).
-const MIN_STIFFNESS: f32 = 1.7e7;
+/// of magnitude below [`DEFAULT_HAMMER`]'s value and three above it, chosen
+/// together with [`MAX_COMPRESSION`], [`MIN_MASS`] and
+/// [`MAX_CONTACT_EXPONENT`] so `simulate_contact`'s per-step force can never
+/// exceed `f32`'s range: `1.7e12 · 10⁸ / 0.01 ≈ 2e22`, sixteen decades of
+/// headroom. The top is three decades up, not two, because a top-treble
+/// hammer's felt is that much harder than the bass's (see
+/// `crate::excitation::hammer_for_frequency`).
+pub const MIN_STIFFNESS: f32 = 1.7e7;
 /// See [`MIN_STIFFNESS`].
-const MAX_STIFFNESS: f32 = 1.7e11;
+pub const MAX_STIFFNESS: f32 = 1.7e12;
 
 /// Widest [`HammerConfig::mass`] `sanitize_hammer` allows.
 ///
 /// Bounded away from zero because mass is a divisor in `simulate_contact`'s
 /// restoring-force step — an unbounded-small mass blows the force up the
 /// same way an unbounded-large exponent does.
-const MIN_MASS: f32 = 0.01;
+pub const MIN_MASS: f32 = 0.01;
 /// See [`MIN_MASS`].
-const MAX_MASS: f32 = 100.0;
+pub const MAX_MASS: f32 = 100.0;
 
 /// Widest [`HammerConfig::string_impedance`] `sanitize_hammer` allows.
 ///
@@ -113,7 +116,7 @@ const MAX_MASS: f32 = 100.0;
 /// comment for why, today, that calibration would have nothing to bite: the
 /// whole range this field is clamped into is inert against the force/
 /// velocity scales this model produces.
-pub(crate) const MAX_STRING_IMPEDANCE: f32 = 1.0e13;
+pub const MAX_STRING_IMPEDANCE: f32 = 1.0e13;
 /// Lowest [`HammerConfig::string_impedance`] `sanitize_hammer` allows —
 /// bounded away from zero for the same reason [`MIN_MASS`] is: it is a
 /// divisor in [`couple_contact_step`]'s `force / string_impedance` term.
@@ -138,7 +141,7 @@ pub(crate) const MAX_STRING_IMPEDANCE: f32 = 1.0e13;
 /// of scope for this branch: the reviewer's own model found it would change
 /// contact duration by up to ~65%, which needs its own fresh 88-key sweep
 /// (#87) and render-and-listen pass, not a change bundled into this one.
-pub(crate) const MIN_STRING_IMPEDANCE: f32 = 1.0e6;
+pub const MIN_STRING_IMPEDANCE: f32 = 1.0e6;
 
 /// Hard cap on the contact simulation's compression state, in the model's
 /// own normalised units.

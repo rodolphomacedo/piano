@@ -286,6 +286,62 @@ writes up front, and the total duration the tail continues toward, are still
 bounded by `simulate_contact`'s uncoupled curve rather than shaped by what
 the string is actually doing.
 
+### Why every register has its own hammer, and why the treble is darker
+
+Until this change every key was struck by the same hammer: the bass one,
+with about 4 ms of contact at *mezzo-forte*. A. Askenfelt & E. Jansson ("From
+touch to string vibrations", JASA 1990-91) measure contact falling from
+about 4 ms in the bass to well under 1 ms at the top, because treble hammers
+are lighter (H. A. Conklin, JASA 99(6), 1996: roughly 4-5 g against 10-11 g)
+and their felt is harder. A 4 ms contact on a C8 string drives it for
+seventeen of its periods: measured, the top octaves opened with a 4 ms click
+13-20 dB louder than the note it started, and their upper partials came out
+as strong as the fundamental — heard as shrill, glassy treble.
+
+`excitation::hammer_for_frequency` now gives each register its own hammer:
+mass falling geometrically to 0.4x at C8, and stiffness solved from
+`τ ∝ (m/K)^(1/(p+1))` so that the contact lasts `excitation::contact_seconds`
+— 4 ms at A0 to 0.6 ms at C8 — at the reference velocity. Three more
+consequences of the same physics follow:
+
+- **Mass loading.** Above about C6 even the short treble contact outlasts
+  the string's period, and the hammer's mass sitting on the string reflects
+  high frequencies while passing low ones. `excitation::ExcitationShaper`
+  reproduces the spectral consequence with a three-pole lowpass whose corner,
+  in partials, falls as the contact-to-period ratio cubed; it is normalised
+  to unit gain at the fundamental and transparent below about A3.
+- **Frequency-dependent string loss.** The loop is solved against decay
+  targets anchored by partial *number*, but air and internal friction
+  depend on absolute frequency. Each target is now capped by Chaigne &
+  Askenfelt's `b₃·ω²` loss (JASA 95, 1994, `b₃ = 6.25·10⁻⁹ s`), so a 12 kHz
+  partial dies in a quarter of a second whichever key it belongs to.
+- **Loudness follows momentum.** The excitation's slope used to be
+  normalised to unit peak, which gave a harder, shorter strike *less*
+  low-frequency drive: A6 stopped getting louder past *mezzo-forte*. It is
+  now scaled so its low-frequency content is proportional to velocity, as a
+  rebounding hammer's momentum `∫F dt = 2mv` is; the shorter contact adds
+  brightness on top. The response is 30-36 dB from velocity 0.1 to 1.0 with
+  every step louder, so the engine's velocity curve is now the identity.
+
+Measured (full engine, velocity 0.6): E6's second partial went from +6 dB
+to −13 dB relative to its fundamental, A7's from about −3 dB to −10 dB, and
+C8's 12-16 kHz band from −14 dB to −33 dB of the note's energy.
+
+### Why each key has a regulation gain
+
+Nothing in the string model makes neighbouring keys equally loud: the unison
+count steps from one string to two at A1 and to three at C#3, each step
+adding 4-6 dB, and the per-register hammer moves the top octaves by several
+more. A-weighted at *mezzo-forte* the raw keyboard spanned 26 dB with 5 dB
+cliffs at both breaks. A technician evens a real piano out after the
+physics, by needling and hardening individual hammers; `voicing::
+level_for_key` does the same with a measured per-key gain
+(`voicing_level.rs`), regulated to a curve that is flat from C3 to C7, lower
+on the meter in the bass (A-weighting discounts 50-200 Hz 10-15 dB more than
+the ear does at playing level, ISO 226) and 4 dB lower at C8. The
+`keyboard_loudness` test fails if any key drifts more than 2 dB off the
+curve, and regenerates the table.
+
 ## Why the strike position notches out a partial (F2, #32)
 
 A hammer does not strike the whole string; it lands at one point, roughly

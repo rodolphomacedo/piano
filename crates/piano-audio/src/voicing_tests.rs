@@ -120,10 +120,9 @@ fn every_fundamental_lands_within_a_factor_of_two_of_its_target() {
         let frequency = key(midi).frequency(tuning).hertz();
         let target = decay_targets_for(
             frequency,
-            bass_hz,
-            mid_hz,
-            treble_hz,
-            (BASS_DECAY_SECONDS, MID_DECAY_SECONDS, TREBLE_DECAY_SECONDS),
+            tuning,
+            (bass_hz, mid_hz, treble_hz),
+            RegisterOverrides::default(),
         )
         .fundamental;
         let achieved = achieved_decay_seconds(midi, 1.0);
@@ -211,9 +210,9 @@ fn the_zero_mix_axis_inverts_its_own_loss_shape() {
 fn the_target_curve_falls_monotonically_with_partial_index() {
     let targets = DecayTargets {
         fundamental_hz: 27.5,
-        fundamental: BASS_DECAY_SECONDS,
-        mid_partial: BASS_MID_PARTIAL_DECAY_SECONDS,
-        brightness: BASS_BRIGHTNESS_DECAY_SECONDS,
+        fundamental: scale::A0_ANCHOR.fundamental_seconds,
+        mid_partial: scale::A0_ANCHOR.mid_partial_seconds,
+        brightness: scale::A0_ANCHOR.brightness_seconds,
     };
     let mut previous = f32::INFINITY;
     for step in 0..64u16 {
@@ -261,10 +260,11 @@ fn measured_decay_seconds(midi: u8) -> f32 {
     let mut string = PluckedString::new(config, sample_rate()).expect("key is tunable");
     string.pluck(1.0);
 
-    // `BASS_DECAY_SECONDS` is the longest any anchor's target ever asks
+    // A0's fundamental is the longest any anchor's target ever asks
     // for, so a cap of `1.5x` that comfortably bounds every measurement
     // this module takes without the cap itself becoming the thing tested.
-    let sample_count_cap = (sample_rate().hertz() * BASS_DECAY_SECONDS * 1.5) as u32;
+    let sample_count_cap =
+        (sample_rate().hertz() * scale::A0_ANCHOR.fundamental_seconds * 1.5) as u32;
     let mut samples_elapsed = 0u32;
     while !string.is_silent() && samples_elapsed < sample_count_cap {
         let _ = string.process();
@@ -284,9 +284,10 @@ fn measured_decay_seconds(midi: u8) -> f32 {
 fn treble_notes_no_longer_die_in_milliseconds() {
     let measured = measured_decay_seconds(HIGHEST_PIANO_KEY);
     assert!(
-        measured > TREBLE_DECAY_SECONDS * 0.7,
-        "measured {measured}s should land close to the {TREBLE_DECAY_SECONDS}s target, \
-         not the ~12ms the uncalibrated filter and the truncated excitation used to produce"
+        measured > scale::C8_ANCHOR.fundamental_seconds * 0.7,
+        "measured {measured}s should land close to the {}s target, \
+         not the ~12ms the uncalibrated filter and the truncated excitation used to produce",
+        scale::C8_ANCHOR.fundamental_seconds
     );
 }
 
@@ -341,7 +342,7 @@ fn overriding_the_bass_decay_target_moves_the_bass_fundamental_without_moving_tr
         RegisterOverrides::default(),
     );
     let mut overrides = RegisterOverrides::default();
-    overrides.bass.decay_seconds = Some(BASS_DECAY_SECONDS * 3.0);
+    overrides.bass.decay_seconds = Some(scale::A0_ANCHOR.fundamental_seconds * 3.0);
     let overridden =
         voicing_for_key_with_registers(key(LOWEST_PIANO_KEY), tuning, sample_rate(), overrides);
     assert_ne!(
@@ -440,7 +441,7 @@ fn moving_an_anchor_position_shifts_where_its_curve_starts() {
     );
     let mut overrides = RegisterOverrides::default();
     overrides.bass.anchor_midi = Some(probe);
-    overrides.bass.decay_seconds = Some(BASS_DECAY_SECONDS * 5.0);
+    overrides.bass.decay_seconds = Some(scale::A0_ANCHOR.fundamental_seconds * 5.0);
     let moved = voicing_for_key_with_registers(key(probe), tuning, sample_rate(), overrides);
     assert_ne!(
         baseline.sustain, moved.sustain,
@@ -537,10 +538,9 @@ fn report_the_solved_voicing_at_each_anchor() {
         let voicing = voicing_for_key(key(midi), tuning, sample_rate());
         let targets = decay_targets_for(
             frequency,
-            anchor_hz(LOWEST_PIANO_KEY, tuning),
-            anchor_hz(CONCERT_A_KEY, tuning),
-            anchor_hz(HIGHEST_PIANO_KEY, tuning),
-            (BASS_DECAY_SECONDS, MID_DECAY_SECONDS, TREBLE_DECAY_SECONDS),
+            tuning,
+            (frequency, frequency, frequency),
+            RegisterOverrides::default(),
         );
         print!(
             "{name} f0={frequency:7.1} Hz  pole={:.5} zero_mix={:.5} sustain={:.6}  rendered={:.2}s  ",
@@ -557,5 +557,27 @@ fn report_the_solved_voicing_at_each_anchor() {
             );
         }
         println!();
+    }
+}
+
+/// The scale's wound-to-plain break must survive the loop-filter solve: the
+/// first plain string's bright partial rings longer than the last wound
+/// string's, while every neighbouring pair on either side shortens going up
+/// (issue #88).
+#[test]
+fn the_solved_strings_keep_the_wound_to_plain_break() {
+    let bright = |midi: u8| achieved_decay_seconds(midi, BRIGHTNESS_PARTIAL);
+    let last_wound = scale::LAST_WOUND_ANCHOR.midi;
+    let across = bright(last_wound + 1) / bright(last_wound);
+    assert!(
+        across > 1.1,
+        "the break only moved the bright partial by {across}"
+    );
+    for midi in [last_wound - 2, last_wound + 2] {
+        let step = bright(midi + 1) / bright(midi);
+        assert!(
+            step < across,
+            "MIDI {midi} steps by {step}, the break by {across}"
+        );
     }
 }

@@ -221,8 +221,11 @@ string transition and at the monochord→bichord→trichord boundaries, and the
 "killer octave" region is a known discontinuity.
 
 The review's suggestion of ~10 anchor keys and a per-key parameter table is
-cheap, low-risk and high-value. **Not currently tracked as an issue** — #80 is
-about re-tuning the existing three anchors, which is a different thing.
+cheap, low-risk and high-value. Tracked as #88. The decay targets now come
+from a scale table (`crates/piano-audio/src/voicing_scale.rs`) with the
+wound→plain break written as a step between two adjacent anchor keys; the
+unison-count boundaries were already abrupt. Inharmonicity still follows a
+continuous two-asymptote curve, so its wound/plain step is not modelled yet.
 
 ### 8. Fit parameters against real recordings — **accepted, with a hard constraint the review could not know**
 
@@ -407,7 +410,8 @@ of a coupled hammer and is meaningless before one exists.
 Replace 3-anchor interpolation with ~10 anchor keys and a real per-key table,
 with the wound/plain and monochord/bichord/trichord breaks represented as
 breaks. Cheap, low risk, and it is what stops the keyboard sounding like one
-instrument stretched across 88 notes. **New issue needed.**
+instrument stretched across 88 notes. Tracked as #88; the decay table and its
+wound/plain break are done.
 
 ### P4 — Bridge and soundboard as one mechanical system *(claims 3, 5, 6)*
 

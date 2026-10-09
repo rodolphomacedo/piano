@@ -9,11 +9,12 @@
 //! couple of seconds, and carry much more (Fletcher & Rossing, already
 //! cited in [`piano_core::dispersion`] for exactly this bass-to-treble
 //! range). [`voicing_for_key`] computes a `damping`/`sustain`/
-//! `inharmonicity` baseline for each key by interpolating between three
-//! anchors — A0, A4 and C8 — taken from numbers this project's own docs
-//! already state, rather than inventing new ones (`docs/PRIOR-ART.md`'s
-//! rule that parameter values come from a published source or a documented
-//! fit, never an unexplained literal).
+//! `inharmonicity` baseline for each key: its decay targets from the scale
+//! table in `voicing_scale.rs`, which keeps the wound-to-plain break as a
+//! break (issue #88), and its inharmonicity from `voicing_inharmonicity.rs`'s
+//! two-asymptote curve — numbers taken from published sources or labelled as
+//! this project's own reasoned choice (`docs/PRIOR-ART.md`'s rule that
+//! parameter values never appear as unexplained literals).
 //!
 //! # Why a key is voiced against three decay times, not one
 //!
@@ -45,61 +46,11 @@ use piano_core::string::{SILENCE_THRESHOLD, StringConfig};
 use piano_core::{SampleRate, math};
 use piano_params::{CONCERT_A_KEY, HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
-/// Target ring-out time for the fundamental at A0, the middle of
-/// `docs/PHYSICS.md`'s "Typical decay" row for that key (30-40 s).
-const BASS_DECAY_SECONDS: f32 = 35.0;
-
-/// Target ring-out time for the fundamental at A4, the middle of the same
-/// row's 8-15 s.
-const MID_DECAY_SECONDS: f32 = 11.0;
-
-/// Target ring-out time for the fundamental at C8, the middle of the same
-/// row's 1-2 s.
-const TREBLE_DECAY_SECONDS: f32 = 1.5;
-
-/// Which partial the `*_MID_PARTIAL_DECAY_SECONDS` anchors describe.
+/// Which partial a scale anchor's `mid_partial_seconds` describes.
 const MID_PARTIAL: f32 = 3.0;
 
-/// Which partial the `*_BRIGHTNESS_DECAY_SECONDS` anchors describe.
+/// Which partial a scale anchor's `brightness_seconds` describes.
 const BRIGHTNESS_PARTIAL: f32 = 8.0;
-
-/// Target ring-out time for [`MID_PARTIAL`] at A0.
-///
-/// A real string does not lose every partial at the same rate: both air
-/// damping and the wire's own internal friction grow with frequency, so
-/// partial `n` dies roughly `n` times faster than the fundamental (Fletcher
-/// & Rossing, *The Physics of Musical Instruments*, the piano-string
-/// damping section — the same source this project already cites in
-/// [`piano_core::dispersion`] for inharmonicity). The anchors here follow
-/// that `1/n` law loosely, flattened across the low partials where measured
-/// pianos hold their first few closer together than `1/n` predicts: at A0,
-/// `35 / 18 / 6 s` is a `1 : 1.9 : 5.8` spread against `1/n`'s `1 : 3 : 8`.
-///
-/// The specific values are this project's own reasoned anchors, first
-/// solved against in `docs/TIMBRE-PLAN.md`'s D2 table — literature-shaped,
-/// but not a measured curve, and labelled as such there and in
-/// `docs/PHYSICS.md`.
-const BASS_MID_PARTIAL_DECAY_SECONDS: f32 = 18.0;
-
-/// Target ring-out time for [`MID_PARTIAL`] at A4 — see
-/// [`BASS_MID_PARTIAL_DECAY_SECONDS`] for where these come from.
-const MID_MID_PARTIAL_DECAY_SECONDS: f32 = 5.0;
-
-/// Target ring-out time for [`MID_PARTIAL`] at C8 — see
-/// [`BASS_MID_PARTIAL_DECAY_SECONDS`].
-const TREBLE_MID_PARTIAL_DECAY_SECONDS: f32 = 0.8;
-
-/// Target ring-out time for [`BRIGHTNESS_PARTIAL`] at A0 — see
-/// [`BASS_MID_PARTIAL_DECAY_SECONDS`].
-const BASS_BRIGHTNESS_DECAY_SECONDS: f32 = 6.0;
-
-/// Target ring-out time for [`BRIGHTNESS_PARTIAL`] at A4 — see
-/// [`BASS_MID_PARTIAL_DECAY_SECONDS`].
-const MID_BRIGHTNESS_DECAY_SECONDS: f32 = 1.5;
-
-/// Target ring-out time for [`BRIGHTNESS_PARTIAL`] at C8 — see
-/// [`BASS_MID_PARTIAL_DECAY_SECONDS`].
-const TREBLE_BRIGHTNESS_DECAY_SECONDS: f32 = 0.3;
 
 /// The frequency-squared string loss coefficient `b₃`, in seconds, of
 /// A. Chaigne & A. Askenfelt's damping model `σ(ω) = b₁ + b₃·ω²` (JASA 95,
@@ -234,7 +185,7 @@ struct DecayTargets {
 impl DecayTargets {
     /// The target ring-out time for `partial`, interpolated between the
     /// three anchors in log-partial / log-time space — the space the `1/n`
-    /// damping law [`BASS_MID_PARTIAL_DECAY_SECONDS`] cites is a straight
+    /// damping law `voicing_scale.rs` cites is a straight
     /// line in, so anchors that sit on that law stay on it between
     /// themselves instead of bulging away from it.
     fn seconds_for_partial(self, partial: f32) -> f32 {
@@ -328,8 +279,8 @@ pub struct RegisterAnchorOverride {
     /// absent field), falls back to this anchor's built-in position.
     pub anchor_midi: Option<u8>,
     /// Target ring-out time for the fundamental at this anchor. `None`
-    /// falls back to this anchor's built-in target
-    /// ([`BASS_DECAY_SECONDS`]/[`MID_DECAY_SECONDS`]/[`TREBLE_DECAY_SECONDS`]).
+    /// falls back to the scale table's target at this anchor's key
+    /// (`voicing_scale.rs`).
     pub decay_seconds: Option<f32>,
     /// Direct override of [`KeyVoicing::damping`], applied only to the one
     /// key exactly at this anchor's resolved position — not blended into a
@@ -413,15 +364,7 @@ pub fn voicing_for_key_with_registers(
     let mid_hz = anchor_hz(mid_midi, tuning);
     let treble_hz = anchor_hz(treble_midi, tuning);
 
-    let fundamental_targets = (
-        registers.bass.decay_seconds.unwrap_or(BASS_DECAY_SECONDS),
-        registers.mid.decay_seconds.unwrap_or(MID_DECAY_SECONDS),
-        registers
-            .treble
-            .decay_seconds
-            .unwrap_or(TREBLE_DECAY_SECONDS),
-    );
-    let targets = decay_targets_for(frequency, bass_hz, mid_hz, treble_hz, fundamental_targets);
+    let targets = decay_targets_for(frequency, tuning, (bass_hz, mid_hz, treble_hz), registers);
     let losses = solve_loop_losses(frequency, targets, sample_rate);
 
     let damping = anchor_damping_pin(key, bass_midi, registers.bass.damping)
@@ -470,42 +413,21 @@ fn anchor_damping_pin(
     }
 }
 
-/// Interpolates all three of this key's decay targets across the register
-/// anchors sitting at `bass_hz`/`mid_hz`/`treble_hz`. `fundamental_targets`
-/// is the (bass, mid, treble) ring-out times for the fundamental only — the
-/// one curve a `.piano.json` file's `registers` block can override
-/// (`decay_seconds`); [`MID_PARTIAL`]/[`BRIGHTNESS_PARTIAL`]'s curves have
-/// no file-exposed equivalent, so they always use this module's own
-/// built-in anchors.
+/// All three of this key's decay targets: the scale table's, with the
+/// fundamental bent by whatever `decay_seconds` a `.piano.json` file's
+/// `registers` block sets at the anchors sitting at `register_hz`. The two
+/// partial curves have no file-exposed equivalent.
 fn decay_targets_for(
     frequency: f32,
-    bass_hz: f32,
-    mid_hz: f32,
-    treble_hz: f32,
-    fundamental_targets: (f32, f32, f32),
+    tuning: Tuning,
+    register_hz: (f32, f32, f32),
+    registers: RegisterOverrides,
 ) -> DecayTargets {
-    let across_registers = |bass: f32, mid: f32, treble: f32| {
-        interpolate_two_segments(
-            frequency,
-            (bass_hz, bass),
-            (mid_hz, mid),
-            (treble_hz, treble),
-        )
-    };
-    let (fundamental_bass, fundamental_mid, fundamental_treble) = fundamental_targets;
     DecayTargets {
         fundamental_hz: frequency,
-        fundamental: across_registers(fundamental_bass, fundamental_mid, fundamental_treble),
-        mid_partial: across_registers(
-            BASS_MID_PARTIAL_DECAY_SECONDS,
-            MID_MID_PARTIAL_DECAY_SECONDS,
-            TREBLE_MID_PARTIAL_DECAY_SECONDS,
-        ),
-        brightness: across_registers(
-            BASS_BRIGHTNESS_DECAY_SECONDS,
-            MID_BRIGHTNESS_DECAY_SECONDS,
-            TREBLE_BRIGHTNESS_DECAY_SECONDS,
-        ),
+        fundamental: scale::fundamental_seconds(frequency, tuning, register_hz, registers),
+        mid_partial: scale::scale_seconds(frequency, tuning, DecayCurve::MidPartial),
+        brightness: scale::scale_seconds(frequency, tuning, DecayCurve::Brightness),
     }
 }
 
@@ -771,10 +693,9 @@ pub fn solved_decay_targets(
     let frequency = key.frequency(tuning).hertz();
     let targets = decay_targets_for(
         frequency,
-        anchor_hz(LOWEST_PIANO_KEY, tuning),
-        anchor_hz(CONCERT_A_KEY, tuning),
-        anchor_hz(HIGHEST_PIANO_KEY, tuning),
-        (BASS_DECAY_SECONDS, MID_DECAY_SECONDS, TREBLE_DECAY_SECONDS),
+        tuning,
+        (frequency, frequency, frequency),
+        RegisterOverrides::default(),
     );
     solved_partials(frequency, sample_rate)
         .map(|partial| (partial, targets.seconds_for_partial(partial)))
@@ -832,6 +753,10 @@ fn interpolate_two_segments(
         interpolate_log_frequency(frequency, mid.0, mid.1, high.0, high.1)
     }
 }
+
+#[path = "voicing_scale.rs"]
+mod scale;
+use scale::DecayCurve;
 
 #[path = "voicing_inharmonicity.rs"]
 mod inharmonicity;

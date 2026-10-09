@@ -168,6 +168,30 @@ impl AudioSession {
         self.send(Command::SetRoomMix { mix })
     }
 
+    /// Queues the room's shape change: scales the room: how far apart its first reflections are. Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_room_size(&mut self, size: f32) -> bool {
+        self.send(Command::SetRoomSize { size })
+    }
+
+    /// Queues the room's shape change: sets how long the room rings in the bass. Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_room_reverb_seconds(&mut self, seconds: f32) -> bool {
+        self.send(Command::SetRoomReverbSeconds { seconds })
+    }
+
+    /// Queues the room's shape change: sets how long the room rings at the top of the spectrum. Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_room_treble_reverb_seconds(&mut self, seconds: f32) -> bool {
+        self.send(Command::SetRoomTrebleReverbSeconds { seconds })
+    }
+
+    /// Queues the room's shape change: sets the silence before the room answers. Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_room_predelay(&mut self, milliseconds: f32) -> bool {
+        self.send(Command::SetRoomPredelay { milliseconds })
+    }
+
     /// Queues the treble's duplex-segment gain; `0` mutes them. Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_duplex_gain(&mut self, gain: f32) -> bool {

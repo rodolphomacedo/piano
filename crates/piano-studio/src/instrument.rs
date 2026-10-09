@@ -7,6 +7,10 @@
 //! cannot fall out of step: adding a variant fails to compile until every
 //! `match` here knows its range, its command and its file field (#84).
 
+use piano_core::room::{
+    MAX_ROOM_PREDELAY_MILLISECONDS, MAX_ROOM_REVERB_SECONDS, MAX_ROOM_SIZE,
+    MIN_ROOM_REVERB_SECONDS, MIN_ROOM_SIZE,
+};
 use piano_core::string::{MAX_DAMPER_STRENGTH, MIN_DAMPER_STRENGTH};
 use serde::{Deserialize, Serialize};
 
@@ -37,11 +41,23 @@ pub enum InstrumentParameter {
     /// How hard the dampers grip a string once seated: how fast a note
     /// stops when its key comes up.
     DamperStrength,
+    /// How big the room is: how far apart its first reflections arrive.
+    RoomSize,
+    /// How long the room rings in the bass, in seconds.
+    RoomReverbSeconds,
+    /// How long the room rings in the treble, in seconds: lower is a darker room.
+    RoomTrebleReverbSeconds,
+    /// Silence before the room answers, in milliseconds: longer sounds like a farther wall.
+    RoomPredelay,
 }
 
 /// Every [`InstrumentParameter`], in the order the page lists them.
-pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 8] = [
+pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 12] = [
     InstrumentParameter::RoomMix,
+    InstrumentParameter::RoomSize,
+    InstrumentParameter::RoomReverbSeconds,
+    InstrumentParameter::RoomTrebleReverbSeconds,
+    InstrumentParameter::RoomPredelay,
     InstrumentParameter::SoundboardMixGain,
     InstrumentParameter::ActionNoiseGain,
     InstrumentParameter::PhantomGain,
@@ -69,6 +85,17 @@ impl InstrumentParameter {
                 f64::from(MAX_DAMPER_STRENGTH),
                 0.01,
             ),
+            Self::RoomSize => {
+                ParameterRange::new(f64::from(MIN_ROOM_SIZE), f64::from(MAX_ROOM_SIZE), 0.01)
+            }
+            Self::RoomReverbSeconds | Self::RoomTrebleReverbSeconds => ParameterRange::new(
+                f64::from(MIN_ROOM_REVERB_SECONDS),
+                f64::from(MAX_ROOM_REVERB_SECONDS),
+                0.05,
+            ),
+            Self::RoomPredelay => {
+                ParameterRange::new(0.0, f64::from(MAX_ROOM_PREDELAY_MILLISECONDS), 0.5)
+            }
         }
     }
 
@@ -83,6 +110,14 @@ impl InstrumentParameter {
             Self::PhantomGain => StudioCommand::SetPhantomGain { gain: value },
             Self::DuplexGain => StudioCommand::SetDuplexGain { gain: value },
             Self::DamperStrength => StudioCommand::SetDamperStrength { strength: value },
+            Self::RoomSize => StudioCommand::SetRoomSize { size: value },
+            Self::RoomReverbSeconds => StudioCommand::SetRoomReverbSeconds { seconds: value },
+            Self::RoomTrebleReverbSeconds => {
+                StudioCommand::SetRoomTrebleReverbSeconds { seconds: value }
+            }
+            Self::RoomPredelay => StudioCommand::SetRoomPredelay {
+                milliseconds: value,
+            },
         }
     }
 }
@@ -106,6 +141,14 @@ pub struct InstrumentSettings {
     pub duplex_gain: f32,
     /// See [`InstrumentParameter::DamperStrength`].
     pub damper_strength: f32,
+    /// See [`InstrumentParameter::RoomSize`].
+    pub room_size: f32,
+    /// See [`InstrumentParameter::RoomReverbSeconds`].
+    pub room_reverb_seconds: f32,
+    /// See [`InstrumentParameter::RoomTrebleReverbSeconds`].
+    pub room_treble_reverb_seconds: f32,
+    /// See [`InstrumentParameter::RoomPredelay`].
+    pub room_predelay_milliseconds: f32,
 }
 
 impl InstrumentSettings {
@@ -121,6 +164,10 @@ impl InstrumentSettings {
             phantom_gain: resolved.phantom_gain,
             duplex_gain: resolved.duplex_gain,
             damper_strength: resolved.damper_strength,
+            room_size: resolved.room_size,
+            room_reverb_seconds: resolved.room_reverb_seconds,
+            room_treble_reverb_seconds: resolved.room_treble_reverb_seconds,
+            room_predelay_milliseconds: resolved.room_predelay_milliseconds,
         }
     }
 
@@ -134,6 +181,10 @@ impl InstrumentSettings {
             InstrumentParameter::PhantomGain => &mut self.phantom_gain,
             InstrumentParameter::DuplexGain => &mut self.duplex_gain,
             InstrumentParameter::DamperStrength => &mut self.damper_strength,
+            InstrumentParameter::RoomSize => &mut self.room_size,
+            InstrumentParameter::RoomReverbSeconds => &mut self.room_reverb_seconds,
+            InstrumentParameter::RoomTrebleReverbSeconds => &mut self.room_treble_reverb_seconds,
+            InstrumentParameter::RoomPredelay => &mut self.room_predelay_milliseconds,
         }
     }
 
@@ -164,6 +215,10 @@ impl InstrumentSettings {
         instrument.phantom_gain = Some(self.phantom_gain);
         instrument.duplex_gain = Some(self.duplex_gain);
         instrument.damper_strength = Some(self.damper_strength);
+        instrument.room_size = Some(self.room_size);
+        instrument.room_reverb_seconds = Some(self.room_reverb_seconds);
+        instrument.room_treble_reverb_seconds = Some(self.room_treble_reverb_seconds);
+        instrument.room_predelay_milliseconds = Some(self.room_predelay_milliseconds);
     }
 }
 
@@ -186,6 +241,14 @@ pub struct InstrumentRanges {
     pub duplex_gain: ParameterRange,
     /// See [`InstrumentParameter::DamperStrength`].
     pub damper_strength: ParameterRange,
+    /// See [`InstrumentParameter::RoomSize`].
+    pub room_size: ParameterRange,
+    /// See [`InstrumentParameter::RoomReverbSeconds`].
+    pub room_reverb_seconds: ParameterRange,
+    /// See [`InstrumentParameter::RoomTrebleReverbSeconds`].
+    pub room_treble_reverb_seconds: ParameterRange,
+    /// See [`InstrumentParameter::RoomPredelay`].
+    pub room_predelay_milliseconds: ParameterRange,
 }
 
 impl Default for InstrumentRanges {
@@ -199,6 +262,10 @@ impl Default for InstrumentRanges {
             phantom_gain: InstrumentParameter::PhantomGain.range(),
             duplex_gain: InstrumentParameter::DuplexGain.range(),
             damper_strength: InstrumentParameter::DamperStrength.range(),
+            room_size: InstrumentParameter::RoomSize.range(),
+            room_reverb_seconds: InstrumentParameter::RoomReverbSeconds.range(),
+            room_treble_reverb_seconds: InstrumentParameter::RoomTrebleReverbSeconds.range(),
+            room_predelay_milliseconds: InstrumentParameter::RoomPredelay.range(),
         }
     }
 }
@@ -219,6 +286,10 @@ mod tests {
             phantom_gain: 0.1,
             duplex_gain: 0.2,
             damper_strength: 0.6,
+            room_size: 1.0,
+            room_reverb_seconds: 1.8,
+            room_treble_reverb_seconds: 0.5,
+            room_predelay_milliseconds: 12.0,
         }
     }
 
@@ -250,5 +321,7 @@ mod tests {
         assert_eq!(instrument.phantom_gain, Some(0.1));
         assert_eq!(instrument.action_noise_gain, Some(0.8));
         assert_eq!(instrument.room_mix, Some(0.25));
+        assert_eq!(instrument.room_reverb_seconds, Some(1.8));
+        assert_eq!(instrument.room_predelay_milliseconds, Some(12.0));
     }
 }

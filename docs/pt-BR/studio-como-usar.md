@@ -133,6 +133,19 @@ Os três pedais do teclado MIDI funcionam:
     média atrás do instrumento, como numa gravação de piano de concerto. O
     som sai em estéreo: graves à esquerda, agudos à direita, como o pianista
     ouve sentado no banco.
+  - `room_size` ("room size"): o tamanho da sala. `1.0` é uma sala média;
+    `0.5` é uma sala de estar, com reflexões muito próximas; `2.0` é uma sala
+    de concerto, com as reflexões chegando bem mais espaçadas.
+  - `room_reverb_seconds` ("room reverb (bass), s"): quantos segundos a sala
+    leva para silenciar nos graves. `1.8` é uma sala de recital; `0.5` é um
+    estúdio abafado; `4` ou mais é uma igreja.
+  - `room_treble_reverb_seconds` ("room reverb (treble), s"): o mesmo para
+    os agudos. Mais baixo deixa a sala escura, com cortinas e plateia; mais
+    alto deixa a sala brilhante, com paredes duras. Numa sala real, os agudos
+    morrem antes dos graves.
+  - `room_predelay_milliseconds` ("room predelay, ms"): o silêncio antes da
+    sala responder. Mais longo dá a sensação de paredes mais distantes e
+    deixa o ataque das notas mais limpo.
   - `soundboard_mix_gain` ("soundboard mix"): o quanto da caixa de
     ressonância entra de volta na mistura.
   - `action_noise_gain` ("action noise"): o volume do baque da tecla no

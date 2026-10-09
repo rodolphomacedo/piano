@@ -19,6 +19,7 @@
 use piano_core::SampleRate;
 use piano_params::Tuning;
 
+use crate::Command;
 use crate::engine::Engine;
 
 /// How many samples [`OfflineEngine::render_into`] hands
@@ -114,6 +115,27 @@ impl OfflineEngine {
     /// Sets the treble's duplex-segment gain; `0` mutes them.
     pub fn set_duplex_gain(&mut self, gain: f32) {
         self.engine.set_duplex_gain(gain);
+    }
+
+    /// Scales the room: how far apart its first reflections are.
+    pub fn set_room_size(&mut self, size: f32) {
+        self.engine.apply(Command::SetRoomSize { size });
+    }
+
+    /// Sets how long the room rings in the bass.
+    pub fn set_room_reverb_seconds(&mut self, seconds: f32) {
+        self.engine.apply(Command::SetRoomReverbSeconds { seconds });
+    }
+
+    /// Sets how long the room rings at the top of the spectrum.
+    pub fn set_room_treble_reverb_seconds(&mut self, seconds: f32) {
+        self.engine
+            .apply(Command::SetRoomTrebleReverbSeconds { seconds });
+    }
+
+    /// Sets the silence before the room answers.
+    pub fn set_room_predelay(&mut self, milliseconds: f32) {
+        self.engine.apply(Command::SetRoomPredelay { milliseconds });
     }
 
     /// Sets how hard every damper grips its string.

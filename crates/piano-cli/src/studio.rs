@@ -228,6 +228,12 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
         StudioCommand::SetDuplexGain { gain } => session.set_duplex_gain(gain),
         StudioCommand::SetDamperStrength { strength } => session.set_damper_strength(strength),
         StudioCommand::SetRoomMix { mix } => session.set_room_mix(mix),
+        StudioCommand::SetRoomSize { size } => session.set_room_size(size),
+        StudioCommand::SetRoomReverbSeconds { seconds } => session.set_room_reverb_seconds(seconds),
+        StudioCommand::SetRoomTrebleReverbSeconds { seconds } => {
+            session.set_room_treble_reverb_seconds(seconds)
+        }
+        StudioCommand::SetRoomPredelay { milliseconds } => session.set_room_predelay(milliseconds),
         StudioCommand::SetMasterGain { gain } => session.set_master_gain(gain),
         StudioCommand::SetVelocityCurve { exponent } => session.set_velocity_curve(exponent),
         StudioCommand::SetLocalCouplingGain { gain } => session.set_local_coupling_gain(gain),

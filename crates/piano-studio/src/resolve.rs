@@ -10,7 +10,10 @@ use piano_core::SampleRate;
 use piano_core::action::DEFAULT_THUMP_GAIN;
 use piano_core::dispersion::DEFAULT_INHARMONICITY;
 use piano_core::hammer::{DEFAULT_HAMMER, HammerConfig};
-use piano_core::room::DEFAULT_ROOM_MIX;
+use piano_core::room::{
+    DEFAULT_ROOM_MIX, DEFAULT_ROOM_PREDELAY_MILLISECONDS, DEFAULT_ROOM_REVERB_SECONDS,
+    DEFAULT_ROOM_SIZE, DEFAULT_ROOM_TREBLE_REVERB_SECONDS,
+};
 use piano_core::soundboard::{DEFAULT_MODE_BRIDGE_COUPLING, SoundboardMode};
 use piano_core::string::{
     DEFAULT_DAMPER_STRENGTH, DEFAULT_DAMPING, DEFAULT_EXCITATION_NOISE_MIX, DEFAULT_LOOP_ZERO_MIX,
@@ -101,6 +104,14 @@ pub struct ResolvedPiano {
     pub duplex_gain: f32,
     /// See [`piano_audio::AudioSession::set_damper_strength`].
     pub damper_strength: f32,
+    /// See [`piano_audio::AudioSession::set_room_size`].
+    pub room_size: f32,
+    /// See [`piano_audio::AudioSession::set_room_reverb_seconds`].
+    pub room_reverb_seconds: f32,
+    /// See [`piano_audio::AudioSession::set_room_treble_reverb_seconds`].
+    pub room_treble_reverb_seconds: f32,
+    /// See [`piano_audio::AudioSession::set_room_predelay`].
+    pub room_predelay_milliseconds: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -196,6 +207,19 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .instrument
             .damper_strength
             .unwrap_or(DEFAULT_DAMPER_STRENGTH),
+        room_size: file.instrument.room_size.unwrap_or(DEFAULT_ROOM_SIZE),
+        room_reverb_seconds: file
+            .instrument
+            .room_reverb_seconds
+            .unwrap_or(DEFAULT_ROOM_REVERB_SECONDS),
+        room_treble_reverb_seconds: file
+            .instrument
+            .room_treble_reverb_seconds
+            .unwrap_or(DEFAULT_ROOM_TREBLE_REVERB_SECONDS),
+        room_predelay_milliseconds: file
+            .instrument
+            .room_predelay_milliseconds
+            .unwrap_or(DEFAULT_ROOM_PREDELAY_MILLISECONDS),
     }
 }
 

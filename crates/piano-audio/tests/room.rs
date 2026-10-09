@@ -42,3 +42,30 @@ fn the_room_sits_behind_the_instrument() {
         assert!((-18.0..-4.0).contains(&level), "MIDI {midi}: {level:.1} dB");
     }
 }
+
+/// Energy left in the last half second after a note's key comes up, with
+/// the room's bass reverberation time set to `seconds`.
+fn late_room_energy(seconds: f32) -> f32 {
+    let mut engine = OfflineEngine::new(SampleRate::new(48_000.0).unwrap(), Tuning::default());
+    engine.set_room_mix(DEFAULT_ROOM_MIX);
+    engine.set_room_reverb_seconds(seconds);
+    engine.set_room_treble_reverb_seconds(seconds);
+    engine.note_on(60, 0.6);
+    let _ = engine.render_stereo(0.5);
+    engine.note_off(60);
+    let _ = engine.render_stereo(1.0);
+    let (left, right) = engine.render_stereo(0.5);
+    energy(&left) + energy(&right)
+}
+
+/// The shape setters reach the live engine, not only `Room` in isolation:
+/// a cathedral still rings after the dampers have stopped the strings.
+#[test]
+fn a_longer_room_keeps_ringing_after_the_strings_are_damped() {
+    let studio = late_room_energy(0.3);
+    let cathedral = late_room_energy(6.0);
+    assert!(
+        cathedral > studio * 100.0,
+        "studio {studio:e}, cathedral {cathedral:e}"
+    );
+}

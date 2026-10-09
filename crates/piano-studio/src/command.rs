@@ -163,6 +163,26 @@ pub enum StudioCommand {
         /// Fraction of a wave a seated damper takes per round trip.
         strength: f32,
     },
+    /// See [`piano_audio::AudioSession::set_room_size`].
+    SetRoomSize {
+        /// How big the room is: how far apart its first reflections arrive.
+        size: f32,
+    },
+    /// See [`piano_audio::AudioSession::set_room_reverb_seconds`].
+    SetRoomReverbSeconds {
+        /// How long the room rings in the bass, in seconds.
+        seconds: f32,
+    },
+    /// See [`piano_audio::AudioSession::set_room_treble_reverb_seconds`].
+    SetRoomTrebleReverbSeconds {
+        /// How long the room rings in the treble, in seconds: lower is a darker room.
+        seconds: f32,
+    },
+    /// See [`piano_audio::AudioSession::set_room_predelay`].
+    SetRoomPredelay {
+        /// Silence before the room answers, in milliseconds: longer sounds like a farther wall.
+        milliseconds: f32,
+    },
     /// See [`piano_audio::AudioSession::set_room_mix`].
     SetRoomMix {
         /// The room's new wet level; `0` is a dry instrument.

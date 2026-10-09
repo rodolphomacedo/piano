@@ -641,26 +641,48 @@ MCP alone.
 
 ---
 
+## M19 — Calibrate against a reference instrument 🟠 *priority 2*
+
+Raised after the merges of #117–#120, when the instrument was reported as
+sounding *"like a guitar"* with *"a hammer strike that is far too loud"*
+([#122](https://github.com/rodolphomacedo/piano/issues/122),
+[#121](https://github.com/rodolphomacedo/piano/issues/121)). Every timbre
+fix so far measured the model against theory. These reports compare it with
+a real piano, and theory cannot provide that target. M19 provides one: the
+same MIDI notes are played through the model, GarageBand's grand and the
+owner's Yamaha P-125, and all three are measured with the same code. The
+parameters that explain the difference are then estimated with Bayesian
+inference instead of being tuned by ear. Full design: `docs/CALIBRATION.md`.
+
+**Includes**:
+[#123](https://github.com/rodolphomacedo/piano/issues/123) ADR on sampled
+instruments as offline targets (audio never enters this repo);
+[#124](https://github.com/rodolphomacedo/piano/issues/124) the capture
+protocol and MIDI test set;
+[#125](https://github.com/rodolphomacedo/piano/issues/125) `piano analyze`
+on an external WAV, and `--compare`;
+[#126](https://github.com/rodolphomacedo/piano/issues/126) the sensitivity
+map: which parameters the measurements can actually see;
+[#127](https://github.com/rodolphomacedo/piano/issues/127) the Bayesian
+estimation, in a separate research repository.
+
+**Done when**: a `.piano.json` produced by the estimation loads in the
+studio, and its held-out keys' features land closer to the reference's than
+the defaults do, by a stated margin.
+
+---
+
 ## Ideas beyond M8
 
 Not scheduled, not sized, and not started — recorded so the reasoning behind
 them is not lost between conversations.
 
-**Bayesian parameter estimation from a recorded instrument.** Every parameter
-this model exposes (damping, sustain, dispersion once M4 lands, hammer
-hardness) is a live, adjustable control as of M2 — the prerequisite for
-fitting them automatically rather than only by ear. The idea: record a real
-instrument's note, extract features (partial decay rates, inharmonicity
-coefficients, attack shape), and use Bayesian inference (Stan, or a
-Rust-native sampler such as `nuts-rs`/`bridgestan` bindings to avoid a
-non-Rust runtime dependency) to fit the physical model's parameters against
-that recording — a calibration problem, not a real-time one, so none of the
-audio-thread rules apply to it. Plausible in principle for a Karplus-Strong
-model's handful of scalar parameters; substantially harder once M4's full
-waveguide and M6's coupled strings add dozens of interacting ones. The
-recordings this needs are training data for an *offline* fitting tool, never
-compiled into the instrument itself, so they cannot live in this repository —
-its "no samples, ever" rule (see the project's `CLAUDE.md`) is about what
-ships, not about what a separate calibration tool may read from disk. This
-belongs in its own repository that depends on `piano-core` for the model to
-fit, not the other way around.
+**Bayesian parameter estimation from a recorded instrument.** *Promoted to
+M19 above; the design now lives in `docs/CALIBRATION.md`.* The original idea
+stands: measure a reference instrument's notes, extract features (partial
+decay rates, inharmonicity, attack shape), and fit the physical model's
+parameters to them with Bayesian inference, offline, in a separate
+repository that depends on `piano-core`. The recordings this needs are
+calibration targets read from disk, never compiled into the instrument,
+and never stored here. The "no samples, ever" rule (see the project's
+`CLAUDE.md`) is about what ships.

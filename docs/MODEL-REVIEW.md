@@ -423,7 +423,11 @@ The deepest change; attempt only with P1 in place and P2 landed.
 ### P5 — Calibration *(claim 8)*
 
 Parameter fitting, under the no-recordings constraint spelled out above.
-**#65** decides the sourcing question first.
+**#65** decides the sourcing question for scale data. **M19** (#123–#127)
+now carries the rest: an ADR for sampled reference instruments used as
+offline targets (#123), a capture protocol (#124), `piano analyze` on an
+external recording (#125), a sensitivity map (#126) and the Bayesian
+estimation itself (#127). Design: `docs/CALIBRATION.md`.
 
 ### Not scheduled
 

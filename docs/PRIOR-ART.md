@@ -57,6 +57,22 @@ There is one place where finite differences may still earn a role here: as an
 validate that the fast waveguide produces the right physics. If that is ever
 built, it will be built from the published equations, in our own code.
 
+## Reference instruments — targets, not sources
+
+Calibration (M19, `docs/CALIBRATION.md`) measures notes from **sampled**
+instruments, at first a Yamaha P-125 and GarageBand's grand piano, to give
+the parameter estimation a target. They play the same role as OpenPiano: a
+benchmark that is listened to and measured, never copied. Concretely:
+
+- their audio is never committed to this repository, never used in its CI,
+  and never compiled into anything it builds;
+- only **derived measurements** (decay times, partial frequencies, fitted
+  parameters) may enter, with the reference named as their source in
+  `docs/PHYSICS.md`;
+- the decision is recorded as an ADR,
+  [#123](https://github.com/rodolphomacedo/piano/issues/123), which must be
+  merged before any code reads a reference recording.
+
 ## The literature we do build on
 
 These are published papers and books. Implementing a published algorithm is not a

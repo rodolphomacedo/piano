@@ -416,7 +416,10 @@ mod tests {
     fn a_control_this_instrument_does_not_map_changes_nothing() {
         // CC7 is volume, CC10 is pan: real controllers send them, and
         // acting on them would be worse than ignoring them.
-        assert!(play_bytes(&[&[0xB0, 7, 100], &[0xB0, 10, 64]]).is_empty());
+        assert_eq!(
+            play_bytes(&[&[0xB0, 7, 100], &[0xB0, 10, 64]]),
+            [] as [Played; 0]
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@
 //! cannot fall out of step: adding a variant fails to compile until every
 //! `match` here knows its range, its command and its file field (#84).
 
+use piano_core::string::{MAX_DAMPER_STRENGTH, MIN_DAMPER_STRENGTH};
 use serde::{Deserialize, Serialize};
 
 use crate::command::StudioCommand;
@@ -33,15 +34,19 @@ pub enum InstrumentParameter {
     PhantomGain,
     /// How strongly the treble's duplex segments ring.
     DuplexGain,
+    /// How hard the dampers grip a string once seated: how fast a note
+    /// stops when its key comes up.
+    DamperStrength,
 }
 
 /// Every [`InstrumentParameter`], in the order the page lists them.
-pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 7] = [
+pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 8] = [
     InstrumentParameter::RoomMix,
     InstrumentParameter::SoundboardMixGain,
     InstrumentParameter::ActionNoiseGain,
     InstrumentParameter::PhantomGain,
     InstrumentParameter::DuplexGain,
+    InstrumentParameter::DamperStrength,
     InstrumentParameter::VelocityCurveExponent,
     InstrumentParameter::MasterGain,
 ];
@@ -59,6 +64,11 @@ impl InstrumentParameter {
             Self::ActionNoiseGain => ParameterRange::new(0.0, 4.0, 0.05),
             Self::PhantomGain => ParameterRange::new(0.0, 0.5, 0.005),
             Self::DuplexGain => ParameterRange::new(0.0, 1.0, 0.005),
+            Self::DamperStrength => ParameterRange::new(
+                f64::from(MIN_DAMPER_STRENGTH),
+                f64::from(MAX_DAMPER_STRENGTH),
+                0.01,
+            ),
         }
     }
 
@@ -72,6 +82,7 @@ impl InstrumentParameter {
             Self::ActionNoiseGain => StudioCommand::SetActionNoiseGain { gain: value },
             Self::PhantomGain => StudioCommand::SetPhantomGain { gain: value },
             Self::DuplexGain => StudioCommand::SetDuplexGain { gain: value },
+            Self::DamperStrength => StudioCommand::SetDamperStrength { strength: value },
         }
     }
 }
@@ -93,6 +104,8 @@ pub struct InstrumentSettings {
     pub phantom_gain: f32,
     /// See [`InstrumentParameter::DuplexGain`].
     pub duplex_gain: f32,
+    /// See [`InstrumentParameter::DamperStrength`].
+    pub damper_strength: f32,
 }
 
 impl InstrumentSettings {
@@ -107,6 +120,7 @@ impl InstrumentSettings {
             action_noise_gain: resolved.action_noise_gain,
             phantom_gain: resolved.phantom_gain,
             duplex_gain: resolved.duplex_gain,
+            damper_strength: resolved.damper_strength,
         }
     }
 
@@ -119,6 +133,7 @@ impl InstrumentSettings {
             InstrumentParameter::ActionNoiseGain => &mut self.action_noise_gain,
             InstrumentParameter::PhantomGain => &mut self.phantom_gain,
             InstrumentParameter::DuplexGain => &mut self.duplex_gain,
+            InstrumentParameter::DamperStrength => &mut self.damper_strength,
         }
     }
 
@@ -148,6 +163,7 @@ impl InstrumentSettings {
         instrument.action_noise_gain = Some(self.action_noise_gain);
         instrument.phantom_gain = Some(self.phantom_gain);
         instrument.duplex_gain = Some(self.duplex_gain);
+        instrument.damper_strength = Some(self.damper_strength);
     }
 }
 
@@ -168,6 +184,8 @@ pub struct InstrumentRanges {
     pub phantom_gain: ParameterRange,
     /// See [`InstrumentParameter::DuplexGain`].
     pub duplex_gain: ParameterRange,
+    /// See [`InstrumentParameter::DamperStrength`].
+    pub damper_strength: ParameterRange,
 }
 
 impl Default for InstrumentRanges {
@@ -180,6 +198,7 @@ impl Default for InstrumentRanges {
             action_noise_gain: InstrumentParameter::ActionNoiseGain.range(),
             phantom_gain: InstrumentParameter::PhantomGain.range(),
             duplex_gain: InstrumentParameter::DuplexGain.range(),
+            damper_strength: InstrumentParameter::DamperStrength.range(),
         }
     }
 }
@@ -199,6 +218,7 @@ mod tests {
             action_noise_gain: 0.8,
             phantom_gain: 0.1,
             duplex_gain: 0.2,
+            damper_strength: 0.6,
         }
     }
 

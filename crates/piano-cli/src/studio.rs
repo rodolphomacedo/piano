@@ -226,6 +226,7 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
         StudioCommand::SetActionNoiseGain { gain } => session.set_action_noise_gain(gain),
         StudioCommand::SetPhantomGain { gain } => session.set_phantom_gain(gain),
         StudioCommand::SetDuplexGain { gain } => session.set_duplex_gain(gain),
+        StudioCommand::SetDamperStrength { strength } => session.set_damper_strength(strength),
         StudioCommand::SetRoomMix { mix } => session.set_room_mix(mix),
         StudioCommand::SetMasterGain { gain } => session.set_master_gain(gain),
         StudioCommand::SetVelocityCurve { exponent } => session.set_velocity_curve(exponent),

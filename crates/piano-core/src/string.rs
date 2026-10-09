@@ -76,6 +76,20 @@ pub const SILENCE_THRESHOLD: f32 = 1e-4;
 /// real damped piano note shows.
 const RELEASE_LOSS_MULTIPLIER: f32 = 0.4;
 
+/// The default for [`PluckedString::set_damper_strength`]: the fraction of
+/// a wave's amplitude a fully seated damper takes per round trip,
+/// `1 − RELEASE_LOSS_MULTIPLIER`.
+pub const DEFAULT_DAMPER_STRENGTH: f32 = 1.0 - RELEASE_LOSS_MULTIPLIER;
+
+/// Weakest damper [`PluckedString::set_damper_strength`] accepts. At zero a
+/// released note would never stop, the stuck-damper fault a technician
+/// fixes, so it is not a voicing choice.
+pub const MIN_DAMPER_STRENGTH: f32 = 0.05;
+
+/// Strongest damper accepted. Taking the whole wave in one round trip
+/// would cut a note off within a period, a click rather than a damper.
+pub const MAX_DAMPER_STRENGTH: f32 = 0.95;
+
 /// How a damper's pressure becomes loss: the per-round-trip loss in nepers
 /// is `−ln(RELEASE_LOSS_MULTIPLIER)·pressureⁿ`. A fully seated damper stops
 /// a string in a few dozen round trips, so a loss merely proportional to
@@ -383,9 +397,12 @@ pub struct PluckedString {
     /// — that is a decay-*rate* voicing parameter a player never triggers.
     damper_pressure: f32,
     /// The extra per-round-trip gain [`PluckedString::damper_pressure`]
-    /// costs: `RELEASE_LOSS_MULTIPLIER^pressure`, kept so the per-sample
+    /// costs: `seated_damper_gain^pressure`, kept so the per-sample
     /// loop multiplies instead of calling `powf`.
     damper_gain: f32,
+    /// The per-round-trip gain of a fully seated damper,
+    /// `1 − damper strength` ([`PluckedString::set_damper_strength`]).
+    seated_damper_gain: f32,
     envelope: f32,
     /// Kept only for [`hammer::simulate_contact`]'s integration step at the
     /// next [`PluckedString::pluck`]; the audio-thread `process` loop never
@@ -575,6 +592,7 @@ impl PluckedString {
             // sympathetic energy it never should while the pedal is up.
             damper_pressure: 1.0,
             damper_gain: RELEASE_LOSS_MULTIPLIER,
+            seated_damper_gain: RELEASE_LOSS_MULTIPLIER,
             envelope: 0.0,
             sample_rate: sample_rate.hertz(),
             hammer: config.hammer,
@@ -990,7 +1008,17 @@ impl PluckedString {
     pub fn set_damper_pressure(&mut self, pressure: f32) {
         self.damper_pressure = math::clamp_or_low(pressure, 0.0, 1.0);
         let contact = math::powf(self.damper_pressure, DAMPER_CONTACT_EXPONENT);
-        self.damper_gain = math::powf(RELEASE_LOSS_MULTIPLIER, contact);
+        self.damper_gain = math::powf(self.seated_damper_gain, contact);
+    }
+
+    /// Sets how hard the felt grips the string: the fraction of a wave's
+    /// amplitude a fully seated damper takes per round trip, clamped into
+    /// `[MIN_DAMPER_STRENGTH, MAX_DAMPER_STRENGTH]`, `NaN` to the minimum.
+    /// Applies at once to a damper already resting on the string.
+    pub fn set_damper_strength(&mut self, strength: f32) {
+        let strength = math::clamp_or_low(strength, MIN_DAMPER_STRENGTH, MAX_DAMPER_STRENGTH);
+        self.seated_damper_gain = 1.0 - strength;
+        self.set_damper_pressure(self.damper_pressure);
     }
 
     /// Lifts the damper without a fresh strike.

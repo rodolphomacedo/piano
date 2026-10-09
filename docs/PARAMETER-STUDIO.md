@@ -107,6 +107,7 @@ a single bridge, not a string):
 | `soundboard.modes[0..8]` (`frequency_hz`/`decay_seconds`/`gain` each) | No — `soundboard::MODES`, a fixed `const` array |
 | `bridge.local_coupling_gain` | No — `unison::LOCAL_COUPLING_GAIN`, a module constant |
 | `bridge.global_coupling_gain` | No — `unison::GLOBAL_COUPLING_GAIN`, a module constant |
+| `damper_strength` | Yes — `piano_core::string::DEFAULT_DAMPER_STRENGTH` (0.6), live and in the file since #82 |
 
 **Groups**: a name plus a list of `{midi, string_index}` pairs plus a set of
 values. Applying a group resolves to N individual per-string writes — the
@@ -156,6 +157,7 @@ strings[]  (explicit, one entry per string)
     "soundboard_mix_gain": 0.5,
     "master_gain": 1.0,
     "velocity_curve_exponent": 1.0,
+    "damper_strength": 0.6,
     "bridge": { "local_coupling_gain": 0.75, "global_coupling_gain": 0.08 }
   }
 }

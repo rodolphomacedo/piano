@@ -141,6 +141,9 @@ Os três pedais do teclado MIDI funcionam:
     graves — o "corpo" metálico que um piano de cauda tem na região grave.
   - `duplex_gain` ("duplex ring"): o quanto os trechos livres de corda dos
     agudos (a escala duplex da Steinway) ressoam junto com a nota.
+  - `damper_strength` ("damper strength"): a força com que o abafador de
+    feltro segura a corda quando você solta a tecla. Mais alto, a nota para
+    seca; mais baixo, ela ainda soa um pouco depois de soltar.
   - `velocity_curve_exponent` ("velocity curve"): `1.0` é o mapeamento
     linear original; o padrão, `1.8`, afasta o toque suave do forte porque a
     resposta do próprio martelo de feltro comprime o topo da faixa e deixa o

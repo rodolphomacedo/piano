@@ -116,6 +116,11 @@ impl OfflineEngine {
         self.engine.set_duplex_gain(gain);
     }
 
+    /// Sets how hard every damper grips its string.
+    pub fn set_damper_strength(&mut self, strength: f32) {
+        self.engine.set_damper_strength(strength);
+    }
+
     /// Sets the bass's phantom-partial gain; `0` turns phantoms off.
     pub fn set_phantom_gain(&mut self, gain: f32) {
         self.engine.set_phantom_gain(gain);

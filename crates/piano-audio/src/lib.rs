@@ -174,6 +174,12 @@ impl AudioSession {
         self.send(Command::SetDuplexGain { gain })
     }
 
+    /// Queues how hard every damper grips its string. Same drop-not-block
+    /// behaviour as [`AudioSession::note_on`].
+    pub fn set_damper_strength(&mut self, strength: f32) -> bool {
+        self.send(Command::SetDamperStrength { strength })
+    }
+
     /// Queues the soft (una corda) pedal's state (issue #59). Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_soft_pedal(&mut self, down: bool) -> bool {

@@ -83,6 +83,12 @@ pub(crate) enum Command {
         /// New gain for every key with a free segment.
         gain: f32,
     },
+    /// Sets how hard every damper grips its string once seated (issue #82).
+    /// See [`piano_core::string::PluckedString::set_damper_strength`].
+    SetDamperStrength {
+        /// Fraction of a wave a seated damper takes per round trip.
+        strength: f32,
+    },
     /// Sets how much of the room ([`piano_core::room::Room`]) is heard;
     /// `0` is a dry instrument.
     SetRoomMix {

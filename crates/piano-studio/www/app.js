@@ -396,6 +396,7 @@ const INSTRUMENT_PARAMETERS = [
   { key: "action_noise_gain", label: "action noise" },
   { key: "phantom_gain", label: "phantom partials (bass)" },
   { key: "duplex_gain", label: "duplex ring (treble)" },
+  { key: "damper_strength", label: "damper strength" },
   { key: "velocity_curve_exponent", label: "velocity curve" },
   { key: "master_gain", label: "master gain" },
 ];

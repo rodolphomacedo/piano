@@ -1189,3 +1189,22 @@ fn a_note_the_engine_cannot_tune_is_ignored_without_panicking() {
     let mut buffer = [0.0f32; 16];
     engine.process_block(&mut buffer);
 }
+
+/// Tail RMS of C3 after its key comes up, with dampers at `strength`.
+fn released_tail_with_damper(strength: f32) -> f32 {
+    let mut engine = engine();
+    press(&mut engine, 48);
+    let _ = tail_rms(&mut engine, 20);
+    engine.apply(Command::SetDamperStrength { strength });
+    engine.apply(Command::NoteOff { midi: 48 });
+    tail_rms(&mut engine, 8)
+}
+
+/// Set while the key is held, the strength still governs the release:
+/// the setter reaches a voice that is already ringing (issue #82).
+#[test]
+fn set_damper_strength_reaches_an_already_ringing_voice() {
+    let weak = released_tail_with_damper(piano_core::string::MIN_DAMPER_STRENGTH);
+    let strong = released_tail_with_damper(piano_core::string::MAX_DAMPER_STRENGTH);
+    assert!(weak > strong * 10.0, "weak {weak:e}, strong {strong:e}");
+}

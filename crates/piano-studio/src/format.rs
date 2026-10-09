@@ -181,6 +181,16 @@ pub struct Instrument {
     /// live engine's default, [`piano_core::room::DEFAULT_ROOM_MIX`]; `0`
     /// is a dry instrument. See [`piano_audio::AudioSession::set_room_mix`].
     pub room_mix: Option<f32>,
+    /// How loud the action's keybed knock and damper landings are. `None`
+    /// leaves the engine default. See
+    /// [`piano_audio::AudioSession::set_action_noise_gain`].
+    pub action_noise_gain: Option<f32>,
+    /// How strongly the bass mixes phantom partials. `None` leaves the
+    /// engine default. See [`piano_audio::AudioSession::set_phantom_gain`].
+    pub phantom_gain: Option<f32>,
+    /// How strongly the treble's duplex segments ring. `None` leaves the
+    /// engine default. See [`piano_audio::AudioSession::set_duplex_gain`].
+    pub duplex_gain: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

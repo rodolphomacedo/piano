@@ -378,12 +378,22 @@ function applyStringEdit(midi, parameter, value) {
   postEdit({ type: "set_strings", strings, parameter, value });
 }
 
-// ---- Instrument panel: soundboard modes, bridge coupling gains ---------
+// ---- Instrument panel: overall sound, soundboard modes, bridge gains ----
 
 const MODE_PARAMETERS = [
   { key: "frequency_hz", label: "frequency (Hz)" },
   { key: "decay_seconds", label: "decay (s)" },
   { key: "gain", label: "gain" },
+];
+
+const INSTRUMENT_PARAMETERS = [
+  { key: "room_mix", label: "room mix" },
+  { key: "soundboard_mix_gain", label: "soundboard mix" },
+  { key: "action_noise_gain", label: "action noise" },
+  { key: "phantom_gain", label: "phantom partials (bass)" },
+  { key: "duplex_gain", label: "duplex ring (treble)" },
+  { key: "velocity_curve_exponent", label: "velocity curve" },
+  { key: "master_gain", label: "master gain" },
 ];
 
 const BRIDGE_PARAMETERS = [
@@ -392,13 +402,20 @@ const BRIDGE_PARAMETERS = [
 ];
 
 function renderInstrumentPanel() {
-  const room = document.getElementById("room");
-  room.innerHTML = "";
-  room.appendChild(
-    buildSlider("room mix", state.snapshot.ranges.room_mix, state.snapshot.room_mix, (value) => {
-      postEdit({ type: "set_room_mix", value });
-    }),
-  );
+  const sound = document.getElementById("sound");
+  sound.innerHTML = "";
+  for (const parameter of INSTRUMENT_PARAMETERS) {
+    sound.appendChild(
+      buildSlider(
+        parameter.label,
+        state.snapshot.ranges.instrument[parameter.key],
+        state.snapshot.instrument[parameter.key],
+        (value) => {
+          postEdit({ type: "set_instrument", parameter: parameter.key, value });
+        },
+      ),
+    );
+  }
 
   const modes = document.getElementById("modes");
   modes.innerHTML = "";

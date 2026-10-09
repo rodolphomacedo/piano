@@ -3,9 +3,11 @@
 //! `docs/PARAMETER-STUDIO.md`'s cascade, resolved once.
 
 use piano_audio::voicing::{
-    RegisterAnchorOverride, RegisterOverrides, unison_count_for_key, voicing_for_key_with_registers,
+    DUPLEX_GAIN, PHANTOM_GAIN_IN_BASS, RegisterAnchorOverride, RegisterOverrides,
+    unison_count_for_key, voicing_for_key_with_registers,
 };
 use piano_core::SampleRate;
+use piano_core::action::DEFAULT_THUMP_GAIN;
 use piano_core::dispersion::DEFAULT_INHARMONICITY;
 use piano_core::hammer::{DEFAULT_HAMMER, HammerConfig};
 use piano_core::room::DEFAULT_ROOM_MIX;
@@ -82,6 +84,12 @@ pub struct ResolvedPiano {
     /// See [`piano_audio::AudioSession::set_room_mix`]. How much of the
     /// room the instrument is heard in.
     pub room_mix: f32,
+    /// See [`piano_audio::AudioSession::set_action_noise_gain`].
+    pub action_noise_gain: f32,
+    /// See [`piano_audio::AudioSession::set_phantom_gain`].
+    pub phantom_gain: f32,
+    /// See [`piano_audio::AudioSession::set_duplex_gain`].
+    pub duplex_gain: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -164,6 +172,12 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .velocity_curve_exponent
             .unwrap_or(DEFAULT_VELOCITY_CURVE_EXPONENT),
         room_mix: file.instrument.room_mix.unwrap_or(DEFAULT_ROOM_MIX),
+        action_noise_gain: file
+            .instrument
+            .action_noise_gain
+            .unwrap_or(DEFAULT_THUMP_GAIN),
+        phantom_gain: file.instrument.phantom_gain.unwrap_or(PHANTOM_GAIN_IN_BASS),
+        duplex_gain: file.instrument.duplex_gain.unwrap_or(DUPLEX_GAIN),
     }
 }
 

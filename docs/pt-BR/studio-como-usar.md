@@ -120,28 +120,35 @@ Os três pedais do teclado MIDI funcionam:
   daquela tecla) ou "seleção" (várias teclas escolhidas com shift-clique).
   A mudança se aplica a todas de uma vez, sempre corda por corda por baixo
   dos panos — nunca vira uma "entidade" nova dentro do arquivo.
-- **Sala**: o controle "room mix" decide quanto da sala o piano soa
-  dentro. `0` é o piano seco, como num estúdio abafado; o padrão (`0.25`)
-  põe uma sala média atrás do instrumento, como numa gravação de piano de
-  concerto. O som sai em estéreo: graves à esquerda, agudos à direita,
-  como o pianista ouve sentado no banco. O valor é salvo no arquivo como
-  `instrument.room_mix`.
-- **Editar o instrumento inteiro**: os 28 modos da caixa de ressonância
-  (frequência, tempo de decaimento, ganho), o quanto da caixa entra de volta
-  na mistura (`soundboard_mix_gain`), o volume geral de saída
-  (`master_gain`, aplicado logo antes do limitador, então abaixá-lo reduz a
-  limitação em vez de alimentar um limitador já saturado), a curva de
-  velocidade (`velocity_curve_exponent`: `1.0` é o mapeamento linear
-  original; o padrão, `1.8`, afasta o toque suave do forte porque a resposta
-  do próprio martelo de feltro comprime o topo da faixa e deixa o fundo
-  praticamente mudo — ver o comentário de
-  `piano_audio::velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT` para a
-  medição) e os dois ganhos de acoplamento da ponte (entre as cordas da
-  mesma tecla, e entre teclas diferentes, responsável pela ressonância por
-  simpatia). Por enquanto esses três parâmetros do instrumento só têm campo
-  no `.piano.json` (`instrument.master_gain`,
-  `instrument.soundboard_mix_gain`, `instrument.velocity_curve_exponent`) e
-  comando ao vivo; ainda não têm controle deslizante próprio na página.
+- **Som do instrumento inteiro** (seção "sound" da página): um controle
+  deslizante para cada ajuste que vale para o piano todo, cada um salvo no
+  `.piano.json` dentro de `instrument`:
+  - `room_mix` ("room mix"): quanto da sala o piano soa dentro. `0` é o
+    piano seco, como num estúdio abafado; o padrão (`0.25`) põe uma sala
+    média atrás do instrumento, como numa gravação de piano de concerto. O
+    som sai em estéreo: graves à esquerda, agudos à direita, como o pianista
+    ouve sentado no banco.
+  - `soundboard_mix_gain` ("soundboard mix"): o quanto da caixa de
+    ressonância entra de volta na mistura.
+  - `action_noise_gain` ("action noise"): o volume do baque da tecla no
+    fundo do teclado e do abafador pousando na corda ao soltar.
+  - `phantom_gain` ("phantom partials"): a força dos parciais fantasmas dos
+    graves — o "corpo" metálico que um piano de cauda tem na região grave.
+  - `duplex_gain` ("duplex ring"): o quanto os trechos livres de corda dos
+    agudos (a escala duplex da Steinway) ressoam junto com a nota.
+  - `velocity_curve_exponent` ("velocity curve"): `1.0` é o mapeamento
+    linear original; o padrão, `1.8`, afasta o toque suave do forte porque a
+    resposta do próprio martelo de feltro comprime o topo da faixa e deixa o
+    fundo praticamente mudo — ver o comentário de
+    `piano_audio::velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT` para a
+    medição.
+  - `master_gain` ("master gain"): o volume geral de saída, aplicado logo
+    antes do limitador, então abaixá-lo reduz a limitação em vez de
+    alimentar um limitador já saturado.
+- **Caixa e ponte**: os 28 modos da caixa de ressonância (frequência, tempo
+  de decaimento, ganho) e os dois ganhos de acoplamento da ponte (entre as
+  cordas da mesma tecla, e entre teclas diferentes, responsável pela
+  ressonância por simpatia).
 - **Salvar**: digite um caminho no campo do topo e clique "Save" — grava um
   `.piano.json` novo com todo o instrumento já resolvido (nunca uma
   "diferença" em cima do que foi carregado, então o arquivo salvo sempre

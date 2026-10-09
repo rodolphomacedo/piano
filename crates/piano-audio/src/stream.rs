@@ -6,6 +6,7 @@ use std::time::Instant;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample, StreamConfig};
 use piano_core::SampleRate;
+use piano_core::room::DEFAULT_ROOM_MIX;
 use piano_params::Tuning;
 use rtrb::{Consumer, Producer, RingBuffer};
 
@@ -40,7 +41,8 @@ pub(crate) fn start(
     let sample_rate = device_sample_rate(&config)?;
 
     let (producer, consumer) = RingBuffer::new(COMMAND_QUEUE_CAPACITY);
-    let engine = Engine::new(sample_rate, tuning);
+    let mut engine = Engine::new(sample_rate, tuning);
+    engine.set_room_mix(DEFAULT_ROOM_MIX);
     let stream = build_stream(sample_format, &device, &config, engine, consumer, timer)?;
     stream.play()?;
     Ok((stream, producer, sample_rate))

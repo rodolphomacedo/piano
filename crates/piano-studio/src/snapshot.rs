@@ -17,7 +17,9 @@
 
 use serde::Serialize;
 
-use crate::edit::{BridgeParameter, ModeParameter, ParameterRange, StringParameter};
+use crate::edit::{
+    BridgeParameter, ModeParameter, ParameterRange, ROOM_MIX_RANGE, StringParameter,
+};
 use crate::format::Group;
 
 /// One string's live values, keyed the way the page addresses them.
@@ -133,6 +135,8 @@ pub struct Ranges {
     pub modes: ModeRanges,
     /// Bridge coupling-gain ranges.
     pub bridge: BridgeRanges,
+    /// The room slider's range.
+    pub room_mix: ParameterRange,
 }
 
 impl Default for Ranges {
@@ -141,6 +145,7 @@ impl Default for Ranges {
             strings: StringRanges::from_definitions(),
             modes: ModeRanges::from_definitions(),
             bridge: BridgeRanges::from_definitions(),
+            room_mix: ROOM_MIX_RANGE,
         }
     }
 }
@@ -197,6 +202,8 @@ pub struct PianoSnapshot {
     pub modes: Vec<ModeSnapshot>,
     /// The bridge's two coupling gains.
     pub bridge: BridgeSnapshot,
+    /// How much of the room the instrument is heard in.
+    pub room_mix: f32,
     /// Named string selections carried over from the loaded file.
     pub groups: Vec<Group>,
     /// Every slider's ends. See [`Ranges`].

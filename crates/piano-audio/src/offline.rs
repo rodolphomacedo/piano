@@ -105,6 +105,12 @@ impl OfflineEngine {
         self.engine.set_sostenuto_pedal(down);
     }
 
+    /// Sets the room's wet level. Offline renders start dry (`0`), so
+    /// measurements see the instrument alone.
+    pub fn set_room_mix(&mut self, mix: f32) {
+        self.engine.set_room_mix(mix);
+    }
+
     /// Sets the bass's phantom-partial gain; `0` turns phantoms off.
     pub fn set_phantom_gain(&mut self, gain: f32) {
         self.engine.set_phantom_gain(gain);

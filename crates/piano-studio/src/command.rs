@@ -116,6 +116,11 @@ pub enum StudioCommand {
         /// signal is added back to the direct output.
         gain: f32,
     },
+    /// See [`piano_audio::AudioSession::set_room_mix`].
+    SetRoomMix {
+        /// The room's new wet level; `0` is a dry instrument.
+        mix: f32,
+    },
     /// See [`piano_audio::AudioSession::set_master_gain`].
     SetMasterGain {
         /// The new master output gain, applied just before the limiter.

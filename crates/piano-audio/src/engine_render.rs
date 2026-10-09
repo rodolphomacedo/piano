@@ -94,15 +94,19 @@ impl Engine {
     }
 
     /// Drives the soundboard with the strings' mono sum plus the action's
-    /// knocks, adds its two microphone signals, and limits each channel.
+    /// knocks, adds its two microphone signals, lets the room answer the
+    /// result, and limits each channel.
     fn radiate_and_limit(&mut self, left: &mut [f32], right: &mut [f32]) {
         for (left, right) in left.iter_mut().zip(right.iter_mut()) {
             let board_drive = f32::midpoint(*left, *right) + self.action.next_sample();
             let (board_left, board_right) = self.soundboard.process_stereo(board_drive);
             let mixed_left = *left + self.soundboard_mix_gain * board_left;
             let mixed_right = *right + self.soundboard_mix_gain * board_right;
-            *left = soft_limit(self.master_gain * mixed_left, OUTPUT_LIMITER_THRESHOLD);
-            *right = soft_limit(self.master_gain * mixed_right, OUTPUT_LIMITER_THRESHOLD);
+            let (room_left, room_right) = self.room.process(f32::midpoint(mixed_left, mixed_right));
+            let heard_left = mixed_left + room_left;
+            let heard_right = mixed_right + room_right;
+            *left = soft_limit(self.master_gain * heard_left, OUTPUT_LIMITER_THRESHOLD);
+            *right = soft_limit(self.master_gain * heard_right, OUTPUT_LIMITER_THRESHOLD);
         }
     }
 }

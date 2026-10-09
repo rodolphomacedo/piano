@@ -40,6 +40,7 @@
 
 use piano_core::action::ActionNoise;
 use piano_core::phantom::PhantomPartials;
+use piano_core::room::Room;
 use piano_core::soundboard::SoundboardMode;
 use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer, math};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
@@ -92,7 +93,7 @@ pub const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 const MAX_SOUNDBOARD_MIX_GAIN: f32 = 2.0;
 
 /// Default for [`Engine::master_gain`]: the linear gain applied to the mixed,
-/// soundboard-coloured signal just before [`soft_limit`] in
+/// soundboard-coloured signal just before [`crate::limiter::soft_limit`] in
 /// [`Engine::process_stereo_chunk`].
 ///
 /// Unity, because the level every other part of this project was measured at
@@ -154,6 +155,10 @@ pub(crate) struct Engine {
     /// by [`Command::SetSoundboardMixGain`], clamped to
     /// `[0, MAX_SOUNDBOARD_MIX_GAIN]`.
     soundboard_mix_gain: f32,
+    /// The room the instrument is heard in (`piano_core::room`), fed the
+    /// mixed instrument and added back in stereo. Silent until
+    /// [`Command::SetRoomMix`] raises its wet level.
+    room: Room,
     /// Master output gain, applied to the mixed signal just before
     /// [`soft_limit`]. Starts at [`DEFAULT_MASTER_GAIN`] (unity); moved live
     /// by [`Command::SetMasterGain`], clamped to `[0, MAX_MASTER_GAIN]`.
@@ -201,6 +206,7 @@ impl Engine {
             bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
             soundboard: Soundboard::new(sample_rate),
             soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
+            room: Room::new(sample_rate.hertz()),
             master_gain: DEFAULT_MASTER_GAIN,
             velocity_curve_exponent: DEFAULT_VELOCITY_CURVE_EXPONENT,
         }
@@ -232,6 +238,7 @@ impl Engine {
             Command::SoftPedal { down } => self.set_soft_pedal(down),
             Command::SetActionNoiseGain { gain } => self.set_action_noise_gain(gain),
             Command::SetPhantomGain { gain } => self.set_phantom_gain(gain),
+            Command::SetRoomMix { mix } => self.set_room_mix(mix),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),
@@ -274,6 +281,11 @@ impl Engine {
     /// Sets the keybed thump's level. See [`Command::SetActionNoiseGain`].
     pub(crate) fn set_action_noise_gain(&mut self, gain: f32) {
         self.action.set_gain(gain);
+    }
+
+    /// Sets the room's wet level. See [`Command::SetRoomMix`].
+    pub(crate) fn set_room_mix(&mut self, mix: f32) {
+        self.room.set_mix(mix);
     }
 
     /// Rescales every key's phantom gain so the bass sits at `gain`. See

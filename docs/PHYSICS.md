@@ -628,6 +628,30 @@ instrument: every level, decay and tuning measurement in this repository
 still holds on the mono mean (`tests/stereo.rs` checks that, and that A0
 sits 8 dB left and C8 9 dB right).
 
+## Why the instrument is heard in a room
+
+Nobody hears a piano dry. Every recording a listener compares this
+instrument with was made in a hall or a studio, and the room is a large part
+of what makes a recorded concert grand sound rich: a few milliseconds of
+silence, then a dense, decorrelated tail that dies faster in the treble
+than in the bass.
+
+`piano_core::room::Room` is the feedback delay network of Jot and Chaigne
+(AES 1991): eight delay lines of 30-73 ms, fed back through an orthonormal
+(lossless) Hadamard matrix, each followed by a one-pole absorption filter
+solved so the tail reverberates 1.8 s at low frequencies and 0.5 s at
+Nyquist, after a 12 ms predelay. Left and right read the lines through
+orthogonal sign patterns, so the two channels are uncorrelated. It is fed
+the dry instrument after the soundboard and added back in stereo before the
+limiter.
+
+The live engine starts at `DEFAULT_ROOM_MIX` (0.25), which puts the room
+about 11-14 dB under the direct sound over a sustained note
+(`tests/room.rs`); `.piano.json`'s `instrument.room_mix` and the studio's
+room slider move it, and `0` is dry. Offline renders start dry, so every
+level, decay and tuning measurement in this repository sees the instrument
+alone.
+
 ## What the current model still does not do
 
 Stated plainly, because these are the gaps a later milestone would close:

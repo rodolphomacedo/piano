@@ -77,6 +77,12 @@ pub(crate) enum Command {
         /// New bass gain, clamped into `[0, MAX_PHANTOM_GAIN]`.
         gain: f32,
     },
+    /// Sets how much of the room ([`piano_core::room::Room`]) is heard;
+    /// `0` is a dry instrument.
+    SetRoomMix {
+        /// New wet level, clamped into `[0, MAX_ROOM_MIX]`.
+        mix: f32,
+    },
     /// The soft pedal (CC67, issue #59): while down, every strike misses one
     /// string of each bichord and trichord. See
     /// [`piano_core::UnisonGroup::pluck_una_corda`].

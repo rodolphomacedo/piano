@@ -32,6 +32,7 @@ pub mod hammer;
 pub mod math;
 pub mod noise;
 pub mod phantom;
+pub mod room;
 pub mod soundboard;
 pub mod string;
 pub mod unison;

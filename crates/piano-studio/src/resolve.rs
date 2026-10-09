@@ -12,7 +12,10 @@ use piano_core::dispersion::DEFAULT_INHARMONICITY;
 use piano_core::hammer::{DEFAULT_HAMMER, HammerConfig};
 use piano_core::room::DEFAULT_ROOM_MIX;
 use piano_core::soundboard::{DEFAULT_MODE_BRIDGE_COUPLING, SoundboardMode};
-use piano_core::string::{DEFAULT_DAMPING, DEFAULT_SUSTAIN};
+use piano_core::string::{
+    DEFAULT_DAMPING, DEFAULT_EXCITATION_NOISE_MIX, DEFAULT_LOOP_ZERO_MIX, DEFAULT_STRIKE_POSITION,
+    DEFAULT_SUSTAIN,
+};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
 use crate::format::{HammerOverrides, ParameterOverrides, PianoFile, RegisterAnchor, Registers};
@@ -54,6 +57,12 @@ pub struct ResolvedString {
     pub detune_cents: f32,
     /// See [`piano_core::string::PluckedString::set_seed`].
     pub seed: u32,
+    /// See [`piano_core::string::PluckedString::set_loop_zero_mix`].
+    pub loop_zero_mix: f32,
+    /// See [`piano_core::string::PluckedString::set_strike_position`].
+    pub strike_position: f32,
+    /// See [`piano_core::string::PluckedString::set_excitation_noise_mix`].
+    pub excitation_noise_mix: f32,
     /// See [`piano_core::string::PluckedString::set_hammer`].
     pub hammer: HammerConfig,
 }
@@ -103,6 +112,9 @@ struct Resolved {
     inharmonicity: f32,
     detune_cents: f32,
     seed: u32,
+    loop_zero_mix: f32,
+    strike_position: f32,
+    excitation_noise_mix: f32,
     hammer: HammerConfig,
 }
 
@@ -223,6 +235,12 @@ fn resolve_string(
         inharmonicity: file.defaults.inharmonicity.unwrap_or(DEFAULT_INHARMONICITY),
         detune_cents: file.defaults.detune_cents.unwrap_or(DEFAULT_DETUNE_CENTS),
         seed: file.defaults.seed.unwrap_or(DEFAULT_SEED),
+        loop_zero_mix: DEFAULT_LOOP_ZERO_MIX,
+        strike_position: DEFAULT_STRIKE_POSITION,
+        excitation_noise_mix: file
+            .defaults
+            .excitation_noise_mix
+            .unwrap_or(DEFAULT_EXCITATION_NOISE_MIX),
         hammer: DEFAULT_HAMMER,
     };
 
@@ -236,6 +254,14 @@ fn resolve_string(
     resolved.damping = voicing.damping;
     resolved.sustain = voicing.sustain;
     resolved.inharmonicity = voicing.inharmonicity;
+    // The zero is solved together with damping and sustain, so the
+    // register tier owns it the same way; the strike point is the key's
+    // own unless `defaults` moves every string's.
+    resolved.loop_zero_mix = voicing.zero_mix;
+    resolved.strike_position = file
+        .defaults
+        .strike_position
+        .unwrap_or(voicing.strike_position);
     // The key's own hammer is the base the file's `defaults.hammer` edits,
     // so a file that sets only the exponent keeps every key's own felt.
     resolved.hammer = resolve_hammer(voicing.hammer, &file.defaults.hammer);
@@ -266,6 +292,9 @@ fn resolve_string(
         inharmonicity: resolved.inharmonicity,
         detune_cents: resolved.detune_cents,
         seed: resolved.seed,
+        loop_zero_mix: resolved.loop_zero_mix,
+        strike_position: resolved.strike_position,
+        excitation_noise_mix: resolved.excitation_noise_mix,
         hammer: resolved.hammer,
     }
 }
@@ -288,7 +317,21 @@ fn apply_overrides(resolved: &mut Resolved, overrides: &ParameterOverrides) {
     if let Some(seed) = overrides.seed {
         resolved.seed = seed;
     }
+    apply_excitation_overrides(resolved, overrides);
     resolved.hammer = resolve_hammer(resolved.hammer, &overrides.hammer);
+}
+
+/// The loss-zero and excitation half of [`apply_overrides`].
+fn apply_excitation_overrides(resolved: &mut Resolved, overrides: &ParameterOverrides) {
+    if let Some(zero_mix) = overrides.loop_zero_mix {
+        resolved.loop_zero_mix = zero_mix;
+    }
+    if let Some(position) = overrides.strike_position {
+        resolved.strike_position = position;
+    }
+    if let Some(mix) = overrides.excitation_noise_mix {
+        resolved.excitation_noise_mix = mix;
+    }
 }
 
 /// Overwrites whichever of `base`'s fields `overrides` sets.

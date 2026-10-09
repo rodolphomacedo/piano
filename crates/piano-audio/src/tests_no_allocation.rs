@@ -157,7 +157,7 @@ mod command_stream {
         bytes.extend([3, 1, 5, 1, 15]);
         bytes.extend(4.0f32.to_le_bytes());
         for _ in 0..64 {
-            bytes.extend([28, 0, 2]);
+            bytes.extend([31, 0, 2]);
         }
         let outcome = run_command_stream(&bytes, |work| work());
         assert!(outcome.is_sound(), "{outcome:?}");

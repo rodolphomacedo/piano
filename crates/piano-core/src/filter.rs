@@ -20,7 +20,7 @@ const MAX_POLE: f32 = 0.999_9;
 /// off Nyquist and the rolloff *weakens* again (see [`LoopFilter::new`]'s
 /// docs), which is never useful here, so the range is capped where the
 /// rolloff peaks rather than left open to a confusing region.
-const MAX_ZERO_MIX: f32 = 0.5;
+pub const MAX_ZERO_MIX: f32 = 0.5;
 
 /// The string's loss filter: a one-pole, one-zero design, rather than a
 /// bare pole.
@@ -94,10 +94,17 @@ impl LoopFilter {
     /// the audio thread. Same clamp and stability guarantee as
     /// [`LoopFilter::new`]; does not touch `state`, so the change is
     /// audible starting with the very next sample rather than resetting the
-    /// filter's memory. `zero_mix` is not live-adjustable: it is chosen once,
-    /// per string, by `piano_audio::voicing` at construction time.
+    /// filter's memory.
     pub fn set_pole(&mut self, pole: f32) {
         self.pole = math::clamp_or_low(pole, 0.0, MAX_POLE);
+    }
+
+    /// Updates the averaging zero's weight in place, with the same clamp,
+    /// stability guarantee and untouched memory as [`LoopFilter::set_pole`].
+    /// `piano_audio::voicing` solves it per string; this lets the studio
+    /// move it live (issue #84).
+    pub fn set_zero_mix(&mut self, zero_mix: f32) {
+        self.zero_mix = math::clamp_or_low(zero_mix, 0.0, MAX_ZERO_MIX);
     }
 
     /// The delay the filter itself adds to the loop, in samples, at low

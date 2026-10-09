@@ -40,6 +40,12 @@ pub struct ParameterOverrides {
     pub detune_cents: Option<f32>,
     /// See [`piano_core::string::PluckedString::set_seed`].
     pub seed: Option<u32>,
+    /// See [`piano_core::string::PluckedString::set_loop_zero_mix`].
+    pub loop_zero_mix: Option<f32>,
+    /// See [`piano_core::string::PluckedString::set_strike_position`].
+    pub strike_position: Option<f32>,
+    /// See [`piano_core::string::PluckedString::set_excitation_noise_mix`].
+    pub excitation_noise_mix: Option<f32>,
     /// See [`HammerOverrides`].
     #[serde(default)]
     pub hammer: HammerOverrides,

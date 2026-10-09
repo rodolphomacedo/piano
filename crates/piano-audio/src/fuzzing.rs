@@ -34,7 +34,7 @@ const MAX_STEPS: usize = 2_048;
 const MAX_BLOCK_FRAMES: usize = 512;
 
 /// How many distinct step kinds a selector byte chooses between.
-const STEP_KINDS: u8 = 29;
+const STEP_KINDS: u8 = 32;
 
 /// What one stream produced.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -169,8 +169,8 @@ impl ByteReader<'_> {
         match kind {
             0..=7 => self.performance(kind).map(Step::Apply),
             8..=18 => self.global_setting(kind).map(Step::Apply),
-            19..=26 => self.per_string_setting(kind).map(Step::Apply),
-            27 => self.frames().map(Step::RenderMono),
+            19..=29 => self.per_string_setting(kind).map(Step::Apply),
+            30 => self.frames().map(Step::RenderMono),
             _ => self.frames().map(Step::RenderStereo),
         }
     }
@@ -236,6 +236,21 @@ impl ByteReader<'_> {
                 midi,
                 string_index,
                 cents: self.float()?,
+            },
+            25 => Command::SetStringLoopZeroMix {
+                midi,
+                string_index,
+                zero_mix: self.float()?,
+            },
+            26 => Command::SetStringStrikePosition {
+                midi,
+                string_index,
+                position: self.float()?,
+            },
+            27 => Command::SetStringExcitationNoiseMix {
+                midi,
+                string_index,
+                mix: self.float()?,
             },
             23 => Command::SetStringSeed {
                 midi,

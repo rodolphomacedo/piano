@@ -102,6 +102,12 @@ pub enum StringParameter {
     DetuneCents,
     /// See [`piano_core::string::PluckedString::set_seed`].
     Seed,
+    /// See [`piano_core::string::PluckedString::set_loop_zero_mix`].
+    LoopZeroMix,
+    /// See [`piano_core::string::PluckedString::set_strike_position`].
+    StrikePosition,
+    /// See [`piano_core::string::PluckedString::set_excitation_noise_mix`].
+    ExcitationNoiseMix,
     /// See [`piano_core::hammer::HammerConfig::contact_exponent`].
     HammerContactExponent,
     /// See [`piano_core::hammer::HammerConfig::stiffness`].
@@ -114,12 +120,15 @@ pub enum StringParameter {
 
 /// Every [`StringParameter`], for callers that need to walk them all —
 /// the snapshot's range table and the tests that check none was forgotten.
-pub const STRING_PARAMETERS: [StringParameter; 9] = [
+pub const STRING_PARAMETERS: [StringParameter; 12] = [
     StringParameter::Damping,
     StringParameter::Sustain,
     StringParameter::Inharmonicity,
     StringParameter::DetuneCents,
     StringParameter::Seed,
+    StringParameter::LoopZeroMix,
+    StringParameter::StrikePosition,
+    StringParameter::ExcitationNoiseMix,
     StringParameter::HammerContactExponent,
     StringParameter::HammerStiffness,
     StringParameter::HammerMass,
@@ -158,6 +167,15 @@ impl StringParameter {
             Self::Inharmonicity => inharmonicity_range(),
             Self::DetuneCents => detune_range(),
             Self::Seed => ParameterRange::new(0.0, MAX_SEED, 1.0),
+            Self::LoopZeroMix => {
+                ParameterRange::new(0.0, f64::from(piano_core::filter::MAX_ZERO_MIX), 0.001)
+            }
+            Self::StrikePosition => ParameterRange::new(
+                0.0,
+                f64::from(piano_core::string::MAX_STRIKE_POSITION),
+                0.001,
+            ),
+            Self::ExcitationNoiseMix => ParameterRange::new(0.0, 1.0, 0.01),
             Self::HammerContactExponent => CONTACT_EXPONENT_RANGE,
             Self::HammerStiffness => STIFFNESS_RANGE,
             Self::HammerMass => MASS_RANGE,

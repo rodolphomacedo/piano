@@ -279,6 +279,27 @@ impl Engine {
                 string_index,
                 hammer,
             } => self.set_string_hammer(midi, string_index, hammer),
+            Command::SetStringLoopZeroMix {
+                midi,
+                string_index,
+                zero_mix,
+            } => self.with_string(midi, string_index, |strings, index| {
+                strings.set_string_loop_zero_mix(index, zero_mix);
+            }),
+            Command::SetStringStrikePosition {
+                midi,
+                string_index,
+                position,
+            } => self.with_string(midi, string_index, |strings, index| {
+                strings.set_string_strike_position(index, position);
+            }),
+            Command::SetStringExcitationNoiseMix {
+                midi,
+                string_index,
+                mix,
+            } => self.with_string(midi, string_index, |strings, index| {
+                strings.set_string_excitation_noise_mix(index, mix);
+            }),
         }
     }
 
@@ -486,6 +507,19 @@ impl Engine {
     fn set_string_seed(&mut self, midi: u8, string_index: u8, seed: u32) {
         if let Some(strings) = self.unison_for_midi(midi) {
             strings.set_string_seed(usize::from(string_index), seed);
+        }
+    }
+
+    /// Runs `change` on string `string_index` of `midi`'s unison. See
+    /// [`Engine::set_string_damping`] for the out-of-range contract.
+    fn with_string(
+        &mut self,
+        midi: u8,
+        string_index: u8,
+        change: impl FnOnce(&mut UnisonGroup, usize),
+    ) {
+        if let Some(strings) = self.unison_for_midi(midi) {
+            change(strings, usize::from(string_index));
         }
     }
 

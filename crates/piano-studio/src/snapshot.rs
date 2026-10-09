@@ -36,6 +36,12 @@ pub struct StringSnapshot {
     pub detune_cents: f32,
     /// See [`StringParameter::Seed`].
     pub seed: u32,
+    /// See [`StringParameter::LoopZeroMix`].
+    pub loop_zero_mix: f32,
+    /// See [`StringParameter::StrikePosition`].
+    pub strike_position: f32,
+    /// See [`StringParameter::ExcitationNoiseMix`].
+    pub excitation_noise_mix: f32,
     /// See [`StringParameter::HammerContactExponent`].
     pub hammer_contact_exponent: f32,
     /// See [`StringParameter::HammerStiffness`].
@@ -95,6 +101,12 @@ pub struct StringRanges {
     pub detune_cents: ParameterRange,
     /// See [`StringParameter::Seed`].
     pub seed: ParameterRange,
+    /// See [`StringParameter::LoopZeroMix`].
+    pub loop_zero_mix: ParameterRange,
+    /// See [`StringParameter::StrikePosition`].
+    pub strike_position: ParameterRange,
+    /// See [`StringParameter::ExcitationNoiseMix`].
+    pub excitation_noise_mix: ParameterRange,
     /// See [`StringParameter::HammerContactExponent`].
     pub hammer_contact_exponent: ParameterRange,
     /// See [`StringParameter::HammerStiffness`].
@@ -159,6 +171,9 @@ impl StringRanges {
             inharmonicity: StringParameter::Inharmonicity.range(),
             detune_cents: StringParameter::DetuneCents.range(),
             seed: StringParameter::Seed.range(),
+            loop_zero_mix: StringParameter::LoopZeroMix.range(),
+            strike_position: StringParameter::StrikePosition.range(),
+            excitation_noise_mix: StringParameter::ExcitationNoiseMix.range(),
             hammer_contact_exponent: StringParameter::HammerContactExponent.range(),
             hammer_stiffness: StringParameter::HammerStiffness.range(),
             hammer_mass: StringParameter::HammerMass.range(),
@@ -246,6 +261,9 @@ mod tests {
             inharmonicity: 0.000_4,
             detune_cents: 0.0,
             seed: 0,
+            loop_zero_mix: 0.3,
+            strike_position: 0.125,
+            excitation_noise_mix: 0.7,
             hammer_contact_exponent: 2.5,
             hammer_stiffness: 1.7e9,
             hammer_mass: 1.0,

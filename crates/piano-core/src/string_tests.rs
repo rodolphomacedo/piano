@@ -420,6 +420,20 @@ fn set_inharmonicity_retunes_the_loop_the_same_way_damping_does() {
 }
 
 #[test]
+fn set_loop_zero_mix_retunes_the_loop_the_same_way_damping_does() {
+    let mut string = string_at(440.0);
+    let before = string.loop_delay();
+    string.set_loop_zero_mix(0.4);
+    assert_ne!(string.loop_delay(), before);
+    let total_delay = loop_length_at_fundamental(&string);
+    let period = 48_000.0 / 440.0;
+    assert!(
+        (total_delay - period).abs() < 1e-3,
+        "total delay {total_delay} drifted from period {period}"
+    );
+}
+
+#[test]
 fn set_inharmonicity_never_produces_a_non_finite_or_unbounded_signal() {
     let mut string = string_at(220.0);
     string.pluck(1.0);

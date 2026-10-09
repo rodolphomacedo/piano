@@ -25,6 +25,7 @@ extern crate alloc;
 pub mod bridge;
 pub mod delay;
 pub mod dispersion;
+pub mod excitation;
 pub mod filter;
 pub mod hammer;
 pub mod math;

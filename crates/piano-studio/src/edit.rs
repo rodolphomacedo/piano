@@ -14,6 +14,7 @@
 //! sensible ends and so the file that gets saved holds musically
 //! meaningful numbers.
 
+use piano_core::hammer;
 use serde::{Deserialize, Serialize};
 
 use crate::format::StringRef;
@@ -98,25 +99,26 @@ pub const STRING_PARAMETERS: [StringParameter; 9] = [
 /// far more than anyone auditions by hand.
 const MAX_SEED: f64 = 65_535.0;
 
-/// Mirrors `piano_core::hammer`'s private `MIN_CONTACT_EXPONENT` and
-/// `MAX_CONTACT_EXPONENT` — duplicated rather than imported because those
-/// bounds are deliberately not part of `piano-core`'s public API, the same
-/// reason `crate::resolve` mirrors the two coupling-gain defaults.
-const CONTACT_EXPONENT_RANGE: ParameterRange = ParameterRange::new(0.5, 8.0, 0.01);
+const CONTACT_EXPONENT_RANGE: ParameterRange = ParameterRange::new(
+    hammer::MIN_CONTACT_EXPONENT as f64,
+    hammer::MAX_CONTACT_EXPONENT as f64,
+    0.01,
+);
 
-/// Mirrors `piano_core::hammer`'s private `MIN_STIFFNESS`/`MAX_STIFFNESS`.
-/// See [`CONTACT_EXPONENT_RANGE`].
-const STIFFNESS_RANGE: ParameterRange = ParameterRange::new(1.7e7, 1.7e11, 1.7e7);
+const STIFFNESS_RANGE: ParameterRange = ParameterRange::new(
+    hammer::MIN_STIFFNESS as f64,
+    hammer::MAX_STIFFNESS as f64,
+    hammer::MIN_STIFFNESS as f64,
+);
 
-/// Mirrors `piano_core::hammer`'s private `MIN_MASS`/`MAX_MASS`. See
-/// [`CONTACT_EXPONENT_RANGE`].
-const MASS_RANGE: ParameterRange = ParameterRange::new(0.01, 100.0, 0.01);
+const MASS_RANGE: ParameterRange =
+    ParameterRange::new(hammer::MIN_MASS as f64, hammer::MAX_MASS as f64, 0.01);
 
-/// Mirrors `piano_core::hammer`'s private `MIN_STRING_IMPEDANCE`/
-/// `MAX_STRING_IMPEDANCE`. See [`CONTACT_EXPONENT_RANGE`]. Provisional
-/// until the validation task in `docs/superpowers/plans/
-/// 2026-09-13-hammer-string-coupling.md` calibrates real defaults.
-const STRING_IMPEDANCE_RANGE: ParameterRange = ParameterRange::new(1.0e6, 1.0e13, 1.0e6);
+const STRING_IMPEDANCE_RANGE: ParameterRange = ParameterRange::new(
+    hammer::MIN_STRING_IMPEDANCE as f64,
+    hammer::MAX_STRING_IMPEDANCE as f64,
+    hammer::MIN_STRING_IMPEDANCE as f64,
+);
 
 impl StringParameter {
     /// The span a slider for this parameter should cover.

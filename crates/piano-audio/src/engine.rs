@@ -81,7 +81,7 @@ const BRIDGE_BLOCK_SAMPLES: usize = 128;
 /// `instrument.soundboard_mix_gain` and
 /// [`crate::AudioSession::set_soundboard_mix_gain`] both move it (issue
 /// #78).
-pub(crate) const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
+pub const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 
 /// Ceiling for [`Engine::soundboard_mix_gain`]. The denser mode bank (issue
 /// #78) can radiate more than the old eight modes did, so a caller pushing
@@ -102,7 +102,7 @@ const MAX_SOUNDBOARD_MIX_GAIN: f32 = 2.0;
 /// move it (issue #79). The companion velocity curve is left for a later
 /// pass — it needs a musical judgement made by ear, which a scalar gain does
 /// not.
-pub(crate) const DEFAULT_MASTER_GAIN: f32 = 1.0;
+pub const DEFAULT_MASTER_GAIN: f32 = 1.0;
 
 /// Ceiling for [`Engine::master_gain`]. Applied *before* [`soft_limit`], so
 /// anything past unity is deliberately driving the limiter; `4.0` (+12 dB)
@@ -116,6 +116,8 @@ const MAX_MASTER_GAIN: f32 = 4.0;
 /// [`UnisonGroup::new`]) — a real but rare degradation, not a bug.
 struct Voice {
     strings: Option<UnisonGroup>,
+    /// This key's regulation gain, [`voicing::level_for_key`].
+    level: f32,
     /// `true` from [`Engine::note_on`] until the matching
     /// [`Engine::note_off`], regardless of pedal state. Distinct from
     /// `pending_pedal_release`: this tracks whether a *finger* is
@@ -242,7 +244,7 @@ impl Engine {
                 continue;
             }
             for (index, sample) in chunk.iter_mut().enumerate() {
-                *sample += strings.process_with_bridge(&mut self.bridge, index);
+                *sample += voice.level * strings.process_with_bridge(&mut self.bridge, index);
             }
         }
         for sample in chunk.iter_mut() {
@@ -569,6 +571,7 @@ fn voice_for_key(
     let Ok(key) = PianoKey::from_midi(midi) else {
         return Voice {
             strings: None,
+            level: 1.0,
             held: false,
             pending_pedal_release: false,
         };
@@ -577,6 +580,7 @@ fn voice_for_key(
     let unison_count = unison_override.unwrap_or_else(|| voicing::unison_count_for_key(key));
     Voice {
         strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),
+        level: voicing::level_for_key(key),
         held: false,
         pending_pedal_release: false,
     }

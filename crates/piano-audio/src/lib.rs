@@ -35,8 +35,10 @@ use piano_core::SampleRate;
 use piano_params::Tuning;
 use rtrb::Producer;
 
+pub use engine::{DEFAULT_MASTER_GAIN, DEFAULT_SOUNDBOARD_MIX_GAIN};
 pub use error::AudioError;
 pub use timing::TimingReport;
+pub use velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT;
 
 use commands::Command;
 use timing::CallbackTimer;

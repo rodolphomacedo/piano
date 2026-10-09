@@ -586,35 +586,29 @@ fn velocity_response_db(midi: u8, velocity: f32, curve_exponent: f32) -> f32 {
     20.0 * rms.log10()
 }
 
-/// Documents issue #79's root cause: with no curve at all (`exponent =
-/// 1.0`), A4's felt-hammer response is far steeper across the bottom of the
-/// velocity range than across the top, which is exactly what makes soft
-/// playing collapse into a narrow sliver near silence while everything past
-/// mezzo-forte sounds the same. See `velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT`'s
-/// doc comment for the full measured table this locks in.
+/// A strike's low-frequency drive is its momentum, so every step up in
+/// velocity must get louder, across a piano's ~30-40 dB *pianissimo* to
+/// *fortissimo* range, in every register. Before the excitation was
+/// normalised by momentum (`piano_core::string::low_frequency_weight`), A6
+/// stopped getting louder past *mezzo-forte* (-10.3 dB at 0.55, -10.1 dB at
+/// 1.0) and A4's bottom half carried three times the top half's range.
 #[test]
-fn a_linear_velocity_map_is_far_from_even_in_decibels() {
-    let quiet_half = velocity_response_db(69, 0.4, 1.0) - velocity_response_db(69, 0.1, 1.0);
-    let loud_half = velocity_response_db(69, 1.0, 1.0) - velocity_response_db(69, 0.55, 1.0);
-    assert!(
-        quiet_half > loud_half * 3.0,
-        "bottom-of-range step {quiet_half:.1} dB is not far past top-of-range step \
-         {loud_half:.1} dB — the defect #79's velocity curve exists to compensate for \
-         may have changed"
-    );
-}
-
-#[test]
-fn the_default_velocity_curve_widens_the_gap_between_a_soft_and_a_hard_strike() {
-    let identity_gap = velocity_response_db(69, 1.0, 1.0) - velocity_response_db(69, 0.25, 1.0);
-    let default_gap =
-        velocity_response_db(69, 1.0, velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT)
-            - velocity_response_db(69, 0.25, velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT);
-    assert!(
-        default_gap > identity_gap,
-        "default curve's soft-to-hard gap ({default_gap:.1} dB) is not wider than the linear \
-         map's ({identity_gap:.1} dB)"
-    );
+fn every_register_gets_louder_with_every_velocity_step() {
+    let velocities = [0.1f32, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0];
+    for midi in [45u8, 69, 93] {
+        let levels: Vec<f32> = velocities
+            .iter()
+            .map(|&velocity| velocity_response_db(midi, velocity, 1.0))
+            .collect();
+        for pair in levels.windows(2) {
+            assert!(pair[1] > pair[0] + 0.5, "key {midi}: {levels:.1?}");
+        }
+        let span = levels[levels.len() - 1] - levels[0];
+        assert!(
+            (25.0..45.0).contains(&span),
+            "key {midi}: span {span:.1} dB"
+        );
+    }
 }
 
 #[test]

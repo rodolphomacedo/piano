@@ -25,29 +25,13 @@ const DEFAULT_SEED: u32 = 0;
 
 // Imported, not mirrored: a duplicated copy kept `0.15` here after the
 // core default moved to `0.75` with a new meaning (issue #96), which would
-// have left the studio — the MIDI playing path — almost uncoupled.
+// have left the studio — the MIDI playing path — almost uncoupled, and
+// another kept the velocity exponent at `1.8` after the engine's became
+// `1.0`.
+use piano_audio::{
+    DEFAULT_MASTER_GAIN, DEFAULT_SOUNDBOARD_MIX_GAIN, DEFAULT_VELOCITY_CURVE_EXPONENT,
+};
 use piano_core::unison::{DEFAULT_GLOBAL_COUPLING_GAIN, DEFAULT_LOCAL_COUPLING_GAIN};
-
-/// Mirrors `piano_audio`'s crate-private `DEFAULT_SOUNDBOARD_MIX_GAIN` —
-/// the engine's starting mix level for the modal soundboard (issue #78).
-/// Duplicated, not imported: it is not part of `piano-audio`'s public API. A file with no `instrument.soundboard_mix_gain` resolves to
-/// this, i.e. leaves the engine at its own default.
-const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
-
-/// Mirrors `piano_audio`'s crate-private `DEFAULT_MASTER_GAIN` — unity, the
-/// level everything else in the project was measured at (issue #79).
-/// Duplicated for the same reason as [`DEFAULT_SOUNDBOARD_MIX_GAIN`]: not
-/// part of `piano-audio`'s public API. A file with no `instrument.master_gain`
-/// resolves to this, leaving the engine at unity.
-const DEFAULT_MASTER_GAIN: f32 = 1.0;
-
-/// Mirrors `piano_audio`'s crate-private `DEFAULT_VELOCITY_CURVE_EXPONENT` —
-/// the exponent a strike velocity is warped through before it reaches the
-/// string (issue #79). Duplicated for the same reason as
-/// [`DEFAULT_MASTER_GAIN`]: not part of `piano-audio`'s public API. A file
-/// with no `instrument.velocity_curve_exponent` resolves to this, leaving
-/// the engine at its own default.
-const DEFAULT_VELOCITY_CURVE_EXPONENT: f32 = 1.8;
 
 /// One string's fully resolved parameters, ready to drive
 /// `piano_audio::AudioSession`'s per-string setters.
@@ -220,7 +204,7 @@ fn resolve_string(
         inharmonicity: file.defaults.inharmonicity.unwrap_or(DEFAULT_INHARMONICITY),
         detune_cents: file.defaults.detune_cents.unwrap_or(DEFAULT_DETUNE_CENTS),
         seed: file.defaults.seed.unwrap_or(DEFAULT_SEED),
-        hammer: resolve_hammer(DEFAULT_HAMMER, &file.defaults.hammer),
+        hammer: DEFAULT_HAMMER,
     };
 
     // The `registers` tier always wins over `defaults` for the three
@@ -233,6 +217,9 @@ fn resolve_string(
     resolved.damping = voicing.damping;
     resolved.sustain = voicing.sustain;
     resolved.inharmonicity = voicing.inharmonicity;
+    // The key's own hammer is the base the file's `defaults.hammer` edits,
+    // so a file that sets only the exponent keeps every key's own felt.
+    resolved.hammer = resolve_hammer(voicing.hammer, &file.defaults.hammer);
 
     for group in &file.groups {
         if group

@@ -292,6 +292,26 @@ attack spectrum `H2 −6 dB, H3 −12 dB` (was `−47/−72 dB`), and the all-88
 engine sweep's trichord/monochord late-energy ratio `0.72-11.8` (was
 `0.09` at worst). Cost: `PERF-005` reopened, +35 % at full polyphony.
 
+### D12 — *Bug*: one bass hammer struck all 88 keys. *(the "treble is too shrill" report)*
+
+Every key used `DEFAULT_HAMMER`, whose contact lasts 4.1 ms at velocity 0.6
+— right for A0, seven times too long for C8. Measured per key: from C6 up,
+a 4 ms click 13-20 dB above the note's own level; E6's second partial 6 dB
+*above* its fundamental; C8's partials at 8-20 kHz ringing as long as the
+fundamental. Separately, normalising the excitation's slope to unit peak
+made harder strikes carry less fundamental, so A6 did not get louder past
+*mezzo-forte* and issue #79's `1.8` velocity exponent was compensating for
+it in the middle.
+
+**Fixed.** A per-register hammer (`excitation::hammer_for_frequency`, also
+issue #58's per-key hammer column), a mass-loading lowpass in the treble, a
+`b₃·ω²` cap on every partial's decay target, and momentum-proportional
+excitation; velocity exponent back to `1.0`; a measured per-key regulation gain so
+the scale is even (it had 5 dB cliffs at both unison breaks). See
+`docs/PHYSICS.md`, "Why every register has its own hammer" and "Why each
+key has a regulation gain". Per-key felt *variation* (neighbouring
+keys sounding slightly different) is still open under #58.
+
 ### D4 — The excitation is white noise, not a hammer. *(strike position now fixed, #32)*
 
 `PluckedString::write_excitation` fills the delay line with

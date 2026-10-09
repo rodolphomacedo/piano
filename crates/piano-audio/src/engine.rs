@@ -125,21 +125,18 @@ struct Voice {
     /// sustain pedal needs to lift or re-engage this voice's damper for
     /// sympathetic-resonance purposes ([`Engine::set_sustain_pedal`]).
     held: bool,
-    /// Set by [`Engine::note_off`] when this key's `NoteOff` arrives while
-    /// the sustain pedal is down: the voice keeps ringing, but is released
-    /// for real the moment the pedal comes back up
-    /// ([`Engine::release_pedal_held_voices`]). Cleared by a fresh
-    /// [`Engine::note_on`] on the same key, since a re-strike is held by
-    /// the finger again, not by the pedal.
-    pending_pedal_release: bool,
+    /// Caught by the sostenuto pedal: this key was held when the pedal
+    /// went down, so its damper stays off until the pedal comes up
+    /// ([`Engine::set_sostenuto_pedal`]).
+    sostenuto_latched: bool,
 }
 
 /// Owns one voice per key, the shared bridge bus and the soundboard, all
 /// tuned for the sample rate given at construction.
 pub(crate) struct Engine {
     voices: [Voice; KEY_COUNT],
-    /// CC64 hold state. See [`Command::SustainPedal`].
-    pedal_down: bool,
+    /// Where the three pedals are. See `engine_pedals.rs`.
+    pedals: PedalState,
     /// Cross-key sympathetic resonance (`PERF-008`). See the module docs.
     bridge: BridgeBus,
     /// Post-mix modal-synthesis soundboard (`PERF-009`). See the module
@@ -192,7 +189,7 @@ impl Engine {
             voices: core::array::from_fn(|index| {
                 voice_for_key(index, sample_rate, tuning, unison_override)
             }),
-            pedal_down: false,
+            pedals: PedalState::default(),
             bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
             soundboard: Soundboard::new(sample_rate),
             soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
@@ -261,6 +258,11 @@ impl Engine {
             Command::SetSustain { sustain } => self.set_sustain(sustain),
             Command::NoteOff { midi } => self.note_off(midi),
             Command::SustainPedal { down } => self.set_sustain_pedal(down),
+            Command::SustainPedalPosition { position } => {
+                self.set_sustain_pedal_position(position);
+            }
+            Command::SostenutoPedal { down } => self.set_sostenuto_pedal(down),
+            Command::SoftPedal { down } => self.set_soft_pedal(down),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),
@@ -307,90 +309,18 @@ impl Engine {
     /// error to anyone.
     pub(crate) fn note_on(&mut self, midi: u8, velocity: f32) {
         let pluck_velocity = velocity_curve::warp_velocity(velocity, self.velocity_curve_exponent);
+        let soft_down = self.pedals.soft_down;
         let Some(voice) = self.voice_for_midi(midi) else {
             return;
         };
         voice.held = true;
-        // Struck again by the finger, not held by the pedal any more —
-        // even if this key's previous ringing was pedal-held when it was
-        // re-struck.
-        voice.pending_pedal_release = false;
         let Some(strings) = voice.strings.as_mut() else {
             return;
         };
-        strings.pluck(pluck_velocity);
-    }
-
-    /// Releases `midi`'s voice — a MIDI note-off or a computer-keyboard
-    /// key-up. While the sustain pedal is down, the voice is marked
-    /// [`Voice::pending_pedal_release`] instead of released immediately;
-    /// [`Engine::release_pedal_held_voices`] finishes the job once the
-    /// pedal comes back up. `held` clears unconditionally, regardless of
-    /// pedal state — it tracks the finger, not the sound.
-    pub(crate) fn note_off(&mut self, midi: u8) {
-        let pedal_down = self.pedal_down;
-        let Some(voice) = self.voice_for_midi(midi) else {
-            return;
-        };
-        voice.held = false;
-        if pedal_down {
-            voice.pending_pedal_release = true;
-            return;
-        }
-        if let Some(strings) = voice.strings.as_mut() {
-            strings.release();
-        }
-    }
-
-    /// Sets the CC64 hold state. Pressing the pedal also lifts the damper
-    /// on every currently-idle voice, so it becomes receptive to
-    /// sympathetic resonance (`PERF-008`, M6) exactly like a real piano's
-    /// pedal lifting every damper regardless of which keys are held;
-    /// releasing it releases every non-held voice, both the ones
-    /// `pending_pedal_release` marked and the ones that were merely made
-    /// receptive.
-    pub(crate) fn set_sustain_pedal(&mut self, down: bool) {
-        let was_down = self.pedal_down;
-        self.pedal_down = down;
-        if !was_down && down {
-            self.lift_dampers_for_sympathetic_resonance();
-        }
-        if was_down && !down {
-            self.release_pedal_held_voices();
-        }
-    }
-
-    /// Lifts the damper on every voice not currently held by a finger —
-    /// see [`Engine::set_sustain_pedal`]. Held voices need no change:
-    /// [`UnisonGroup::pluck`] already lifted their damper.
-    fn lift_dampers_for_sympathetic_resonance(&mut self) {
-        for voice in &mut self.voices {
-            if voice.held {
-                continue;
-            }
-            if let Some(strings) = voice.strings.as_mut() {
-                strings.lift_damper();
-            }
-        }
-    }
-
-    /// Re-engages the damper on every voice not currently held by a
-    /// finger, once the pedal comes back up — covers both voices with a
-    /// pending release and idle voices [`Engine::lift_dampers_for_
-    /// sympathetic_resonance`] made receptive; [`UnisonGroup::release`] is
-    /// idempotent, so calling it on an already-silent, already-damped
-    /// voice is harmless. Bounded by [`KEY_COUNT`] — a compile-time
-    /// maximum, not an unbounded scan — same as
-    /// [`Engine::drain_commands`]'s own bounded loop.
-    fn release_pedal_held_voices(&mut self) {
-        for voice in &mut self.voices {
-            if voice.held {
-                continue;
-            }
-            voice.pending_pedal_release = false;
-            if let Some(strings) = voice.strings.as_mut() {
-                strings.release();
-            }
+        if soft_down {
+            strings.pluck_una_corda(pluck_velocity);
+        } else {
+            strings.pluck(pluck_velocity);
         }
     }
 
@@ -416,7 +346,7 @@ impl Engine {
     fn silence_all(&mut self) {
         for voice in &mut self.voices {
             voice.held = false;
-            voice.pending_pedal_release = false;
+            voice.sostenuto_latched = false;
             if let Some(strings) = voice.strings.as_mut() {
                 strings.pluck(0.0);
                 strings.release();
@@ -573,7 +503,7 @@ fn voice_for_key(
             strings: None,
             level: 1.0,
             held: false,
-            pending_pedal_release: false,
+            sostenuto_latched: false,
         };
     };
     let config = voicing::config_for_key(key, tuning, sample_rate);
@@ -582,9 +512,13 @@ fn voice_for_key(
         strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),
         level: voicing::level_for_key(key),
         held: false,
-        pending_pedal_release: false,
+        sostenuto_latched: false,
     }
 }
+
+#[path = "engine_pedals.rs"]
+mod pedals;
+use pedals::PedalState;
 
 // Split into `engine_tests.rs` to keep this file under the project's
 // 500-line limit (`CONTRIBUTING.md`) — still compiles as `engine::tests`.

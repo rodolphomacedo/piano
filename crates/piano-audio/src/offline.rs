@@ -95,6 +95,21 @@ impl OfflineEngine {
         self.engine.set_sustain_pedal(down);
     }
 
+    /// Sets the sustain pedal's continuous position, `0` (up) to `1`.
+    pub fn set_sustain_pedal_position(&mut self, position: f32) {
+        self.engine.set_sustain_pedal_position(position);
+    }
+
+    /// Sets the sostenuto (middle) pedal.
+    pub fn set_sostenuto_pedal(&mut self, down: bool) {
+        self.engine.set_sostenuto_pedal(down);
+    }
+
+    /// Sets the soft (una corda) pedal.
+    pub fn set_soft_pedal(&mut self, down: bool) {
+        self.engine.set_soft_pedal(down);
+    }
+
     /// Renders `seconds` (clamped to `(0, MAX_RENDER_SECONDS]`, and to `0`
     /// for a non-finite request) into a freshly allocated mono buffer.
     #[must_use]

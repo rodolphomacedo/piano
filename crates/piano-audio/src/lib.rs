@@ -115,6 +115,27 @@ impl AudioSession {
         self.producer.push(Command::SustainPedal { down }).is_ok()
     }
 
+    /// Queues the sustain pedal's continuous position, `0` (up) to `1`
+    /// (down), for controllers that report half-pedalling (issue #61).
+    /// Same drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_sustain_pedal_position(&mut self, position: f32) -> bool {
+        self.producer
+            .push(Command::SustainPedalPosition { position })
+            .is_ok()
+    }
+
+    /// Queues the sostenuto (middle) pedal's state (issue #60). Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_sostenuto_pedal(&mut self, down: bool) -> bool {
+        self.producer.push(Command::SostenutoPedal { down }).is_ok()
+    }
+
+    /// Queues the soft (una corda) pedal's state (issue #59). Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_soft_pedal(&mut self, down: bool) -> bool {
+        self.producer.push(Command::SoftPedal { down }).is_ok()
+    }
+
     /// Queues a new damping (high-frequency loss) for every voice, applied
     /// live to voices already ringing as well as future strikes. `damping`
     /// is clamped into `[0, 1]` on the audio thread. Same drop-not-block

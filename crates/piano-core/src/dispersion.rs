@@ -5,95 +5,95 @@
 //! "Normal Vibration Frequencies of a Stiff Piano String", JASA 36 (1964)).
 //! A digital waveguide reproduces that by cascading first-order allpass
 //! sections inside the loop (D. Jaffe & J. O. Smith, "Extensions of the
-//! Karplus-Strong Plucked-String Algorithm", 1983): each section has unity
-//! magnitude at every frequency but adds a frequency-dependent phase delay,
-//! and stacking enough of them approximates the stretched dispersion curve
-//! well enough to be audible as "piano" rather than "guitar".
+//! Karplus-Strong Plucked-String Algorithm", 1983; S. Van Duyne & J. O.
+//! Smith, "A Simplified Approach to Modeling Dispersion Caused by Stiffness
+//! in Strings and Plates", ICMC 1994): each section has unity magnitude at
+//! every frequency but a phase delay that falls with frequency, so the loop
+//! is shorter for high partials and they sit sharp.
 //!
-//! # The simplification this makes, stated plainly
+//! # How the cascade is fitted
 //!
-//! Fitting a cascade exactly to Fletcher's curve is a numerical optimisation
-//! problem in its own right (Jaffe & Smith's own solution to it is
-//! iterative, not closed-form). This implementation instead ties one
-//! section's coefficient magnitude to `B` by a simple monotonic scaling and
-//! the number of sections to register (following the measured table in
-//! `docs/PHYSICS.md`: roughly 8 sections needed at A0, 2 at A4, 0-1 at C8),
-//! and the scaling constant was calibrated by checking the measured partial
-//! sharpening on a rendered note (see the M4 milestone's spectral test),
-//! not asserted from the formula alone.
+//! Every section shares one coefficient (Van Duyne & Smith's identical-
+//! section structure), so the cascade has two unknowns: the section count
+//! `M` and the coefficient `a`. Both are *fitted* per string against
+//! Fletcher's curve, not derived from register: for each `M` the delay
+//! budget allows, a bounded grid-then-golden-section search picks the `a`
+//! whose loop puts partials `2..=K` closest (in relative frequency) to
+//! `n·f0·sqrt((1 + B·n²)/(1 + B))` once the loop is tuned so partial 1 lands
+//! on `f0`. `M` grows only until every partial up to the eighth sits within
+//! two cents, since each section costs a multiply per sample.
+//!
+//! The previous design tied `a = -200·B` (clamped at `-0.8`) and `M` to
+//! register. Measured, it realised 1-13% of the requested `B` below C6 and
+//! none at all above it, where `M` reached zero (issue #96).
+//!
+//! The search is bounded — fixed grid and refinement counts, at most
+//! [`MAX_SECTIONS`] candidates — and allocation-free, so the live
+//! [`DispersionCascade::set_inharmonicity`] stays legal on the audio thread
+//! (it refits the coefficient only, keeping `M`, which is the cheap part).
+
+use core::f32::consts::TAU;
 
 use crate::math;
 
 /// Highest number of allpass sections any string ever uses.
-///
-/// `docs/PHYSICS.md` measures roughly 8 sections needed at A0 and 0-1 at C8;
-/// 8 is therefore an upper bound that costs nothing in the treble, where the
-/// active section count computes down to 0 or 1.
 pub const MAX_SECTIONS: usize = 8;
 
 /// [`StringConfig`](crate::string::StringConfig) uses this when the caller
 /// does not choose an inharmonicity coefficient. Representative of a
-/// mid-register piano string — Fletcher & Rossing report typical values
-/// from roughly 0.0001 in the bass to 0.05 at the top of the treble.
+/// mid-register plain-wire piano string (Fletcher & Rossing, *The Physics of
+/// Musical Instruments*, 2nd ed., §12.4).
 pub const DEFAULT_INHARMONICITY: f32 = 0.000_4;
 
-/// Highest inharmonicity coefficient accepted, at the top of the range
-/// Fletcher & Rossing report for a full-size piano.
+/// Highest inharmonicity coefficient accepted — a ceiling above anything a
+/// full-size piano's top treble string reaches, not a typical value.
 pub const MAX_INHARMONICITY: f32 = 0.05;
 
-/// Highest magnitude allowed for a section's coefficient, short of the unit
-/// circle, so the cascade is stable by construction for every `B` — and low
-/// enough that one section's own phase response cannot destabilise a
-/// unison group. See the note below for why "stable" alone (the original
-/// reason for this margin) was not the same as "safe".
+/// Highest coefficient magnitude a section may take, short of the unit
+/// circle so the cascade is stable by construction.
 ///
-/// # Why `0.9` was not safe, even though it never diverged
-///
-/// A single allpass section is magnitude-preserving at every frequency for
-/// any `|coefficient| < 1` — that is the whole point of the structure, and
-/// it is why this cascade cannot itself lose energy. But its *phase*
-/// response grows arbitrarily steep as the coefficient approaches the unit
-/// circle: [`Section::phase_delay_at_dc`] is `19` samples at a coefficient
-/// of `-0.9`, against `4` samples at `-0.5`. Steep phase response means
-/// high sensitivity to small frequency changes — and `crate::unison`
-/// detunes a note's own unison strings from each other by a few cents for
-/// exactly the beating a real piano has.
-///
-/// [`section_count`] computes exactly `1` active section for roughly
-/// C#5-B5 (554-988 Hz) — the docs already call this "0-1" a soft boundary
-/// — and a struck note there with high enough inharmonicity clamped its
-/// one section's coefficient to `-0.9`. That one section's steep phase
-/// response, applied to three strings a few cents apart, was enough to
-/// spin their post-dispersion signals out of phase with each other within
-/// a handful of round trips. `crate::unison::UnisonGroup`'s local blend
-/// assumes "same note, coupled with no latency, so the difference term is
-/// genuinely small" (`crate::string::PluckedString::write_mixed_feedback`'s
-/// own doc comment) — once the three strings' dispersed signals stopped
-/// being genuinely close, blending them fed each string a partly
-/// self-cancelling signal every round trip, an unbounded, compounding loss
-/// nothing about `sustain` predicts or accounts for.
-///
-/// Measured, at A5 (the worst point in that band — the highest
-/// inharmonicity within the single-section region): a trichord's RMS fell
-/// from `0.14` to numerically silent within six 20 ms windows (about
-/// 120 ms), while the same note plucked as a monochord (no detuning to
-/// diverge against) rang normally. At `0.8`, swept across the whole
-/// affected band (G5 through B5), every trichord decays smoothly instead
-/// — see `piano-audio`'s `report_a5_unison_group_decay_in_isolation` and
-/// `crate::unison::tests::a_high_inharmonicity_trichord_in_the_single_
-/// dispersion_section_band_does_not_collapse`. `0.8` was chosen as the
-/// smallest reduction from `0.9` that closed the gap with margin across
-/// that whole band, not the smallest one that merely fixed A5 itself.
-const MAX_COEFFICIENT: f32 = 0.8;
+/// A bass string needs its delay to fall between partials only tens of
+/// hertz apart, which a first-order section only does with its pole close
+/// to the unit circle. The previous cap of `0.8` came from a unison collapse
+/// at A5 that was driven by that note being given roughly 20 times its
+/// physical `B` (issue #96); with the fitted design, mid and treble
+/// coefficients sit far from this bound.
+const MAX_COEFFICIENT: f32 = 0.97;
 
-/// Scales `B` into a per-section allpass coefficient.
-///
-/// Negative, because the string must appear to have *less* group delay at
-/// high frequency than at DC for its upper partials to sit sharp rather than
-/// flat — see the module docs. Tuned so [`DEFAULT_INHARMONICITY`] on a
-/// mid-register note produces a clearly measurable sharpening curve well
-/// short of [`MAX_COEFFICIENT`].
-const COEFFICIENT_GAIN: f32 = 200.0;
+/// Most partials the fit weighs. Beyond the sixteenth, a piano partial is
+/// both quiet and short-lived.
+const MAX_FITTED_PARTIALS: usize = 16;
+
+/// Highest frequency, in radians per sample, a fitted partial may sit at —
+/// about 10.8 kHz at 48 kHz. The fit is not asked to place partials the
+/// loss filter has already all but removed.
+const HIGHEST_FITTED_OMEGA: f32 = 0.45 * core::f32::consts::PI;
+
+/// Share of the loop period the cascade may claim as delay at DC. The rest
+/// is left to the delay line, which must stay at least a few samples long.
+const MAX_DELAY_SHARE: f32 = 0.5;
+
+/// Coarse grid points per coefficient search, before refinement.
+const GRID_POINTS: usize = 16;
+
+/// Golden-section refinement steps after the grid. Twelve steps shrink the
+/// bracket to `0.618^12 ≈ 0.003` of its starting width.
+const REFINE_STEPS: usize = 12;
+
+/// `1/φ`, the golden-section bracket ratio.
+const INVERSE_PHI: f32 = 0.618_034;
+
+/// The partials whose placement decides whether a note sounds in tune with
+/// itself; above the eighth, partials are quiet and short-lived.
+const AUDIBLE_PARTIALS: usize = 8;
+
+/// Once every audible partial sits within this many cents of Fletcher's
+/// curve, more sections are not worth their per-sample cost. Two cents is
+/// well under the mistuning a listener detects in a single partial.
+const AUDIBLE_TOLERANCE_CENTS: f32 = 2.0;
+
+/// `1200 / ln 2`: cents per unit of small relative frequency error.
+const CENTS_PER_UNIT_RATIO: f32 = 1731.234;
 
 /// One first-order allpass section, `H(z) = (a + z⁻¹) / (1 + a·z⁻¹)`.
 ///
@@ -102,63 +102,222 @@ const COEFFICIENT_GAIN: f32 = 200.0;
 /// state variable rather than the two a direct-form realisation would need.
 #[derive(Debug, Clone, Copy, Default)]
 struct Section {
-    coefficient: f32,
     state: f32,
 }
 
 impl Section {
-    fn new(coefficient: f32) -> Self {
-        Self {
-            coefficient: math::clamp_or_low(coefficient, -MAX_COEFFICIENT, MAX_COEFFICIENT),
-            state: 0.0,
-        }
-    }
-
     #[inline]
-    fn process(&mut self, input: f32) -> f32 {
-        let next_state = math::flush_denormal(input - self.coefficient * self.state);
-        let output = self.coefficient * next_state + self.state;
+    fn process(&mut self, input: f32, coefficient: f32) -> f32 {
+        let next_state = math::flush_denormal(input - coefficient * self.state);
+        let output = coefficient * next_state + self.state;
         self.state = next_state;
         output
     }
+}
 
-    #[inline]
-    fn phase_delay_at_dc(self) -> f32 {
-        (1.0 - self.coefficient) / (1.0 + self.coefficient)
+/// A fitted `(section count, shared coefficient)` pair.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Design {
+    sections: usize,
+    coefficient: f32,
+}
+
+impl Design {
+    const NONE: Self = Self {
+        sections: 0,
+        coefficient: 0.0,
+    };
+}
+
+/// What the fit is aiming at: one string's fundamental and stiffness.
+#[derive(Debug, Clone, Copy)]
+struct FitTarget {
+    omega0: f32,
+    inharmonicity: f32,
+    partials: usize,
+}
+
+impl FitTarget {
+    fn new(omega0: f32, inharmonicity: f32) -> Self {
+        let mut target = Self {
+            omega0,
+            inharmonicity,
+            partials: 0,
+        };
+        target.partials = (1..=MAX_FITTED_PARTIALS)
+            .take_while(|&n| target.omega_of(n) < HIGHEST_FITTED_OMEGA)
+            .count();
+        target
     }
 
-    fn reset(&mut self) {
-        self.state = 0.0;
+    /// Where partial `n` should sit, with partial 1 tuned to `omega0`.
+    fn omega_of(&self, n: usize) -> f32 {
+        let n = n as f32;
+        let b = self.inharmonicity;
+        n * self.omega0 * math::sqrt((1.0 + b * n * n) / (1.0 + b))
+    }
+
+    /// Relative frequency error of partial `n` under `design`, with the loop
+    /// tuned so partial 1 lands exactly on target. Positive is flat.
+    fn relative_error(&self, design: Design, n: usize) -> f32 {
+        let m = design.sections as f32;
+        let cascade_delay = |omega: f32| m * math::allpass_phase_delay(design.coefficient, omega);
+        let rest_of_loop = TAU / self.omega0 - cascade_delay(self.omega0);
+        let omega = self.omega_of(n);
+        let wanted = TAU * n as f32 / omega;
+        (wanted - rest_of_loop - cascade_delay(omega)) / wanted
+    }
+
+    /// Squared relative errors over partials `2..=K`, weighted by `1/n²` —
+    /// roughly how a struck string's partial energy falls with `n` — so the
+    /// fit spends its freedom on the partials that carry the sound.
+    fn error(&self, design: Design) -> f32 {
+        (2..=self.partials)
+            .map(|n| {
+                let relative = self.relative_error(design, n);
+                relative * relative / (n * n) as f32
+            })
+            .sum()
+    }
+
+    /// Worst error, in cents, over partials `2..=AUDIBLE_PARTIALS`.
+    fn worst_audible_cents(&self, design: Design) -> f32 {
+        (2..=self.partials.min(AUDIBLE_PARTIALS))
+            .map(|n| math::abs(self.relative_error(design, n)) * CENTS_PER_UNIT_RATIO)
+            .fold(0.0, f32::max)
     }
 }
 
-/// A cascade of identical allpass sections, the number scaled by register.
+/// Fits the cascade for a string whose loop is `period` samples long.
+fn fit(period: f32, inharmonicity: f32) -> Design {
+    let Some(target) = fit_target(period, inharmonicity) else {
+        return Design::NONE;
+    };
+    let budget = period * MAX_DELAY_SHARE;
+    let mut best: Option<(Design, f32)> = None;
+    for sections in 1..=MAX_SECTIONS {
+        let Some(candidate) = fit_coefficient(&target, sections, budget) else {
+            break;
+        };
+        if best.is_none_or(|(_, error)| candidate.1 < error) {
+            best = Some(candidate);
+        }
+        if target.worst_audible_cents(candidate.0) <= AUDIBLE_TOLERANCE_CENTS {
+            break;
+        }
+    }
+    best.map_or(Design::NONE, |(design, _)| design)
+}
+
+/// `None` when there is nothing to fit: no stiffness, an unusable period,
+/// or fewer than two partials below [`HIGHEST_FITTED_OMEGA`].
+fn fit_target(period: f32, inharmonicity: f32) -> Option<FitTarget> {
+    let b = math::clamp_or_low(inharmonicity, 0.0, MAX_INHARMONICITY);
+    if !(period.is_finite() && period > 2.0 && b > 0.0) {
+        return None;
+    }
+    let target = FitTarget::new(TAU / period, b);
+    (target.partials >= 2).then_some(target)
+}
+
+/// Best coefficient for exactly `sections` sections, with its error, or
+/// `None` when even a coefficient of zero (one sample per section) would
+/// exceed `budget`.
+fn fit_coefficient(target: &FitTarget, sections: usize, budget: f32) -> Option<(Design, f32)> {
+    let steepest = steepest_coefficient(sections, budget)?;
+    let error_at = |coefficient: f32| {
+        target.error(Design {
+            sections,
+            coefficient,
+        })
+    };
+    let coefficient = minimise(error_at, steepest, 0.0);
+    let design = Design {
+        sections,
+        coefficient,
+    };
+    Some((design, target.error(design)))
+}
+
+/// Most negative coefficient whose DC delay, over `sections` sections, fits
+/// in `budget` samples: `(1 - a)/(1 + a) = budget / sections`.
+fn steepest_coefficient(sections: usize, budget: f32) -> Option<f32> {
+    let per_section = budget / sections as f32;
+    if per_section < 1.0 {
+        return None;
+    }
+    let coefficient = (1.0 - per_section) / (1.0 + per_section);
+    Some(coefficient.max(-MAX_COEFFICIENT))
+}
+
+/// Minimises `error` over `[low, high]`: a coarse grid, then golden-section
+/// refinement around the best grid point. Bounded by construction.
+fn minimise(error: impl Fn(f32) -> f32, low: f32, high: f32) -> f32 {
+    let step = (high - low) / (GRID_POINTS - 1) as f32;
+    let best_index = (0..GRID_POINTS)
+        .map(|index| (index, error(low + step * index as f32)))
+        .fold((0, f32::INFINITY), |best, candidate| {
+            if candidate.1 < best.1 {
+                candidate
+            } else {
+                best
+            }
+        })
+        .0;
+    let centre = low + step * best_index as f32;
+    golden_section(&error, (centre - step).max(low), (centre + step).min(high))
+}
+
+fn golden_section(error: &impl Fn(f32) -> f32, mut low: f32, mut high: f32) -> f32 {
+    for _ in 0..REFINE_STEPS {
+        let left = high - INVERSE_PHI * (high - low);
+        let right = low + INVERSE_PHI * (high - low);
+        if error(left) < error(right) {
+            high = right;
+        } else {
+            low = left;
+        }
+    }
+    f32::midpoint(low, high)
+}
+
+/// A cascade of identical first-order allpass sections, fitted per string.
 #[derive(Debug, Clone, Copy)]
 pub struct DispersionCascade {
     sections: [Section; MAX_SECTIONS],
-    active: usize,
+    design: Design,
+    period: f32,
 }
 
 impl DispersionCascade {
-    /// Builds a cascade for a string at `frequency_hz` with inharmonicity
-    /// `inharmonicity`.
+    /// Builds a cascade fitted to a string whose loop is `period` samples
+    /// long (sample rate over fundamental) with inharmonicity
+    /// `inharmonicity`. Total for every `f32`: anything non-finite, a period
+    /// too short to hold two fitted partials, or `B <= 0` gives an empty
+    /// cascade — a pure pass-through with zero delay.
     #[must_use]
-    pub fn new(frequency_hz: f32, inharmonicity: f32) -> Self {
-        let coefficient = coefficient_from_inharmonicity(inharmonicity);
+    pub fn new(period: f32, inharmonicity: f32) -> Self {
         Self {
-            sections: [Section::new(coefficient); MAX_SECTIONS],
-            active: section_count(frequency_hz),
+            sections: [Section::default(); MAX_SECTIONS],
+            design: fit(period, inharmonicity),
+            period,
         }
     }
 
-    /// Updates the inharmonicity coefficient in place, live — the same
-    /// pattern as [`crate::string::PluckedString::set_damping`]. Section
-    /// count stays fixed: it depends only on register, which does not
-    /// change for an already-built string.
+    /// Updates the inharmonicity coefficient in place, live. Keeps the
+    /// section count and refits only the coefficient — cheap enough for the
+    /// audio thread — unless the cascade is currently empty, in which case
+    /// it runs the full fit and clears the sections it brings into use.
     pub fn set_inharmonicity(&mut self, inharmonicity: f32) {
-        let coefficient = coefficient_from_inharmonicity(inharmonicity);
-        for section in &mut self.sections {
-            section.coefficient = coefficient;
+        let previous = self.design.sections;
+        self.design = match fit_target(self.period, inharmonicity) {
+            None => Design::NONE,
+            Some(_) if previous == 0 => fit(self.period, inharmonicity),
+            Some(target) => fit_coefficient(&target, previous, self.period * MAX_DELAY_SHARE)
+                .map_or(Design::NONE, |(design, _)| design),
+        };
+        for section in self.sections.iter_mut().skip(previous) {
+            *section = Section::default();
         }
     }
 
@@ -166,140 +325,50 @@ impl DispersionCascade {
     #[inline]
     #[must_use]
     pub fn process(&mut self, input: f32) -> f32 {
-        let mut sample = input;
-        for section in self.sections.iter_mut().take(self.active) {
-            sample = section.process(sample);
-        }
-        sample
+        let coefficient = self.design.coefficient;
+        self.sections
+            .iter_mut()
+            .take(self.design.sections)
+            .fold(input, |sample, section| {
+                section.process(sample, coefficient)
+            })
     }
 
-    /// Total phase delay the active sections add at DC — part of what tunes
-    /// the loop, same reasoning as
-    /// [`crate::filter::LoopFilter::phase_delay_at_dc`].
+    /// Total phase delay the active sections add at DC.
     #[inline]
     #[must_use]
     pub fn phase_delay_at_dc(&self) -> f32 {
-        self.sections
-            .iter()
-            .copied()
-            .take(self.active)
-            .map(Section::phase_delay_at_dc)
-            .sum()
+        self.phase_delay_at(0.0)
+    }
+
+    /// Total phase delay the active sections add at `omega` radians per
+    /// sample — what the loop is tuned by at the fundamental.
+    #[inline]
+    #[must_use]
+    pub fn phase_delay_at(&self, omega: f32) -> f32 {
+        self.design.sections as f32 * math::allpass_phase_delay(self.design.coefficient, omega)
     }
 
     /// Clears every section's state, for a fresh strike.
     pub fn reset(&mut self) {
-        for section in &mut self.sections {
-            section.reset();
-        }
+        self.sections = [Section::default(); MAX_SECTIONS];
     }
 
     /// How many sections are active, for tests and diagnostics.
     #[inline]
     #[must_use]
     pub fn active_sections(&self) -> usize {
-        self.active
+        self.design.sections
     }
-}
 
-/// Total for every `f32`, including `NaN` and infinities: both are clamped
-/// by [`math::clamp_or_low`] before they can reach the coefficient.
-fn coefficient_from_inharmonicity(inharmonicity: f32) -> f32 {
-    let b = math::clamp_or_low(inharmonicity, 0.0, MAX_INHARMONICITY);
-    math::clamp_or_low(-COEFFICIENT_GAIN * b, -MAX_COEFFICIENT, MAX_COEFFICIENT)
-}
-
-/// Total for every `f32`: a non-finite or non-positive frequency falls back
-/// to A0 rather than feeding a `NaN` or a negative-domain log into the
-/// section-count formula.
-fn section_count(frequency_hz: f32) -> usize {
-    let frequency = if frequency_hz.is_finite() && frequency_hz > 0.0 {
-        frequency_hz
-    } else {
-        27.5
-    };
-    let octaves_above_a0 = math::ln(frequency / 27.5) / core::f32::consts::LN_2;
-    let sections = 8.0 - 1.5 * octaves_above_a0;
-    math::round(math::clamp_or_low(sections, 0.0, MAX_SECTIONS as f32)) as usize
+    /// The fitted shared coefficient, for tests and diagnostics.
+    #[inline]
+    #[must_use]
+    pub fn coefficient(&self) -> f32 {
+        self.design.coefficient
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::float_cmp, clippy::unwrap_used, clippy::expect_used)]
-
-    use proptest::prelude::*;
-
-    use super::*;
-
-    #[test]
-    fn register_scaling_matches_the_documented_table() {
-        // docs/PHYSICS.md: ~8 sections at A0, ~2 at A4, ~0-1 at C8.
-        assert_eq!(section_count(27.5), 8);
-        assert_eq!(section_count(440.0), 2);
-        assert!(section_count(4186.0) <= 1);
-    }
-
-    #[test]
-    fn more_inharmonicity_means_a_larger_coefficient_magnitude() {
-        let small = coefficient_from_inharmonicity(0.0001).abs();
-        let large = coefficient_from_inharmonicity(0.01).abs();
-        assert!(large > small, "small {small} large {large}");
-    }
-
-    #[test]
-    fn zero_inharmonicity_is_a_pure_delay_of_the_section_count() {
-        // At coefficient 0 each section's transfer function is exactly
-        // H(z) = z^-1 (see `Section::process`'s doc comment), so B=0
-        // degrades gracefully to "no dispersion, just `active` extra
-        // samples of delay" rather than a no-op — those extra samples are
-        // exactly what `phase_delay_at_dc` reports and what
-        // `PluckedString` compensates for when tuning the loop.
-        let mut cascade = DispersionCascade::new(440.0, 0.0);
-        let active = cascade.active_sections();
-        let inputs = [0.3, -0.6, 0.9, -0.2, 0.5, -0.5, 0.1, -0.1];
-        let outputs: Vec<f32> = inputs.iter().map(|&x| cascade.process(x)).collect();
-        for (expected, actual) in inputs.iter().zip(outputs.iter().skip(active)) {
-            assert!(
-                (actual - expected).abs() < 1e-6,
-                "output {actual} vs delayed input {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn set_inharmonicity_changes_the_coefficient_without_resetting_state() {
-        let mut cascade = DispersionCascade::new(440.0, 0.0);
-        let _ = cascade.process(1.0);
-        let before_phase_delay = cascade.phase_delay_at_dc();
-        cascade.set_inharmonicity(0.01);
-        assert_ne!(cascade.phase_delay_at_dc(), before_phase_delay);
-    }
-
-    #[test]
-    fn reset_clears_every_section() {
-        let mut cascade = DispersionCascade::new(27.5, 0.01);
-        let _ = cascade.process(1.0);
-        cascade.reset();
-        assert_eq!(cascade.process(0.0), 0.0);
-    }
-
-    proptest! {
-        /// The cascade must stay bounded and finite for every reachable
-        /// inharmonicity and frequency, including NaN, +-infinity and zero.
-        #[test]
-        fn cascade_never_diverges(
-            inharmonicity in proptest::num::f32::ANY,
-            frequency in proptest::num::f32::ANY,
-            input in -1.0f32..1.0,
-        ) {
-            let mut cascade = DispersionCascade::new(frequency, inharmonicity);
-            let mut output = 0.0;
-            for _ in 0..1_000 {
-                output = cascade.process(input);
-            }
-            prop_assert!(output.is_finite());
-            prop_assert!(output.abs() <= 1.0 + 1e-3, "output {output} exceeded input bound");
-            prop_assert!(cascade.active_sections() <= MAX_SECTIONS);
-        }
-    }
-}
+#[path = "dispersion_tests.rs"]
+mod tests;

@@ -40,6 +40,17 @@ pub struct DelayLine {
 /// `filter::MAX_POLE` uses for the loop filter's pole.
 const MAX_ALLPASS_ETA: f32 = 0.999_9;
 
+/// The fractional-delay allpass coefficient for fractional part `fraction`
+/// (Jaffe & Smith's `(1 - d)/(1 + d)`), kept off the unit circle.
+#[inline]
+fn fractional_allpass_eta(fraction: f32) -> f32 {
+    math::clamp_or_low(
+        (1.0 - fraction) / (1.0 + fraction),
+        -MAX_ALLPASS_ETA,
+        MAX_ALLPASS_ETA,
+    )
+}
+
 impl DelayLine {
     /// Allocates a delay line able to hold at least `requested` samples.
     ///
@@ -141,16 +152,26 @@ impl DelayLine {
         let clamped = math::clamp_or_low(delay_samples, 0.0, self.mask as f32);
         let whole = clamped as usize;
         let fraction = clamped - whole as f32;
-        let eta = math::clamp_or_low(
-            (1.0 - fraction) / (1.0 + fraction),
-            -MAX_ALLPASS_ETA,
-            MAX_ALLPASS_ETA,
-        );
+        let eta = fractional_allpass_eta(fraction);
         let recent = self.read(whole);
         let older = self.read(whole + 1);
         let output = math::flush_denormal(eta * recent + older - eta * self.allpass_state);
         self.allpass_state = output;
         output
+    }
+
+    /// Phase delay, in samples at `omega` radians per sample, of
+    /// [`DelayLine::read_allpass`] reading at `delay_samples` — the whole
+    /// part plus the fractional allpass's own phase delay, which only equals
+    /// the fractional part at DC. What a string must be tuned by at its
+    /// fundamental (issue #96). Total for every `f32`: the delay saturates into
+    /// `[0, MAX_CAPACITY]` first.
+    #[must_use]
+    pub fn allpass_read_phase_delay(delay_samples: f32, omega: f32) -> f32 {
+        let clamped = math::clamp_or_low(delay_samples, 0.0, MAX_CAPACITY as f32);
+        let whole = clamped as usize;
+        let eta = fractional_allpass_eta(clamped - whole as f32);
+        whole as f32 + math::allpass_phase_delay(eta, omega)
     }
 
     /// Applies a strike-position comb — `y[i] = x[i] − x[i − delay]` — in

@@ -15,6 +15,16 @@ fn string_at(frequency: f32) -> PluckedString {
     PluckedString::new(config, rate).expect("frequency is representable at 48 kHz")
 }
 
+/// The whole loop's length in samples at the string's own fundamental —
+/// what must equal the period for the string to be in tune (issue #96).
+fn loop_length_at_fundamental(string: &PluckedString) -> f32 {
+    let omega = core::f32::consts::TAU / string.period;
+    crate::delay::DelayLine::allpass_read_phase_delay(string.loop_delay(), omega)
+        + string.loop_filter.phase_delay_at(omega)
+        + string.dispersion.phase_delay_at(omega)
+        + 1.0
+}
+
 #[test]
 fn rejects_frequencies_above_the_representable_range() {
     let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
@@ -38,10 +48,7 @@ fn total_loop_length_matches_the_period() {
     // checks after a live retune.
     let string = string_at(440.0);
     let period = 48_000.0 / 440.0;
-    let total_delay = string.loop_delay()
-        + string.loop_filter.phase_delay_at_dc()
-        + string.dispersion.phase_delay_at_dc()
-        + 1.0;
+    let total_delay = loop_length_at_fundamental(&string);
     assert!(
         (total_delay - period).abs() < 1e-3,
         "total delay {total_delay} drifted from period {period}"
@@ -358,10 +365,7 @@ fn set_damping_keeps_the_total_loop_length_anchored_to_the_period() {
         let mut string =
             PluckedString::new(StringConfig::new(frequency), rate).expect("440 Hz is tunable");
         string.set_damping(damping);
-        let total_delay = string.loop_delay()
-            + string.loop_filter.phase_delay_at_dc()
-            + string.dispersion.phase_delay_at_dc()
-            + 1.0;
+        let total_delay = loop_length_at_fundamental(&string);
         assert!(
             (total_delay - period).abs() < 1e-3,
             "damping {damping}: total delay {total_delay} drifted from period {period}"
@@ -409,10 +413,7 @@ fn set_inharmonicity_retunes_the_loop_the_same_way_damping_does() {
     let before = string.loop_delay();
     string.set_inharmonicity(0.02);
     assert_ne!(string.loop_delay(), before);
-    let total_delay = string.loop_delay()
-        + string.loop_filter.phase_delay_at_dc()
-        + string.dispersion.phase_delay_at_dc()
-        + 1.0;
+    let total_delay = loop_length_at_fundamental(&string);
     let period = 48_000.0 / 440.0;
     assert!(
         (total_delay - period).abs() < 1e-3,
@@ -446,10 +447,7 @@ fn set_frequency_retunes_within_reserved_headroom() {
     string.set_frequency(detuned);
 
     let period = rate.hertz() / detuned_hertz;
-    let total_delay = string.loop_delay()
-        + string.loop_filter.phase_delay_at_dc()
-        + string.dispersion.phase_delay_at_dc()
-        + 1.0;
+    let total_delay = loop_length_at_fundamental(&string);
     assert!(
         (total_delay - period).abs() < 1e-3,
         "total delay {total_delay} drifted from the detuned period {period} — \

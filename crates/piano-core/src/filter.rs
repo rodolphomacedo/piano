@@ -115,6 +115,26 @@ impl LoopFilter {
         self.zero_mix + self.pole / (1.0 - self.pole)
     }
 
+    /// The delay the filter adds to the loop at `omega` radians per sample —
+    /// what the loop must be tuned by at the fundamental, which in the
+    /// treble sits far enough from DC for [`LoopFilter::phase_delay_at_dc`]
+    /// to detune it (issue #96). Falls back to the DC value below
+    /// [`math::MIN_PHASE_OMEGA`].
+    #[inline]
+    #[must_use]
+    pub fn phase_delay_at(&self, omega: f32) -> f32 {
+        if omega.is_nan() || omega <= math::MIN_PHASE_OMEGA {
+            return self.phase_delay_at_dc();
+        }
+        let (sine, cosine) = (math::sin(omega), math::cos(omega));
+        let zero = math::atan2(
+            -self.zero_mix * sine,
+            (1.0 - self.zero_mix) + self.zero_mix * cosine,
+        );
+        let pole = math::atan2(self.pole * sine, 1.0 - self.pole * cosine);
+        -(zero - pole) / omega
+    }
+
     /// Clears the filter memory.
     pub fn reset(&mut self) {
         self.state = 0.0;

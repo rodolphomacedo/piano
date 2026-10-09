@@ -430,6 +430,30 @@ fn normalized_force(raw_force: f32, peak: f32) -> f32 {
     }
 }
 
+/// How many fixed-point steps [`tuned_loop_delay`] takes. The delay line's
+/// phase delay moves almost one-for-one with its length, so each step cuts
+/// the residual by orders of magnitude; three leave it far below a
+/// hundredth of a cent at every key.
+const TUNING_ITERATIONS: usize = 3;
+
+/// The delay-line length that makes the whole loop — delay line with its
+/// fractional allpass, loss filter, dispersion cascade, and the feedback
+/// path's one sample — exactly `period` samples long *at the fundamental*.
+///
+/// Tuning by each element's delay at DC instead put the mid and treble up
+/// to 22 cents sharp (issue #96): every element in the loop delays the
+/// fundamental less than it delays DC.
+fn tuned_loop_delay(period: f32, loop_filter: &LoopFilter, dispersion: &DispersionCascade) -> f32 {
+    let omega = core::f32::consts::TAU / period;
+    let wanted =
+        period - loop_filter.phase_delay_at(omega) - dispersion.phase_delay_at(omega) - 1.0;
+    let mut length = wanted;
+    for _ in 0..TUNING_ITERATIONS {
+        length += wanted - DelayLine::allpass_read_phase_delay(length, omega);
+    }
+    length
+}
+
 impl PluckedString {
     /// Builds a string tuned to `config.frequency` at `sample_rate`.
     ///
@@ -444,14 +468,16 @@ impl PluckedString {
             math::clamp_or_low(config.damping, 0.0, 1.0),
             config.loop_zero_mix,
         );
-        let dispersion = DispersionCascade::new(config.frequency.hertz(), config.inharmonicity);
+        let dispersion = DispersionCascade::new(period, config.inharmonicity);
 
         // The loop is the delay line plus the loss filter plus the
         // dispersion cascade plus the one-sample delay of the feedback path
-        // itself. Tuning must account for all four.
-        let loop_delay =
-            period - loop_filter.phase_delay_at_dc() - dispersion.phase_delay_at_dc() - 1.0;
-        if loop_delay < MIN_LOOP_DELAY {
+        // itself. Tuning must account for all four — at the fundamental.
+        // Checked on the plain period first: below it the fundamental sits
+        // above Nyquist and no phase delay evaluated there means anything.
+        let representable = period > MIN_LOOP_DELAY + 1.0
+            && tuned_loop_delay(period, &loop_filter, &dispersion) >= MIN_LOOP_DELAY;
+        if !representable {
             return Err(ParamError::FrequencyOutOfRange {
                 frequency: config.frequency.hertz(),
                 sample_rate: sample_rate.hertz(),
@@ -475,7 +501,7 @@ impl PluckedString {
         // clamped for any note or any live-set strike position.
         let comb_headroom = max_live_period * MAX_STRIKE_POSITION;
 
-        Ok(Self {
+        let mut string = Self {
             delay: DelayLine::with_capacity((max_live_period + comb_headroom) as usize + 4),
             loop_filter,
             dispersion,
@@ -485,7 +511,7 @@ impl PluckedString {
             pending_contact: None,
             contact_force_diff_inv_peak: 0.0,
             period,
-            loop_delay,
+            loop_delay: 0.0,
             sustain: math::clamp_or_low(config.sustain, 0.0, 1.0),
             // A freshly built string is idle: the felt damper rests on it,
             // same as any un-struck key on a real piano. `pluck` is what
@@ -504,7 +530,9 @@ impl PluckedString {
             hammer: config.hammer,
             strike_position: math::clamp_or_low(config.strike_position, 0.0, MAX_STRIKE_POSITION),
             excitation_noise_mix: math::clamp_or_low(config.excitation_noise_mix, 0.0, 1.0),
-        })
+        };
+        string.retune_loop_delay();
+        Ok(string)
     }
 
     /// Adjusts the high-frequency loss for every future round trip.
@@ -543,6 +571,14 @@ impl PluckedString {
     pub fn set_inharmonicity(&mut self, inharmonicity: f32) {
         self.dispersion.set_inharmonicity(inharmonicity);
         self.retune_loop_delay();
+    }
+
+    /// The string's current round-trip broadband loss factor, as last set
+    /// by [`StringConfig::sustain`] or [`PluckedString::set_sustain`].
+    #[inline]
+    #[must_use]
+    pub fn sustain(&self) -> f32 {
+        self.sustain
     }
 
     /// Retunes the string to `frequency`, without reallocating the delay
@@ -1080,8 +1116,8 @@ impl PluckedString {
         self.loop_delay
     }
 
-    /// Recomputes `loop_delay` from `period` minus every filter's current
-    /// phase delay at DC, clamped into `[MIN_LOOP_DELAY, max_delay - 1]`
+    /// Recomputes `loop_delay` from `period` minus every loop element's
+    /// current phase delay at the fundamental ([`tuned_loop_delay`]), clamped into `[MIN_LOOP_DELAY, max_delay - 1]`
     /// rather than going negative or reading outside the delay line. Shared
     /// by [`PluckedString::set_damping`], [`PluckedString::set_inharmonicity`]
     /// and [`PluckedString::set_frequency`] — every live control whose
@@ -1091,10 +1127,7 @@ impl PluckedString {
     /// `loop_delay` below `period`, never grows it past what the delay line
     /// was sized for.
     fn retune_loop_delay(&mut self) {
-        let retuned = self.period
-            - self.loop_filter.phase_delay_at_dc()
-            - self.dispersion.phase_delay_at_dc()
-            - 1.0;
+        let retuned = tuned_loop_delay(self.period, &self.loop_filter, &self.dispersion);
         let max_loop_delay = self.delay.max_delay() as f32 - 1.0;
         self.loop_delay = math::clamp_or_low(retuned, MIN_LOOP_DELAY, max_loop_delay);
     }

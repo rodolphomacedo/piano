@@ -375,7 +375,12 @@ pub fn voicing_for_key_with_registers(
     KeyVoicing {
         damping,
         sustain: losses.sustain,
-        inharmonicity: inharmonicity_for(frequency, bass_hz, mid_hz, treble_hz, registers),
+        inharmonicity: inharmonicity_for(
+            frequency,
+            tuning,
+            (bass_hz, mid_hz, treble_hz),
+            registers,
+        ),
         zero_mix: losses.zero_mix,
         strike_position: interpolate_log_frequency(
             frequency,

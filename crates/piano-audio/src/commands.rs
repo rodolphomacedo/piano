@@ -77,6 +77,12 @@ pub(crate) enum Command {
         /// New bass gain, clamped into `[0, MAX_PHANTOM_GAIN]`.
         gain: f32,
     },
+    /// Sets the treble's duplex-segment gain; `0` mutes every segment. See
+    /// [`crate::voicing::duplex_gain_for_key`].
+    SetDuplexGain {
+        /// New gain for every key with a free segment.
+        gain: f32,
+    },
     /// Sets how much of the room ([`piano_core::room::Room`]) is heard;
     /// `0` is a dry instrument.
     SetRoomMix {

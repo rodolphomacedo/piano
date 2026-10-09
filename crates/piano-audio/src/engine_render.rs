@@ -86,7 +86,7 @@ impl Engine {
             let frames = left.iter_mut().zip(right.iter_mut()).enumerate();
             for (index, (left, right)) in frames {
                 let transverse = voice.level * strings.process_with_bridge(&mut self.bridge, index);
-                let radiated = voice.phantom.process(transverse);
+                let radiated = voice.duplex.process(voice.phantom.process(transverse));
                 *left += radiated * (1.0 + voice.pan);
                 *right += radiated * (1.0 - voice.pan);
             }

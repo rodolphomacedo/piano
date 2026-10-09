@@ -104,3 +104,39 @@ const PHANTOM_FULL_UNTIL_MIDI: f32 = 45.0;
 
 /// First key with no phantom partials: E5.
 const PHANTOM_TAPER_END_MIDI: f32 = 76.0;
+
+/// How strongly `key`'s duplex segment rings ([`piano_core::duplex`]):
+/// [`DUPLEX_GAIN`] from [`DUPLEX_FROM_MIDI`] up, `0` below, where a duplex
+/// scale leaves the rear lengths muted.
+#[must_use]
+pub fn duplex_gain_for_key(key: PianoKey) -> f32 {
+    if f32::from(key.midi_number()) >= DUPLEX_FROM_MIDI {
+        DUPLEX_GAIN
+    } else {
+        0.0
+    }
+}
+
+/// Which partial `key`'s duplex segment is set to: the double octave up to
+/// B5, the octave from C6, where the string's fourth partial is too weak
+/// (and its segment too short) to ring. A reasoned choice: published
+/// accounts give harmonic duplex lengths but not a per-key table.
+#[must_use]
+pub fn duplex_harmonic_for_key(key: PianoKey) -> f32 {
+    if f32::from(key.midi_number()) >= DUPLEX_OCTAVE_FROM_MIDI {
+        2.0
+    } else {
+        4.0
+    }
+}
+
+/// Where duplex segments switch from the double octave to the octave: C6.
+const DUPLEX_OCTAVE_FROM_MIDI: f32 = 84.0;
+
+/// The lowest key with a free duplex segment: C4, roughly where a
+/// concert grand's duplex scale begins.
+const DUPLEX_FROM_MIDI: f32 = 60.0;
+
+/// Duplex resonance level, set by measurement: see `PHYSICS.md`'s duplex
+/// section for where it puts the segment's ring relative to the note.
+pub const DUPLEX_GAIN: f32 = 0.2;

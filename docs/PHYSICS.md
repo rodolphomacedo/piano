@@ -680,6 +680,26 @@ room slider move it, and `0` is dry. Offline renders start dry, so every
 level, decay and tuning measurement in this repository sees the instrument
 alone.
 
+## Why the treble rings on after its strings (duplex scale)
+
+On a concert grand the short string lengths beyond the bridge are not all
+muted. Steinway's duplex scale (US patent 126,848, 1872) leaves them free
+from about the middle of the keyboard up, with lengths set to resonate at a
+harmonic of the speaking length; Conklin (JASA 100(3), 1996, Part III)
+describes the result as a shimmering after-ring in the treble.
+
+A segment set to the *exact* multiple would hardly ring: a stiff treble
+string's fourth partial sits tens of hertz sharp of `4·f0`, far outside a
+high-Q resonance — which is why technicians set duplex bars by ear.
+`piano_core::duplex::DuplexResonance` therefore tunes each key's segment to
+its string's real partial, `n·f0·√((1 + B·n²)/(1 + B))`, then 1.5 cents off
+it, the residual of a by-ear setting, heard as a slow beat. It is one
+two-pole resonator per key from C4 up (the double octave below C6, the
+octave from C6, where the fourth partial is too weak to drive it), driven by
+the key's own bridge signal. Measured (`piano-audio/tests/duplex.rs`) it
+rings 27-38 dB under the note across C4-C7; the bass has none. Tuning to the
+exact multiple instead put it 45-95 dB under — inaudible.
+
 ## What the current model still does not do
 
 Stated plainly, because these are the gaps a later milestone would close:

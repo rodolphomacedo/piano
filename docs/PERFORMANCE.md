@@ -360,6 +360,17 @@ trichord's cascade — declined in M7 because dispersion was not then the
 dominant cost; it now is the clearest saving available. Open until that
 lands and is measured.
 
+*Re-measured (2026-10-09)*, after the treble hammer (#99), stereo, room,
+phantom partials and duplex segments were added: the same
+`full_88_key_222_string_block_core_level` bench reads **1.47 ms** per block,
+and the whole engine — 88 keys ringing with the pedal down, stereo, room on,
+rendered through `OfflineEngine::render_stereo` including its per-call
+allocation — **1.43 ms** (54 % of the deadline; the room adds 0.01 ms). That
+is lower than the 2.02 ms above on the same machine, so part of that figure
+was machine state rather than code; the two runs bracket the real cost. The
+SoA rewrite stays the known saving, but there is headroom without it, so it
+is deferred behind sound-quality work rather than urgent.
+
 ---
 
 ### PERF-006

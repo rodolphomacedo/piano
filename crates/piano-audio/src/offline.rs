@@ -111,6 +111,11 @@ impl OfflineEngine {
         self.engine.set_room_mix(mix);
     }
 
+    /// Sets the treble's duplex-segment gain; `0` mutes them.
+    pub fn set_duplex_gain(&mut self, gain: f32) {
+        self.engine.set_duplex_gain(gain);
+    }
+
     /// Sets the bass's phantom-partial gain; `0` turns phantoms off.
     pub fn set_phantom_gain(&mut self, gain: f32) {
         self.engine.set_phantom_gain(gain);

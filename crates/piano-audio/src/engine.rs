@@ -39,6 +39,7 @@
 //! [`Engine::process_stereo_chunk`]'s skip condition.
 
 use piano_core::action::ActionNoise;
+use piano_core::duplex::{DuplexResonance, DuplexTuning};
 use piano_core::phantom::PhantomPartials;
 use piano_core::room::Room;
 use piano_core::soundboard::SoundboardMode;
@@ -122,6 +123,8 @@ struct Voice {
     level: f32,
     /// This key's nonlinear tension mixing ([`voicing::phantom_gain_for_key`]).
     phantom: PhantomPartials,
+    /// This key's free duplex segment ([`voicing::duplex_gain_for_key`]).
+    duplex: DuplexResonance,
     /// Where this key sits in the stereo pair ([`render::pan_for_key`]).
     pan: f32,
     /// `true` from [`Engine::note_on`] until the matching
@@ -238,6 +241,7 @@ impl Engine {
             Command::SoftPedal { down } => self.set_soft_pedal(down),
             Command::SetActionNoiseGain { gain } => self.set_action_noise_gain(gain),
             Command::SetPhantomGain { gain } => self.set_phantom_gain(gain),
+            Command::SetDuplexGain { gain } => self.set_duplex_gain(gain),
             Command::SetRoomMix { mix } => self.set_room_mix(mix),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
@@ -286,6 +290,15 @@ impl Engine {
     /// Sets the room's wet level. See [`Command::SetRoomMix`].
     pub(crate) fn set_room_mix(&mut self, mix: f32) {
         self.room.set_mix(mix);
+    }
+
+    /// Sets every free duplex segment's gain. See [`Command::SetDuplexGain`].
+    pub(crate) fn set_duplex_gain(&mut self, gain: f32) {
+        for (midi, voice) in (LOWEST_PIANO_KEY..).zip(self.voices.iter_mut()) {
+            let free =
+                PianoKey::from_midi(midi).is_ok_and(|key| voicing::duplex_gain_for_key(key) > 0.0);
+            voice.duplex.set_gain(if free { gain } else { 0.0 });
+        }
     }
 
     /// Rescales every key's phantom gain so the bass sits at `gain`. See
@@ -502,6 +515,7 @@ fn voice_for_key(
             strings: None,
             level: 1.0,
             phantom: PhantomPartials::new(0.0, sample_rate.hertz()),
+            duplex: DuplexResonance::new(0.0, MUTED_DUPLEX, 0.0, sample_rate.hertz()),
             pan: 0.0,
             held: false,
             sostenuto_latched: false,
@@ -513,11 +527,27 @@ fn voice_for_key(
         strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),
         level: voicing::level_for_key(key),
         phantom: PhantomPartials::new(voicing::phantom_gain_for_key(key), sample_rate.hertz()),
+        duplex: DuplexResonance::new(
+            config.frequency.hertz(),
+            DuplexTuning {
+                harmonic: voicing::duplex_harmonic_for_key(key),
+                inharmonicity: config.inharmonicity,
+            },
+            voicing::duplex_gain_for_key(key),
+            sample_rate.hertz(),
+        ),
         pan: render::pan_for_key(key),
         held: false,
         sostenuto_latched: false,
     }
 }
+
+/// The tuning given to a voice that has no string at all; its duplex is
+/// silent anyway.
+const MUTED_DUPLEX: DuplexTuning = DuplexTuning {
+    harmonic: 1.0,
+    inharmonicity: 0.0,
+};
 
 #[path = "engine_render.rs"]
 mod render;

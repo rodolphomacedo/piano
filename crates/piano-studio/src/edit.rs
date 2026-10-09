@@ -21,6 +21,18 @@ use crate::instrument::InstrumentParameter;
 
 use crate::format::StringRef;
 
+/// How a slider's travel maps onto its range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SliderScale {
+    /// Equal travel, equal change in value.
+    Linear,
+    /// Equal travel, equal *ratio* — for ranges spanning several decades,
+    /// where a linear slider spends all but its last pixel on the bottom
+    /// tenth of the range (issue #83).
+    Logarithmic,
+}
+
 /// The inclusive span a parameter's slider covers, and which a value
 /// arriving from a client is clamped into before being stored or sent on.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -30,13 +42,32 @@ pub struct ParameterRange {
     /// The highest accepted value.
     pub high: f64,
     /// A step fine enough to reach anything musically distinct in this
-    /// span, for the page's `<input type="range">`.
+    /// span, for the page's `<input type="range">`. Ignored on a
+    /// [`SliderScale::Logarithmic`] slider, which steps by ratio.
     pub step: f64,
+    /// How the page maps the slider's travel onto `low..=high`.
+    pub scale: SliderScale,
 }
 
 impl ParameterRange {
     pub(crate) const fn new(low: f64, high: f64, step: f64) -> Self {
-        Self { low, high, step }
+        Self {
+            low,
+            high,
+            step,
+            scale: SliderScale::Linear,
+        }
+    }
+
+    /// A range whose slider moves by ratio rather than difference. `low`
+    /// must be positive.
+    pub(crate) const fn logarithmic(low: f64, high: f64) -> Self {
+        Self {
+            low,
+            high,
+            step: low,
+            scale: SliderScale::Logarithmic,
+        }
     }
 
     /// Clamps `value` into this range.
@@ -107,19 +138,15 @@ const CONTACT_EXPONENT_RANGE: ParameterRange = ParameterRange::new(
     0.01,
 );
 
-const STIFFNESS_RANGE: ParameterRange = ParameterRange::new(
-    hammer::MIN_STIFFNESS as f64,
-    hammer::MAX_STIFFNESS as f64,
-    hammer::MIN_STIFFNESS as f64,
-);
+const STIFFNESS_RANGE: ParameterRange =
+    ParameterRange::logarithmic(hammer::MIN_STIFFNESS as f64, hammer::MAX_STIFFNESS as f64);
 
 const MASS_RANGE: ParameterRange =
-    ParameterRange::new(hammer::MIN_MASS as f64, hammer::MAX_MASS as f64, 0.01);
+    ParameterRange::logarithmic(hammer::MIN_MASS as f64, hammer::MAX_MASS as f64);
 
-const STRING_IMPEDANCE_RANGE: ParameterRange = ParameterRange::new(
+const STRING_IMPEDANCE_RANGE: ParameterRange = ParameterRange::logarithmic(
     hammer::MIN_STRING_IMPEDANCE as f64,
     hammer::MAX_STRING_IMPEDANCE as f64,
-    hammer::MIN_STRING_IMPEDANCE as f64,
 );
 
 impl StringParameter {
@@ -173,8 +200,8 @@ impl ModeParameter {
     #[must_use]
     pub fn range(self) -> ParameterRange {
         match self {
-            Self::FrequencyHz => ParameterRange::new(1.0, 20_000.0, 1.0),
-            Self::DecaySeconds => ParameterRange::new(0.01, 10.0, 0.01),
+            Self::FrequencyHz => ParameterRange::logarithmic(1.0, 20_000.0),
+            Self::DecaySeconds => ParameterRange::logarithmic(0.01, 10.0),
             Self::Gain => ParameterRange::new(0.0, 4.0, 0.01),
         }
     }
@@ -298,6 +325,29 @@ mod tests {
     #![allow(clippy::float_cmp, clippy::expect_used)]
 
     use super::*;
+
+    #[test]
+    fn every_logarithmic_range_starts_above_zero() {
+        let string_ranges = STRING_PARAMETERS.map(StringParameter::range);
+        let mode_ranges =
+            [ModeParameter::FrequencyHz, ModeParameter::DecaySeconds].map(ModeParameter::range);
+        for range in string_ranges.iter().chain(&mode_ranges) {
+            if range.scale == SliderScale::Logarithmic {
+                assert!(range.low > 0.0 && range.high > range.low, "{range:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn hammer_ranges_spanning_decades_slide_by_ratio() {
+        for parameter in [
+            StringParameter::HammerStiffness,
+            StringParameter::HammerMass,
+            StringParameter::HammerStringImpedance,
+        ] {
+            assert_eq!(parameter.range().scale, SliderScale::Logarithmic);
+        }
+    }
 
     #[test]
     fn clamping_is_total_for_nan_and_infinities() {

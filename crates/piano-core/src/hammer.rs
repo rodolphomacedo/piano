@@ -113,35 +113,32 @@ pub const MAX_MASS: f32 = 100.0;
 /// flags the exact register-by-register calibration of this field as an
 /// open question for the validation task, same as `CONTACT_STIFFNESS` was
 /// before it was checked empirically — see [`MIN_STRING_IMPEDANCE`]'s doc
-/// comment for why, today, that calibration would have nothing to bite: the
-/// whole range this field is clamped into is inert against the force/
-/// velocity scales this model produces.
+/// comment for the band where this field does change the contact.
 pub const MAX_STRING_IMPEDANCE: f32 = 1.0e13;
 /// Lowest [`HammerConfig::string_impedance`] `sanitize_hammer` allows —
 /// bounded away from zero for the same reason [`MIN_MASS`] is: it is a
 /// divisor in [`couple_contact_step`]'s `force / string_impedance` term.
 ///
-/// **This sanctioned range is currently inert.** An independent
-/// reimplementation of `couple_contact_step`, swept across the whole
-/// `[MIN_STRING_IMPEDANCE, MAX_STRING_IMPEDANCE]` band, found
-/// `force / string_impedance` contributes only ~7e-3 to ~7e-10 m/s of
-/// back-reaction against hammer velocities of 0.5-6 m/s
-/// (`[MIN_STRIKE_MPS, MAX_STRIKE_MPS]`) — essentially flat across the whole
-/// range, changing peak force by only ~0.13% end to end — while the
-/// physically "interesting" band, where this term would actually shorten
-/// contact duration the way real string loading does, sits around 1e3-1e5,
-/// three decades below this constant. Concretely: **all** of the audible
-/// coupling this branch (#57) delivers today comes from `v_incoming`
-/// itself, unscaled by `string_impedance`, not from tuning this field —
-/// varying `string_impedance` anywhere in its sanctioned range is not a
-/// meaningful test of whether the coupling mechanism works (see
-/// `hammer::tests::a_returning_wave_changes_the_force_a_still_ringing_
-/// string_gets`, which varies `v_incoming` instead, for that). Recalibrating
-/// this range down to the interesting band is a deliberate follow-up, out
-/// of scope for this branch: the reviewer's own model found it would change
-/// contact duration by up to ~65%, which needs its own fresh 88-key sweep
-/// (#87) and render-and-listen pass, not a change bundled into this one.
-pub const MIN_STRING_IMPEDANCE: f32 = 1.0e6;
+/// Chosen where the string's push-back on the felt is strongest while the
+/// hammer still leaves the string on its own (issue #95). Measured with
+/// `couple_contact_step` against a silent string at velocity 0.6 and 48 kHz:
+///
+/// | `string_impedance` | contact samples | peak force |
+/// |---|---|---|
+/// | 1e2 | never separates (hits [`MAX_CONTACT_SAMPLES`]) | 350 |
+/// | **1e3** (this floor) | 304 | 1986 |
+/// | 1e4 | 207 | 3807 |
+/// | 1e5 | 201 | 4201 |
+/// | 1e13 ([`MAX_STRING_IMPEDANCE`], the default) | 200 | 4250 |
+///
+/// So across the range a softer string stretches the contact by half and
+/// halves the peak force, which is the audible effect real string loading
+/// has, a darker and rounder attack. The previous floor, `1e6`, sat above
+/// that whole band, and the knob did nothing anywhere in its range.
+/// [`DEFAULT_HAMMER`] stays at the ceiling, so the default sound is
+/// unchanged; `the_bottom_of_the_impedance_range_audibly_loads_the_hammer`
+/// holds the table's shape.
+pub const MIN_STRING_IMPEDANCE: f32 = 1.0e3;
 
 /// Hard cap on the contact simulation's compression state, in the model's
 /// own normalised units.
@@ -192,9 +189,8 @@ pub struct HammerConfig {
     /// this field, so [`DEFAULT_HAMMER`]'s behaviour there measurably
     /// differs from the pre-#57 curve — inside the 88-key sweep's committed
     /// bands (#87), not identical to it. See
-    /// [`MIN_STRING_IMPEDANCE`]'s doc comment for why this field's whole
-    /// sanctioned range does not, by itself, reach a regime where tuning it
-    /// (as opposed to `v_incoming`) audibly matters.
+    /// [`MIN_STRING_IMPEDANCE`]'s doc comment for how far down its range
+    /// lengthens the contact and softens the attack.
     pub string_impedance: f32,
 }
 
@@ -760,6 +756,49 @@ mod tests {
                 "sample {index}: reference {expected} vs coupled {got}"
             );
         }
+    }
+
+    /// A coupled strike against a silent string: how many samples the
+    /// contact lasts, its peak force, and the largest jump between two
+    /// consecutive samples relative to that peak.
+    fn coupled_contact(hammer: HammerConfig) -> (usize, f32, f32) {
+        let mut state = ContactState::starting(0.6);
+        let mut forces = [0.0f32; MAX_CONTACT_SAMPLES];
+        let mut samples = 0;
+        for force in &mut forces {
+            let (next_state, sample) = couple_contact_step(state, hammer, 0.0, 48_000.0);
+            *force = sample;
+            samples += 1;
+            if next_state.separated {
+                break;
+            }
+            state = next_state;
+        }
+        let peak = forces.iter().copied().fold(0.0f32, f32::max);
+        let jump = forces
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0f32, f32::max);
+        (samples, peak, jump / peak.max(f32::MIN_POSITIVE))
+    }
+
+    #[test]
+    fn the_bottom_of_the_impedance_range_audibly_loads_the_hammer() {
+        let at = |string_impedance: f32| {
+            coupled_contact(HammerConfig {
+                string_impedance,
+                ..DEFAULT_HAMMER
+            })
+        };
+        let (rigid_samples, rigid_peak, _) = at(MAX_STRING_IMPEDANCE);
+        let (soft_samples, soft_peak, soft_jump) = at(MIN_STRING_IMPEDANCE);
+        assert!(
+            soft_samples * 10 > rigid_samples * 13,
+            "contact only grew from {rigid_samples} to {soft_samples} samples"
+        );
+        assert!(soft_peak < 0.6 * rigid_peak, "{soft_peak} vs {rigid_peak}");
+        assert!(soft_samples < MAX_CONTACT_SAMPLES, "the hammer never left");
+        assert!(soft_jump < 0.05, "the fixed point rang: {soft_jump}");
     }
 
     #[test]

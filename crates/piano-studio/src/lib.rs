@@ -243,12 +243,17 @@ mod tests {
         // `sustain`/`damping` at A4 come entirely from the register tier
         // in this test, so this just proves the two default constants
         // compile in — the direct check below is `hammer`, which nothing
-        // here overrides: it falls back to A4's own register hammer.
+        // here overrides: it falls back to A4's own hammer — its register's
+        // curve with A4's own felt (#58).
         let _ = DEFAULT_SUSTAIN;
         let _ = DEFAULT_DAMPING;
         assert_eq!(
             find(&piano, 69, 0).hammer,
-            piano_core::excitation::hammer_for_frequency(440.0)
+            piano_audio::voicing::hammer_for_key(
+                usize::from(69 - piano_params::LOWEST_PIANO_KEY),
+                440.0,
+                piano_audio::voicing::DEFAULT_HAMMER_UNEVENNESS,
+            )
         );
     }
 

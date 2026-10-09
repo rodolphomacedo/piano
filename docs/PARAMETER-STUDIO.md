@@ -144,7 +144,8 @@ strings[]  (explicit, one entry per string)
   "registers": {
     "bass":   { "anchor_midi": 21,  "decay_seconds": 35.0, "damping": 0.6, "inharmonicity": 0.0003 },
     "mid":    { "anchor_midi": 69,  "decay_seconds": 11.0 },
-    "treble": { "anchor_midi": 108, "decay_seconds": 1.5,  "damping": 0.4, "inharmonicity": 0.015 }
+    "treble": { "anchor_midi": 108, "decay_seconds": 1.5,  "damping": 0.4, "inharmonicity": 0.015 },
+    "hammer_unevenness": 0.25
   },
   "groups": [
     {
@@ -179,6 +180,14 @@ the same flat per-key table `piano-audio::voicing::voicing_for_key` builds
 today — the difference is the table is now data-driven, and
 `registers` in the file *is* today's three-anchor interpolation, serialised
 instead of hardcoded.
+
+`registers.hammer_unevenness` (default `0.25`, range `0`–`0.5`, #58) gives
+each key's hammer its own felt: stiffness and felt brightness move together
+by a fixed per-key amount, up to that fraction either side of the register's
+smooth curve (`piano_audio::voicing::hammer_for_key`). `0` is one smooth
+curve. It is read when the file loads, like the rest of the register tier;
+an individual hammer is then tuned live through the per-string
+`hammer.stiffness` and `hammer.felt_bandwidth` sliders.
 
 ### Persistence
 

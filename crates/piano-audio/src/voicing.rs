@@ -39,7 +39,6 @@
 //! carry the whole loss has to drag the filter's corner down far enough to
 //! take the harmonics with it. See [`solve_loop_losses`].
 
-use piano_core::excitation::hammer_for_frequency;
 use piano_core::filter::LoopFilter;
 use piano_core::hammer::HammerConfig;
 use piano_core::string::{SILENCE_THRESHOLD, StringConfig};
@@ -167,7 +166,9 @@ pub struct KeyVoicing {
     /// keyboard, so the comb notch tracks the register (issue #32).
     pub strike_position: f32,
     /// See [`StringConfig::hammer`]: lighter and harder toward the treble,
-    /// from [`piano_core::excitation::hammer_for_frequency`] (issue #58).
+    /// from [`piano_core::excitation::hammer_for_frequency`], and each key's
+    /// felt a little different from its neighbours' ([`hammer_for_key`],
+    /// issue #58).
     pub hammer: HammerConfig,
 }
 
@@ -315,6 +316,10 @@ pub struct RegisterOverrides {
     pub mid: RegisterAnchorOverride,
     /// Overrides the treble anchor, built-in at [`HIGHEST_PIANO_KEY`].
     pub treble: RegisterAnchorOverride,
+    /// How unequal neighbouring hammers are. `None` is
+    /// [`DEFAULT_HAMMER_UNEVENNESS`]; `0` is one smooth curve. See
+    /// [`hammer_for_key`].
+    pub hammer_unevenness: Option<f32>,
 }
 
 /// How many physical strings `key` is struck by (M6, `docs/ROADMAP.md`).
@@ -389,7 +394,13 @@ pub fn voicing_for_key_with_registers(
             treble_hz,
             TREBLE_STRIKE_POSITION,
         ),
-        hammer: hammer_for_frequency(frequency),
+        hammer: hammer_for_key(
+            usize::from(key.key_index()),
+            frequency,
+            registers
+                .hammer_unevenness
+                .unwrap_or(DEFAULT_HAMMER_UNEVENNESS),
+        ),
     }
 }
 
@@ -766,6 +777,10 @@ use scale::DecayCurve;
 #[path = "voicing_inharmonicity.rs"]
 mod inharmonicity;
 use inharmonicity::inharmonicity_for;
+
+#[path = "voicing_hammer.rs"]
+mod hammer;
+pub use hammer::{DEFAULT_HAMMER_UNEVENNESS, MAX_HAMMER_UNEVENNESS, hammer_for_key};
 
 #[path = "voicing_level.rs"]
 mod level;

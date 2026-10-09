@@ -174,6 +174,14 @@ Os três pedais do teclado MIDI funcionam:
   - `limiter_threshold` ("limiter threshold"): a partir de que volume o
     limitador de saída começa a segurar o som. Mais baixo protege acordes
     fortes de distorcer, mas achata a dinâmica; o padrão é `0.9`.
+- **Personalidade dos martelos** (no arquivo, não na página): num piano de
+  verdade, cada martelo tem um feltro um pouco diferente do vizinho, por
+  fabricação e desgaste, e é isso que dá "personalidade" ao teclado. O
+  `.piano.json` aceita `"registers": { "hammer_unevenness": 0.25 }`: `0` deixa
+  todos os martelos numa curva lisa, `0.25` (o padrão) é um piano usado e bem
+  regulado, `0.5` é um piano com martelos bem gastos. Para corrigir um
+  martelo específico que ficou estranho, ajuste a rigidez ou o "felt
+  brightness" daquela tecla no painel da corda.
 - **Caixa e ponte**: os 28 modos da caixa de ressonância (frequência, tempo
   de decaimento, ganho) e os dois ganhos de acoplamento da ponte (entre as
   cordas da mesma tecla, e entre teclas diferentes, responsável pela

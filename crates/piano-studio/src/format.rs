@@ -89,6 +89,10 @@ pub struct Registers {
     pub mid: Option<RegisterAnchor>,
     /// The treble anchor, nominally C8.
     pub treble: Option<RegisterAnchor>,
+    /// How unequal neighbouring hammers' felt is. `None` leaves the
+    /// engine's default; `0` gives every key its register's smooth curve.
+    /// See `piano_audio::voicing::hammer_for_key`.
+    pub hammer_unevenness: Option<f32>,
 }
 
 /// One string, addressed by the key it belongs to and its position within

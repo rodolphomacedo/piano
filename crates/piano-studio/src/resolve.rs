@@ -245,6 +245,7 @@ fn register_overrides_from(registers: &Registers) -> RegisterOverrides {
         bass: anchor(registers.bass),
         mid: anchor(registers.mid),
         treble: anchor(registers.treble),
+        hammer_unevenness: registers.hammer_unevenness,
     }
 }
 

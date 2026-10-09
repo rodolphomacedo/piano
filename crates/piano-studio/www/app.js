@@ -288,9 +288,13 @@ const STRING_PARAMETERS = [
   { key: "inharmonicity", label: "inharmonicity" },
   { key: "detune_cents", label: "detune (cents)" },
   { key: "seed", label: "seed" },
+  { key: "loop_zero_mix", label: "loss zero (top partials)" },
+  { key: "strike_position", label: "strike position" },
+  { key: "excitation_noise_mix", label: "strike noise" },
   { key: "hammer_contact_exponent", label: "hammer contact exponent" },
   { key: "hammer_stiffness", label: "hammer stiffness" },
   { key: "hammer_mass", label: "hammer mass" },
+  { key: "hammer_string_impedance", label: "string impedance" },
 ];
 
 function wireStringScope() {

@@ -100,7 +100,7 @@ impl LiveState {
     #[must_use]
     pub fn commands(&self) -> Vec<StudioCommand> {
         let mut commands = Vec::with_capacity(
-            self.strings.len() * 6 + MODE_COUNT + INSTRUMENT_PARAMETERS.len() + 2,
+            self.strings.len() * STRING_COMMANDS + MODE_COUNT + INSTRUMENT_PARAMETERS.len() + 2,
         );
         for string in &self.strings {
             commands.extend(commands_for_string(string));
@@ -303,8 +303,11 @@ impl LiveState {
     }
 }
 
-/// The six commands that put one string's whole state into the engine.
-fn commands_for_string(string: &ResolvedString) -> [StudioCommand; 6] {
+/// How many commands put one string's whole state into the engine.
+const STRING_COMMANDS: usize = 9;
+
+/// The commands that put one string's whole state into the engine.
+fn commands_for_string(string: &ResolvedString) -> [StudioCommand; STRING_COMMANDS] {
     let (midi, string_index) = (string.midi, string.string_index);
     [
         StudioCommand::SetStringDamping {
@@ -332,6 +335,21 @@ fn commands_for_string(string: &ResolvedString) -> [StudioCommand; 6] {
             string_index,
             seed: string.seed,
         },
+        StudioCommand::SetStringLoopZeroMix {
+            midi,
+            string_index,
+            zero_mix: string.loop_zero_mix,
+        },
+        StudioCommand::SetStringStrikePosition {
+            midi,
+            string_index,
+            position: string.strike_position,
+        },
+        StudioCommand::SetStringExcitationNoiseMix {
+            midi,
+            string_index,
+            mix: string.excitation_noise_mix,
+        },
         StudioCommand::SetStringHammer {
             midi,
             string_index,
@@ -349,6 +367,9 @@ fn write_string_field(string: &mut ResolvedString, parameter: StringParameter, v
         StringParameter::Inharmonicity => string.inharmonicity = value as f32,
         StringParameter::DetuneCents => string.detune_cents = value as f32,
         StringParameter::Seed => string.seed = value as u32,
+        StringParameter::LoopZeroMix => string.loop_zero_mix = value as f32,
+        StringParameter::StrikePosition => string.strike_position = value as f32,
+        StringParameter::ExcitationNoiseMix => string.excitation_noise_mix = value as f32,
         StringParameter::HammerContactExponent => string.hammer.contact_exponent = value as f32,
         StringParameter::HammerStiffness => string.hammer.stiffness = value as f32,
         StringParameter::HammerMass => string.hammer.mass = value as f32,
@@ -387,6 +408,21 @@ fn command_for_field(string: &ResolvedString, parameter: StringParameter) -> Stu
             string_index,
             seed: string.seed,
         },
+        StringParameter::LoopZeroMix => StudioCommand::SetStringLoopZeroMix {
+            midi,
+            string_index,
+            zero_mix: string.loop_zero_mix,
+        },
+        StringParameter::StrikePosition => StudioCommand::SetStringStrikePosition {
+            midi,
+            string_index,
+            position: string.strike_position,
+        },
+        StringParameter::ExcitationNoiseMix => StudioCommand::SetStringExcitationNoiseMix {
+            midi,
+            string_index,
+            mix: string.excitation_noise_mix,
+        },
         StringParameter::HammerContactExponent
         | StringParameter::HammerStiffness
         | StringParameter::HammerMass
@@ -418,6 +454,9 @@ fn string_snapshot(string: &ResolvedString) -> StringSnapshot {
         inharmonicity: string.inharmonicity,
         detune_cents: string.detune_cents,
         seed: string.seed,
+        loop_zero_mix: string.loop_zero_mix,
+        strike_position: string.strike_position,
+        excitation_noise_mix: string.excitation_noise_mix,
         hammer_contact_exponent: string.hammer.contact_exponent,
         hammer_stiffness: string.hammer.stiffness,
         hammer_mass: string.hammer.mass,
@@ -435,6 +474,9 @@ fn string_override(string: &ResolvedString) -> StringOverride {
             inharmonicity: Some(string.inharmonicity),
             detune_cents: Some(string.detune_cents),
             seed: Some(string.seed),
+            loop_zero_mix: Some(string.loop_zero_mix),
+            strike_position: Some(string.strike_position),
+            excitation_noise_mix: Some(string.excitation_noise_mix),
             hammer: HammerOverrides {
                 contact_exponent: Some(string.hammer.contact_exponent),
                 stiffness: Some(string.hammer.stiffness),
@@ -677,7 +719,8 @@ mod tests {
         // six per string, one per soundboard mode, plus the soundboard mix
         // gain, the master gain, the room mix, the velocity-curve exponent
         // and the two coupling gains.
-        let expected = state.strings.len() * 6 + MODE_COUNT + INSTRUMENT_PARAMETERS.len() + 2;
+        let expected =
+            state.strings.len() * STRING_COMMANDS + MODE_COUNT + INSTRUMENT_PARAMETERS.len() + 2;
         assert_eq!(state.commands().len(), expected);
     }
 

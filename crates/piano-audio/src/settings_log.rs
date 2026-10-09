@@ -103,6 +103,15 @@ fn setting_key(command: &Command) -> Option<SettingKey> {
         Command::SetStringHammer {
             midi, string_index, ..
         } => string(20, midi, string_index),
+        Command::SetStringLoopZeroMix {
+            midi, string_index, ..
+        } => string(22, midi, string_index),
+        Command::SetStringStrikePosition {
+            midi, string_index, ..
+        } => string(23, midi, string_index),
+        Command::SetStringExcitationNoiseMix {
+            midi, string_index, ..
+        } => string(24, midi, string_index),
     }
 }
 

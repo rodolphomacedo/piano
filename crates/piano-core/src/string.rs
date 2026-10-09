@@ -122,7 +122,7 @@ pub const DEFAULT_STRIKE_POSITION: f32 = 0.125;
 /// geometry only mirrors, and [`PluckedString::new`] reserves delay-line
 /// headroom for exactly this much comb reach, so the strike-position comb
 /// (`DelayLine::apply_strike_comb`) can never wrap the ring.
-const MAX_STRIKE_POSITION: f32 = 0.5;
+pub const MAX_STRIKE_POSITION: f32 = 0.5;
 
 /// Loop-filter zero mix [`StringConfig::new`] uses when the caller does not
 /// choose one — the loop filter's original, pre-per-register fixed value
@@ -599,6 +599,16 @@ impl PluckedString {
     pub fn set_damping(&mut self, damping: f32) {
         self.loop_filter
             .set_pole(math::clamp_or_low(damping, 0.0, 1.0));
+        self.retune_loop_delay();
+    }
+
+    /// Adjusts the loss filter's averaging zero for every future round trip
+    /// — how much of the loss falls on the highest partials rather than
+    /// across the band. Clamped like [`StringConfig::loop_zero_mix`], and,
+    /// like [`PluckedString::set_damping`], retunes `loop_delay`, since the
+    /// zero's phase delay is part of the loop.
+    pub fn set_loop_zero_mix(&mut self, zero_mix: f32) {
+        self.loop_filter.set_zero_mix(zero_mix);
         self.retune_loop_delay();
     }
 

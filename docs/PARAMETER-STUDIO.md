@@ -78,17 +78,25 @@ piano-core → piano-params → piano-audio ─┐
 **Per-string** (the atomic unit — up to 3 per key, up to 88 keys, ~230
 total on a full instrument):
 
-| Parameter | Exists today? |
+Every one of these is live-settable, saved in the file and has a studio slider.
+`crates/piano-studio/tests/parameter_reachability.rs` destructures
+`StringConfig`, `HammerConfig` and `SoundboardMode` field by field, so a new
+core field fails to compile there until it is exposed or explained (#84).
+
+| Parameter | Live setter |
 |---|---|
-| `damping` | Yes — `PluckedString::set_damping` |
-| `sustain` | Yes — `PluckedString::set_sustain` |
-| `inharmonicity` | Yes — `DispersionCascade::set_inharmonicity` |
-| `detune_cents` | No — currently a fixed per-unison-position constant in `unison.rs` (`DETUNE_CENTS_BICHORD`/`TRICHORD`) |
-| `seed` | Partially — set at construction (`StringConfig::seed`), no live setter |
-| `hammer.contact_exponent` | No — `hammer::CONTACT_EXPONENT`, a module constant shared by all 230 strings |
-| `hammer.stiffness` | No — `hammer::CONTACT_STIFFNESS`, same |
-| `hammer.mass` | No — `hammer::HAMMER_MASS`, same |
-| `hammer.string_impedance` | Yes, since #57 — `piano_studio`'s `StringParameter::HammerStringImpedance` (`HammerOverrides::string_impedance` in the file cascade); the other three hammer fields above are still shared constants |
+| `damping` | `PluckedString::set_damping` |
+| `sustain` | `PluckedString::set_sustain` |
+| `inharmonicity` | `PluckedString::set_inharmonicity` |
+| `detune_cents` | `UnisonGroup::set_string_detune` |
+| `seed` | `PluckedString::set_seed` (next strike) |
+| `loop_zero_mix` | `PluckedString::set_loop_zero_mix`: the loss filter's zero, solved per key with damping and sustain |
+| `strike_position` | `PluckedString::set_strike_position` (next strike) |
+| `excitation_noise_mix` | `PluckedString::set_excitation_noise_mix` (next strike) |
+| `hammer.contact_exponent` | `PluckedString::set_hammer` (next strike) |
+| `hammer.stiffness` | same |
+| `hammer.mass` | same |
+| `hammer.string_impedance` | same; floor `1e3` since #95 |
 
 **Per-instrument** (a single value shared by the whole piano, not per
 string — because the physical thing they model is a single wooden board or

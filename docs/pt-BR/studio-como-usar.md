@@ -112,9 +112,14 @@ Os três pedais do teclado MIDI funcionam:
 - **Editar uma corda**: clique numa tecla, escolha qual das cordas daquele
   uníssono (uma, duas ou três, dependendo do registro) na abinha que
   aparece, e arraste os controles: amortecimento, sustentação,
-  inarmonicidade, desafinação em cents, semente de ruído da excitação, e os
-  três parâmetros do martelo de feltro (expoente de contato, rigidez,
-  massa).
+  inarmonicidade, desafinação em cents, semente de ruído da excitação, o
+  "zero" do filtro de perdas (quanto da perda cai só nas parciais mais
+  agudas), o ponto onde o martelo bate na corda, quanto ruído entra na
+  martelada, e os quatro parâmetros do martelo de feltro (expoente de
+  contato, rigidez, massa e impedância da corda). Os controles que cobrem
+  várias ordens de grandeza (rigidez, massa, impedância) andam em escala
+  logarítmica: cada pedacinho do controle multiplica o valor pelo mesmo
+  fator.
 - **Editar várias cordas de uma vez**: acima dos controles, escolha "esta
   corda" (padrão), "tecla inteira" (as duas ou três cordas do uníssono
   daquela tecla) ou "seleção" (várias teclas escolhidas com shift-clique).

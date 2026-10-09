@@ -324,6 +324,52 @@ impl AudioSession {
         })
     }
 
+    /// Queues moving one string's loss-filter zero, live. See
+    /// [`piano_core::UnisonGroup::set_string_loop_zero_mix`]. Same
+    /// out-of-range and drop-not-block behaviour as
+    /// [`AudioSession::set_string_damping`].
+    pub fn set_string_loop_zero_mix(&mut self, midi: u8, string_index: u8, zero_mix: f32) -> bool {
+        self.send(Command::SetStringLoopZeroMix {
+            midi,
+            string_index,
+            zero_mix,
+        })
+    }
+
+    /// Queues moving where the hammer strikes one string, for its *next*
+    /// strike. See [`piano_core::UnisonGroup::set_string_strike_position`].
+    /// Same out-of-range and drop-not-block behaviour as
+    /// [`AudioSession::set_string_damping`].
+    pub fn set_string_strike_position(
+        &mut self,
+        midi: u8,
+        string_index: u8,
+        position: f32,
+    ) -> bool {
+        self.send(Command::SetStringStrikePosition {
+            midi,
+            string_index,
+            position,
+        })
+    }
+
+    /// Queues how noisy one string's *next* strike is. See
+    /// [`piano_core::UnisonGroup::set_string_excitation_noise_mix`]. Same
+    /// out-of-range and drop-not-block behaviour as
+    /// [`AudioSession::set_string_damping`].
+    pub fn set_string_excitation_noise_mix(
+        &mut self,
+        midi: u8,
+        string_index: u8,
+        mix: f32,
+    ) -> bool {
+        self.send(Command::SetStringExcitationNoiseMix {
+            midi,
+            string_index,
+            mix,
+        })
+    }
+
     /// Queues changing one string's felt-contact physics for its *next*
     /// strike. See [`piano_core::UnisonGroup::set_string_hammer`]. Same
     /// out-of-range and drop-not-block behaviour as

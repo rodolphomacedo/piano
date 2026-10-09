@@ -288,6 +288,36 @@ impl UnisonGroup {
         string.set_inharmonicity(inharmonicity);
     }
 
+    /// Adjusts one string's loss-filter zero, live. See
+    /// [`PluckedString::set_loop_zero_mix`] and
+    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
+    pub fn set_string_loop_zero_mix(&mut self, string_index: usize, zero_mix: f32) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_loop_zero_mix(zero_mix);
+    }
+
+    /// Moves where the hammer strikes one string, for its *next* strike.
+    /// See [`PluckedString::set_strike_position`] and
+    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
+    pub fn set_string_strike_position(&mut self, string_index: usize, position: f32) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_strike_position(position);
+    }
+
+    /// Sets how noisy one string's *next* strike is. See
+    /// [`PluckedString::set_excitation_noise_mix`] and
+    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
+    pub fn set_string_excitation_noise_mix(&mut self, string_index: usize, mix: f32) {
+        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
+            return;
+        };
+        string.set_excitation_noise_mix(mix);
+    }
+
     /// Reseeds one string's excitation noise, for its *next* strike. See
     /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
     pub fn set_string_seed(&mut self, string_index: usize, seed: u32) {
@@ -1024,6 +1054,25 @@ mod tests {
     #[test]
     fn set_string_detune_changes_only_the_targeted_string() {
         assert_targets_only_string_one(|group| group.set_string_detune(1, 35.0));
+    }
+
+    #[test]
+    fn set_string_loop_zero_mix_changes_only_the_targeted_string() {
+        assert_targets_only_string_one(|group| group.set_string_loop_zero_mix(1, 0.45));
+    }
+
+    #[test]
+    fn set_string_strike_position_changes_only_the_targeted_strings_next_pluck() {
+        assert_targets_only_string_one_on_next_pluck(|group| {
+            group.set_string_strike_position(1, 0.3);
+        });
+    }
+
+    #[test]
+    fn set_string_excitation_noise_mix_changes_only_the_targeted_strings_next_pluck() {
+        assert_targets_only_string_one_on_next_pluck(|group| {
+            group.set_string_excitation_noise_mix(1, 0.0);
+        });
     }
 
     /// [`UnisonGroup::set_string_seed`] and [`UnisonGroup::set_string_hammer`]

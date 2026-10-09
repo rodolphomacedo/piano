@@ -165,98 +165,73 @@ fn apply_commands(session: &mut AudioSession, commands: &[StudioCommand]) {
 /// Translates one [`StudioCommand`] into the matching
 /// [`AudioSession`] setter call.
 fn apply_command(session: &mut AudioSession, command: StudioCommand) {
-    match command {
-        StudioCommand::NoteOn { midi, velocity } => {
-            session.note_on(midi, velocity);
-        }
-        StudioCommand::NoteOff { midi } => {
-            session.note_off(midi);
-        }
-        StudioCommand::AllNotesOff => {
-            session.all_notes_off();
-        }
-        StudioCommand::SustainPedal { down } => {
-            session.set_sustain_pedal(down);
-        }
-        StudioCommand::SostenutoPedal { down } => {
-            session.set_sostenuto_pedal(down);
-        }
-        StudioCommand::SoftPedal { down } => {
-            session.set_soft_pedal(down);
-        }
+    // A full queue drops the command rather than block the page's thread;
+    // the next edit, or the next full resend, catches the engine up.
+    let _queued = match command {
+        StudioCommand::NoteOn { midi, velocity } => session.note_on(midi, velocity),
+        StudioCommand::NoteOff { midi } => session.note_off(midi),
+        StudioCommand::AllNotesOff => session.all_notes_off(),
+        StudioCommand::SustainPedal { down } => session.set_sustain_pedal(down),
+        StudioCommand::SostenutoPedal { down } => session.set_sostenuto_pedal(down),
+        StudioCommand::SoftPedal { down } => session.set_soft_pedal(down),
         StudioCommand::SetStringDamping {
             midi,
             string_index,
             damping,
-        } => {
-            session.set_string_damping(midi, string_index, damping);
-        }
+        } => session.set_string_damping(midi, string_index, damping),
         StudioCommand::SetStringSustain {
             midi,
             string_index,
             sustain,
-        } => {
-            session.set_string_sustain(midi, string_index, sustain);
-        }
+        } => session.set_string_sustain(midi, string_index, sustain),
         StudioCommand::SetStringInharmonicity {
             midi,
             string_index,
             inharmonicity,
-        } => {
-            session.set_string_inharmonicity(midi, string_index, inharmonicity);
-        }
+        } => session.set_string_inharmonicity(midi, string_index, inharmonicity),
         StudioCommand::SetStringDetune {
             midi,
             string_index,
             cents,
-        } => {
-            session.set_string_detune(midi, string_index, cents);
-        }
+        } => session.set_string_detune(midi, string_index, cents),
         StudioCommand::SetStringSeed {
             midi,
             string_index,
             seed,
-        } => {
-            session.set_string_seed(midi, string_index, seed);
-        }
+        } => session.set_string_seed(midi, string_index, seed),
         StudioCommand::SetStringHammer {
             midi,
             string_index,
             hammer,
-        } => {
-            session.set_string_hammer(midi, string_index, hammer);
-        }
+        } => session.set_string_hammer(midi, string_index, hammer),
+        StudioCommand::SetStringLoopZeroMix {
+            midi,
+            string_index,
+            zero_mix,
+        } => session.set_string_loop_zero_mix(midi, string_index, zero_mix),
+        StudioCommand::SetStringStrikePosition {
+            midi,
+            string_index,
+            position,
+        } => session.set_string_strike_position(midi, string_index, position),
+        StudioCommand::SetStringExcitationNoiseMix {
+            midi,
+            string_index,
+            mix,
+        } => session.set_string_excitation_noise_mix(midi, string_index, mix),
         StudioCommand::SetSoundboardMode { index, mode } => {
-            session.set_soundboard_mode(index, mode);
+            session.set_soundboard_mode(index, mode)
         }
-        StudioCommand::SetSoundboardMixGain { gain } => {
-            session.set_soundboard_mix_gain(gain);
-        }
-        StudioCommand::SetActionNoiseGain { gain } => {
-            session.set_action_noise_gain(gain);
-        }
-        StudioCommand::SetPhantomGain { gain } => {
-            session.set_phantom_gain(gain);
-        }
-        StudioCommand::SetDuplexGain { gain } => {
-            session.set_duplex_gain(gain);
-        }
-        StudioCommand::SetRoomMix { mix } => {
-            session.set_room_mix(mix);
-        }
-        StudioCommand::SetMasterGain { gain } => {
-            session.set_master_gain(gain);
-        }
-        StudioCommand::SetVelocityCurve { exponent } => {
-            session.set_velocity_curve(exponent);
-        }
-        StudioCommand::SetLocalCouplingGain { gain } => {
-            session.set_local_coupling_gain(gain);
-        }
-        StudioCommand::SetGlobalCouplingGain { gain } => {
-            session.set_global_coupling_gain(gain);
-        }
-    }
+        StudioCommand::SetSoundboardMixGain { gain } => session.set_soundboard_mix_gain(gain),
+        StudioCommand::SetActionNoiseGain { gain } => session.set_action_noise_gain(gain),
+        StudioCommand::SetPhantomGain { gain } => session.set_phantom_gain(gain),
+        StudioCommand::SetDuplexGain { gain } => session.set_duplex_gain(gain),
+        StudioCommand::SetRoomMix { mix } => session.set_room_mix(mix),
+        StudioCommand::SetMasterGain { gain } => session.set_master_gain(gain),
+        StudioCommand::SetVelocityCurve { exponent } => session.set_velocity_curve(exponent),
+        StudioCommand::SetLocalCouplingGain { gain } => session.set_local_coupling_gain(gain),
+        StudioCommand::SetGlobalCouplingGain { gain } => session.set_global_coupling_gain(gain),
+    };
 }
 
 /// Services MIDI (when connected) and the web server's command channel

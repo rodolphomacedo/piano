@@ -249,7 +249,7 @@ mod tests {
             .expect("is a request");
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/api/piano");
-        assert!(request.body.is_empty());
+        assert_eq!(request.body, "");
     }
 
     #[test]

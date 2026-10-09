@@ -533,7 +533,7 @@ mod tests {
             parameter: StringParameter::Damping,
             value: 0.25,
         });
-        assert!(commands.is_empty());
+        assert_eq!(commands, [] as [StudioCommand; 0]);
         assert_eq!(state, before);
     }
 
@@ -605,7 +605,7 @@ mod tests {
             parameter: ModeParameter::Gain,
             value: 0.5,
         });
-        assert!(commands.is_empty());
+        assert_eq!(commands, [] as [StudioCommand; 0]);
         assert_eq!(state, before);
     }
 

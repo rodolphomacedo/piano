@@ -48,6 +48,16 @@ pub const DEFAULT_THUMP_GAIN: f32 = 0.8;
 /// the default, for a deliberately clattery action.
 pub const MAX_THUMP_GAIN: f32 = 8.0;
 
+/// A damper landing's level relative to a full-velocity keybed knock. The
+/// felt drops onto the strings under its own spring and weight, the same
+/// way however the key was played, so it is fixed — and soft: a muffled
+/// touch on the string, not a knock.
+const DAMPER_THUMP_FRACTION: f32 = 0.05;
+
+/// How long a damper landing's pulse lasts, in seconds: soft felt meeting
+/// a moving string compresses more slowly than a key meeting its bed.
+const DAMPER_THUMP_SECONDS: f32 = 0.006;
+
 /// How steeply the knock grows with velocity. Impact *energy* grows with
 /// the square of key speed, so amplitude grows as its first power at least;
 /// the key also bottoms out harder relative to the hammer's own travel as a
@@ -97,15 +107,31 @@ impl ActionNoise {
     pub fn strike(&mut self, velocity: f32) {
         let velocity = math::clamp_or_low(velocity, 0.0, 1.0);
         let seconds = SOFT_THUMP_SECONDS + (HARD_THUMP_SECONDS - SOFT_THUMP_SECONDS) * velocity;
+        self.schedule(Thump {
+            delay: samples_for(KEY_BOTTOM_DELAY_SECONDS, self.sample_rate),
+            elapsed: 0,
+            length: samples_for(seconds, self.sample_rate).max(1),
+            amplitude: self.gain * math::powf(velocity, THUMP_VELOCITY_EXPONENT),
+        });
+    }
+
+    /// Schedules the soft thump of a damper landing on a sounding string —
+    /// a key coming up, or the sustain pedal letting go.
+    pub fn damp(&mut self) {
+        self.schedule(Thump {
+            delay: 0,
+            elapsed: 0,
+            length: samples_for(DAMPER_THUMP_SECONDS, self.sample_rate).max(1),
+            amplitude: self.gain * DAMPER_THUMP_FRACTION,
+        });
+    }
+
+    /// Puts `thump` in the next slot, replacing the oldest if all are busy.
+    fn schedule(&mut self, thump: Thump) {
         let slot = self.next_slot % MAX_PENDING_THUMPS;
         self.next_slot = (slot + 1) % MAX_PENDING_THUMPS;
-        if let Some(thump) = self.thumps.get_mut(slot) {
-            *thump = Thump {
-                delay: samples_for(KEY_BOTTOM_DELAY_SECONDS, self.sample_rate),
-                elapsed: 0,
-                length: samples_for(seconds, self.sample_rate).max(1),
-                amplitude: self.gain * math::powf(velocity, THUMP_VELOCITY_EXPONENT),
-            };
+        if let Some(free) = self.thumps.get_mut(slot) {
+            *free = thump;
         }
     }
 
@@ -186,6 +212,23 @@ mod tests {
         let (hard_peak, hard_length) = peak_and_length(1.0);
         assert!(hard_peak > 3.0 * soft_peak, "{soft_peak} {hard_peak}");
         assert!(hard_length < soft_length, "{soft_length} {hard_length}");
+    }
+
+    #[test]
+    fn a_damper_landing_is_immediate_and_much_softer_than_a_hard_strike() {
+        let peak = |noise: &mut ActionNoise| render(noise).iter().copied().fold(0.0f32, f32::max);
+        let mut damper = ActionNoise::new(RATE);
+        damper.damp();
+        let first = damper.next_sample();
+        let damper_peak = peak(&mut damper).max(first);
+        let mut strike = ActionNoise::new(RATE);
+        strike.strike(1.0);
+        let strike_peak = peak(&mut strike);
+        assert!(damper_peak > 0.0);
+        assert!(
+            damper_peak < 0.1 * strike_peak,
+            "{damper_peak} {strike_peak}"
+        );
     }
 
     #[test]

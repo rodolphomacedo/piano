@@ -56,7 +56,9 @@ impl Engine {
             return;
         };
         voice.held = false;
-        settle_damper(voice, pressure);
+        if settle_damper(voice, pressure) {
+            self.action.damp();
+        }
     }
 
     /// The two-position sustain pedal: fully down or fully up.
@@ -96,22 +98,29 @@ impl Engine {
     fn settle_every_damper(&mut self) {
         let pressure = damper_pressure_for_sustain_position(self.pedals.sustain_position);
         for voice in &mut self.voices {
-            settle_damper(voice, pressure);
+            if settle_damper(voice, pressure) {
+                self.action.damp();
+            }
         }
     }
 }
 
 /// Rests `voice`'s damper with `free_pressure` unless a finger or the
-/// sostenuto is holding it off the string.
-fn settle_damper(voice: &mut Voice, free_pressure: f32) {
+/// sostenuto is holding it off the string. `true` when the felt has just
+/// landed fully on a string that was still sounding — the moment a real
+/// damper makes its soft thump (issue #64).
+fn settle_damper(voice: &mut Voice, free_pressure: f32) -> bool {
     let pressure = if voice.held || voice.sostenuto_latched {
         0.0
     } else {
         free_pressure
     };
-    if let Some(strings) = voice.strings.as_mut() {
-        strings.set_damper_pressure(pressure);
-    }
+    let Some(strings) = voice.strings.as_mut() else {
+        return false;
+    };
+    let lands = pressure >= 1.0 && strings.is_receptive() && !strings.is_silent();
+    strings.set_damper_pressure(pressure);
+    lands
 }
 
 #[cfg(test)]

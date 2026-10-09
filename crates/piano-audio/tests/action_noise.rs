@@ -58,3 +58,33 @@ fn the_knock_stands_out_more_in_the_treble_than_in_the_middle() {
     );
     assert!(treble_knock - treble_note > middle_knock - middle_note);
 }
+
+/// What a release adds over the same release with a silent action, in dB
+/// relative to the ringing note, over the 50 ms after the key comes up.
+fn release_thump_db(pedal: bool) -> f32 {
+    let render = |gain: f32| {
+        let mut engine =
+            OfflineEngine::new(SampleRate::new(SAMPLE_RATE_HZ).unwrap(), Tuning::default());
+        engine.set_action_noise_gain(gain);
+        engine.set_sustain_pedal(pedal);
+        engine.note_on(60, 0.6);
+        let _ = engine.render(0.5);
+        engine.note_off(60);
+        engine.render(WINDOW as f32 / SAMPLE_RATE_HZ)
+    };
+    let with = render(DEFAULT_THUMP_GAIN);
+    let without = render(0.0);
+    let thump: Vec<f32> = with.iter().zip(&without).map(|(a, b)| a - b).collect();
+    20.0 * (rms(&thump) + 1e-12).log10() - 20.0 * rms(&without).log10()
+}
+
+#[test]
+fn a_released_key_lets_its_damper_land_softly() {
+    let released = release_thump_db(false);
+    let pedal_held = release_thump_db(true);
+    println!("damper landing {released:.1} dB, under the pedal {pedal_held:.1} dB");
+    assert!((-35.0..-15.0).contains(&released), "{released:.1}");
+    // Under the pedal nothing lands; what is left is only the soundboard
+    // still ringing from the strike's own keybed knock half a second ago.
+    assert!(pedal_held < released - 30.0, "{pedal_held:.1}");
+}

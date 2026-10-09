@@ -561,6 +561,15 @@ colour. Measured over a note's first 50 ms: about 27 dB under a
 *fortissimo* A4, 11 dB quieter at velocity 0.3, and 2 dB more prominent at
 C7 than at C4. `AudioSession::set_action_noise_gain` sets it, `0` removes it.
 
+The action makes one more sound, at the other end of the note: when a key
+comes up (or the sustain pedal lets go), each damper's felt drops onto a
+string that is still moving. `ActionNoise::damp` gives that landing its own
+soft pulse — 6 ms long, a twentieth of a full-velocity knock, and the same
+however the key was played, because the felt falls under its own spring and
+weight. It sounds only when a damper lands on a string that is still
+sounding, never under the pedal; measured on a released *mezzo-forte* C4,
+it sits about 23 dB under the note as it is cut off.
+
 ## Why every note is coloured by a soundboard (M6, `PERF-009`)
 
 A real piano's strings barely radiate sound on their own — their thin

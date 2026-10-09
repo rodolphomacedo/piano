@@ -25,10 +25,10 @@ use piano_core::math;
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey};
 
 /// The level, relative to the middle of the keyboard, a key is regulated
-/// to, A-weighted. Flat from C3 to C7; the bass sits lower on the meter
+/// to, A-weighted. Flat from C3 to C6; the bass sits lower on the meter
 /// because A-weighting discounts it far more than the ear does at playing
-/// level ([`BASS_TAPER_DB`]), and the top octave tapers the way real
-/// pianos' do.
+/// level ([`BASS_TAPER_DB`]), and the top two octaves taper the way real
+/// pianos' do ([`TREBLE_TAPER_START_MIDI`]).
 #[must_use]
 pub fn loudness_target_db(key: PianoKey) -> f32 {
     let midi = f32::from(key.midi_number());
@@ -49,11 +49,18 @@ const BASS_TAPER_END_MIDI: f32 = 48.0;
 /// much lower on an A-weighted meter.
 const BASS_TAPER_DB: f32 = 12.0;
 
-/// Where the treble taper starts: C7.
-const TREBLE_TAPER_START_MIDI: f32 = 96.0;
+/// Where the treble taper starts: C6. Above it a piano's radiated level
+/// falls away (the short treble strings carry little energy and the
+/// soundboard radiates them less efficiently), and the ear is already more
+/// sensitive there than A-weighting credits: at playing level (70 phon,
+/// ISO 226:2003) 2-4 kHz needs about 3 dB less sound pressure than 1 kHz
+/// for the same loudness, where A-weighting allows only about 1 dB. A
+/// treble regulated flat on an A-weighted meter therefore sounds too
+/// bright and too loud — heard as shrill.
+const TREBLE_TAPER_START_MIDI: f32 = 84.0;
 
 /// How far below the middle C8 is regulated.
-const TREBLE_TAPER_DB: f32 = 4.0;
+const TREBLE_TAPER_DB: f32 = 8.0;
 
 /// The gain [`crate::engine`] applies to `key`'s voice.
 #[must_use]
@@ -67,11 +74,12 @@ pub fn level_for_key(key: PianoKey) -> f32 {
 
 /// Per-key regulation, in dB, A0 first. Generated — see the module docs.
 pub const LEVEL_CORRECTION_DB: [f32; 88] = [
-    9.3, 9.4, 9.2, 9.6, 9.8, 9.9, 10.2, 10.0, 10.5, 11.1, 10.2, 9.5, 4.8, 4.4, 3.8, 2.8, 3.7, 4.0,
-    3.0, 2.8, 2.9, 3.5, 2.7, 3.4, 3.2, 3.4, 3.0, 3.2, 4.3, 3.6, -1.5, -2.4, -1.6, -1.5, -1.0, -1.0,
-    -1.5, -1.0, -1.6, -0.5, -0.3, 0.1, 0.3, 0.1, 0.7, 0.1, 1.3, 1.7, 0.9, 1.4, 1.9, 1.6, 2.1, 2.6,
-    4.1, 3.2, 3.0, 2.4, 2.8, 2.5, 1.7, 1.9, 2.2, 1.6, -0.1, -0.7, -1.2, -2.7, -3.7, -4.6, -4.7,
-    -4.9, -5.2, -4.9, -4.7, -5.1, -5.0, -3.0, -1.8, -3.3, -1.1, 1.1, 3.9, 3.2, 6.0, 4.5, 2.8, 0.7,
+    9.3, 9.5, 9.3, 9.6, 9.8, 9.9, 10.3, 10.1, 10.5, 11.2, 10.2, 9.5, 4.8, 4.5, 3.9, 2.9, 3.8, 4.1,
+    3.1, 3.0, 3.0, 3.7, 2.8, 3.6, 3.4, 3.6, 3.1, 3.3, 4.5, 3.7, -1.5, -2.4, -1.6, -1.4, -0.9, -1.0,
+    -1.4, -0.9, -1.5, -0.5, -0.2, 0.1, 0.3, 0.1, 0.7, 0.1, 1.3, 1.7, 0.9, 1.4, 1.9, 1.6, 2.1, 2.6,
+    4.1, 3.2, 3.0, 2.4, 2.8, 2.5, 1.7, 1.9, 2.2, 1.6, -0.5, -1.4, -2.2, -4.0, -5.4, -6.6, -7.0,
+    -7.6, -8.2, -8.2, -8.4, -9.1, -9.0, -7.0, -5.8, -7.3, -5.1, -2.9, -0.0, -0.8, 2.1, 0.5, -1.2,
+    -3.3,
 ];
 
 /// How strongly `key` mixes phantom partials ([`piano_core::phantom`]):

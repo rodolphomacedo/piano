@@ -87,6 +87,24 @@ fn main() -> Result<()> {
     }
 }
 
+/// Keeps a live session playing through device changes (issue #20): called
+/// once per control-loop tick, it rebuilds the stream when the device went
+/// away or the default output changed, and says so. A failed rebuild is
+/// reported and retried next tick rather than ending the session — the
+/// player may be about to plug the device back in.
+pub(crate) fn keep_audio_alive(session: &mut piano_audio::AudioSession) {
+    match session.recover_if_needed() {
+        Ok(piano_audio::Recovery::Healthy) => {}
+        Ok(piano_audio::Recovery::Rebuilt { sample_rate }) => {
+            eprint!(
+                "audio device changed; playing again at {} Hz\r\n",
+                sample_rate.hertz()
+            );
+        }
+        Err(error) => eprint!("audio device unavailable, retrying: {error}\r\n"),
+    }
+}
+
 /// Prints the callback timing distribution for a finished [`AudioSession`],
 /// shared by every subcommand that opens one.
 ///

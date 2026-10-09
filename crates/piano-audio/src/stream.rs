@@ -1,6 +1,7 @@
 //! Wires [`Engine`] to a live `cpal` output stream.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -24,14 +25,33 @@ const COMMAND_QUEUE_CAPACITY: usize = 256;
 /// requests in one call.
 const MAX_CHUNK_FRAMES: usize = 4096;
 
-/// Opens the default output device and starts playback.
-///
-/// Returns the live stream (drop it to stop playback), a producer for
-/// sending it commands, and the sample rate the engine was tuned for.
+/// A started stream and what the session needs to keep talking to it.
+pub(crate) struct StartedStream {
+    /// The live stream; dropping it stops playback.
+    pub(crate) stream: cpal::Stream,
+    /// The command queue into the stream's engine.
+    pub(crate) producer: Producer<Command>,
+    /// The sample rate the engine was tuned for.
+    pub(crate) sample_rate: SampleRate,
+    /// The device's name when it was opened, to notice the default device
+    /// changing underneath the session (issue #20).
+    pub(crate) device_name: Option<String>,
+}
+
+/// The current default output device's name, `None` when there is none or
+/// it cannot be named. Queries the platform; call it from the control
+/// thread, never the audio callback.
+pub(crate) fn default_output_device_name() -> Option<String> {
+    cpal::default_host().default_output_device()?.name().ok()
+}
+
+/// Opens the default output device and starts playback. `failed` is set
+/// from `cpal`'s error callback if the stream later dies.
 pub(crate) fn start(
     tuning: Tuning,
     timer: Arc<CallbackTimer>,
-) -> Result<(cpal::Stream, Producer<Command>, SampleRate), AudioError> {
+    failed: Arc<AtomicBool>,
+) -> Result<StartedStream, AudioError> {
     let device = cpal::default_host()
         .default_output_device()
         .ok_or(AudioError::NoOutputDevice)?;
@@ -43,9 +63,15 @@ pub(crate) fn start(
     let (producer, consumer) = RingBuffer::new(COMMAND_QUEUE_CAPACITY);
     let mut engine = Engine::new(sample_rate, tuning);
     engine.set_room_mix(DEFAULT_ROOM_MIX);
-    let stream = build_stream(sample_format, &device, &config, engine, consumer, timer)?;
+    let callback = AudioCallback::new(engine, consumer, timer, usize::from(config.channels));
+    let stream = build_stream(sample_format, &device, &config, callback, failed)?;
     stream.play()?;
-    Ok((stream, producer, sample_rate))
+    Ok(StartedStream {
+        stream,
+        producer,
+        sample_rate,
+        device_name: device.name().ok(),
+    })
 }
 
 fn device_sample_rate(config: &StreamConfig) -> Result<SampleRate, AudioError> {
@@ -57,14 +83,13 @@ fn build_stream(
     sample_format: SampleFormat,
     device: &cpal::Device,
     config: &StreamConfig,
-    engine: Engine,
-    consumer: Consumer<Command>,
-    timer: Arc<CallbackTimer>,
+    callback: AudioCallback,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, AudioError> {
     match sample_format {
-        SampleFormat::F32 => build_typed_stream::<f32>(device, config, engine, consumer, timer),
-        SampleFormat::I16 => build_typed_stream::<i16>(device, config, engine, consumer, timer),
-        SampleFormat::U16 => build_typed_stream::<u16>(device, config, engine, consumer, timer),
+        SampleFormat::F32 => build_typed_stream::<f32>(device, config, callback, failed),
+        SampleFormat::I16 => build_typed_stream::<i16>(device, config, callback, failed),
+        SampleFormat::U16 => build_typed_stream::<u16>(device, config, callback, failed),
         other => Err(AudioError::UnsupportedSampleFormat(other)),
     }
 }
@@ -72,24 +97,23 @@ fn build_stream(
 fn build_typed_stream<T>(
     device: &cpal::Device,
     config: &StreamConfig,
-    engine: Engine,
-    consumer: Consumer<Command>,
-    timer: Arc<CallbackTimer>,
+    mut callback: AudioCallback,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, AudioError>
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
 {
-    let channels = usize::from(config.channels).max(1);
-    let mut callback = AudioCallback::new(engine, consumer, timer, channels);
     let data_callback = move |data: &mut [T], _: &cpal::OutputCallbackInfo| callback.run(data);
-    Ok(device.build_output_stream(config, data_callback, report_stream_error, None)?)
+    let error_callback = move |error: cpal::StreamError| report_stream_error(&error, &failed);
+    Ok(device.build_output_stream(config, data_callback, error_callback, None)?)
 }
 
 /// Runs on a `cpal`-owned helper thread, never the audio callback itself, so
-/// printing here is not a realtime-safety violation.
-#[allow(clippy::needless_pass_by_value)] // signature fixed by cpal's error_callback bound
-fn report_stream_error(error: cpal::StreamError) {
+/// printing here is not a realtime-safety violation. Marks the stream
+/// failed so the control thread rebuilds it (`AudioSession::recover_if_needed`).
+fn report_stream_error(error: &cpal::StreamError, failed: &AtomicBool) {
     eprintln!("audio stream error: {error}");
+    failed.store(true, Ordering::Release);
 }
 
 /// Everything the audio callback touches, bundled so the callback closure
@@ -115,7 +139,7 @@ impl AudioCallback {
             engine,
             consumer,
             timer,
-            channels,
+            channels: channels.max(1),
             left: [0.0; MAX_CHUNK_FRAMES],
             right: [0.0; MAX_CHUNK_FRAMES],
             denormals_enabled: false,

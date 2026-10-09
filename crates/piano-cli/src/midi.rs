@@ -167,6 +167,7 @@ pub(crate) fn wait_duration(seconds: f32) -> Duration {
 
 fn play_until_quit(session: &mut AudioSession, listener: &mut MidiListener) -> Result<()> {
     loop {
+        crate::keep_audio_alive(session);
         drain_midi(session, listener);
         if !event::poll(POLL_INTERVAL)? {
             continue;

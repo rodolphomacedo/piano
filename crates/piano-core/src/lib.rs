@@ -26,6 +26,7 @@ pub mod action;
 pub mod bridge;
 pub mod delay;
 pub mod dispersion;
+pub mod duplex;
 pub mod excitation;
 pub mod filter;
 pub mod hammer;

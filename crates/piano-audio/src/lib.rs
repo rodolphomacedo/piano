@@ -166,6 +166,12 @@ impl AudioSession {
         self.send(Command::SetRoomMix { mix })
     }
 
+    /// Queues the treble's duplex-segment gain; `0` mutes them. Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_duplex_gain(&mut self, gain: f32) -> bool {
+        self.send(Command::SetDuplexGain { gain })
+    }
+
     /// Queues the soft (una corda) pedal's state (issue #59). Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_soft_pedal(&mut self, down: bool) -> bool {

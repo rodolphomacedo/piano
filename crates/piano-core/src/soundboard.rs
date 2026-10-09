@@ -252,7 +252,7 @@ const fn mode(frequency_hz: f32, q: f32, gain: f32, bridge_coupling: f32) -> Sou
 /// One mode's two-pole resonator state. See the module docs for the
 /// difference equation and its derivation.
 #[derive(Debug, Clone, Copy, Default)]
-struct Resonator {
+pub(crate) struct Resonator {
     two_r_cos_theta: f32,
     neg_r_squared: f32,
     input_gain: f32,
@@ -297,7 +297,7 @@ impl Resonator {
     /// reach a division, a trig function or the recursion's own gain —
     /// necessary since [`Soundboard::set_mode`] now lets a caller supply
     /// `mode` live, not just the fixed, already-sane [`DEFAULT_MODES`] table.
-    fn new(mode: SoundboardMode, sample_rate: f32) -> Self {
+    pub(crate) fn new(mode: SoundboardMode, sample_rate: f32) -> Self {
         let decay = math::clamp_or_low(mode.decay_seconds, MIN_DECAY_SECONDS, f32::MAX);
         let radius = math::clamp_or_low(math::exp(-1.0 / (decay * sample_rate)), 0.0, MAX_RADIUS);
         let frequency_hz = math::clamp_or_low(
@@ -317,7 +317,7 @@ impl Resonator {
     }
 
     #[inline]
-    fn process(&mut self, input: f32) -> f32 {
+    pub(crate) fn process(&mut self, input: f32) -> f32 {
         let output = self.two_r_cos_theta * self.state1
             + self.neg_r_squared * self.state2
             + self.input_gain * input;

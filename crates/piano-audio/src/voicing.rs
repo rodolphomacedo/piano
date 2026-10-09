@@ -840,8 +840,8 @@ use inharmonicity::inharmonicity_for;
 #[path = "voicing_level.rs"]
 mod level;
 pub use level::{
-    LEVEL_CORRECTION_DB, PHANTOM_GAIN_IN_BASS, level_for_key, loudness_target_db,
-    phantom_gain_for_key,
+    DUPLEX_GAIN, LEVEL_CORRECTION_DB, PHANTOM_GAIN_IN_BASS, duplex_gain_for_key,
+    duplex_harmonic_for_key, level_for_key, loudness_target_db, phantom_gain_for_key,
 };
 
 // Split into `voicing_tests.rs` to keep this file under the project's

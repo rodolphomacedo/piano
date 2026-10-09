@@ -152,6 +152,16 @@ Os três pedais do teclado MIDI funcionam:
   computadores na mesma rede — uma mudança feita numa aba aparece na outra
   na hora.
 
+## Se o fone ou a caixa de som for desconectado
+
+Pode desconectar e reconectar à vontade. Em até um segundo o programa
+percebe que o dispositivo de saída mudou, abre o novo (mesmo que ele use
+outra taxa de amostragem, por exemplo 44100 em vez de 48000) e volta a tocar
+com todas as suas edições, os pedais e a sala exatamente como estavam. A
+nota que estava soando no momento da troca se perde — o piano recomeça em
+silêncio, então nenhuma nota fica presa. No terminal aparece a linha
+`audio device changed; playing again at ... Hz`.
+
 ## O que ainda não existe (limitações honestas)
 
 - **Só na sua própria rede local.** O servidor escuta apenas em

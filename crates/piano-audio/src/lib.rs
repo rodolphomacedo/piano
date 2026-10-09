@@ -22,6 +22,9 @@ mod engine;
 mod error;
 mod limiter;
 pub mod offline;
+#[path = "session_recovery.rs"]
+mod recovery;
+mod settings_log;
 mod stream;
 #[cfg(test)]
 mod tests_no_allocation;
@@ -30,6 +33,7 @@ mod velocity_curve;
 pub mod voicing;
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use piano_core::SampleRate;
 use piano_params::Tuning;
@@ -37,6 +41,7 @@ use rtrb::Producer;
 
 pub use engine::{DEFAULT_MASTER_GAIN, DEFAULT_SOUNDBOARD_MIX_GAIN};
 pub use error::AudioError;
+pub use recovery::Recovery;
 pub use timing::TimingReport;
 pub use velocity_curve::DEFAULT_VELOCITY_CURVE_EXPONENT;
 
@@ -56,6 +61,9 @@ pub struct AudioSession {
     producer: Producer<Command>,
     timer: Arc<CallbackTimer>,
     sample_rate: SampleRate,
+    /// What [`AudioSession::recover_if_needed`] needs to rebuild the
+    /// stream after a device change (issue #20).
+    recovery: recovery::RecoveryState,
 }
 
 impl AudioSession {
@@ -67,13 +75,24 @@ impl AudioSession {
     /// cannot be read, or the stream cannot be built or started.
     pub fn start(tuning: Tuning) -> Result<Self, AudioError> {
         let timer = Arc::new(CallbackTimer::new());
-        let (stream, producer, sample_rate) = stream::start(tuning, Arc::clone(&timer))?;
+        let failed = Arc::new(AtomicBool::new(false));
+        let started = stream::start(tuning, Arc::clone(&timer), Arc::clone(&failed))?;
         Ok(Self {
-            stream,
-            producer,
+            stream: started.stream,
+            producer: started.producer,
             timer,
-            sample_rate,
+            sample_rate: started.sample_rate,
+            recovery: recovery::RecoveryState::new(tuning, failed, started.device_name),
         })
+    }
+
+    /// Records `command` as the newest value of its setting, if it is one,
+    /// and queues it for the engine. `false` when the queue was full and
+    /// the engine will not see it — though a recorded setting still
+    /// reaches a rebuilt engine.
+    fn send(&mut self, command: Command) -> bool {
+        self.recovery.settings.record(command);
+        self.producer.push(command).is_ok()
     }
 
     /// Queues a note strike.
@@ -83,15 +102,13 @@ impl AudioSession {
     ///
     /// [ADR-0005]: https://github.com/rodolphomacedo/piano/blob/main/docs/adr/0005-lock-free-spsc-command-queue.md
     pub fn note_on(&mut self, midi: u8, velocity: f32) -> bool {
-        self.producer
-            .push(Command::NoteOn { midi, velocity })
-            .is_ok()
+        self.send(Command::NoteOn { midi, velocity })
     }
 
     /// Queues silencing every ringing voice. Same drop-not-block behaviour as
     /// [`AudioSession::note_on`].
     pub fn all_notes_off(&mut self) -> bool {
-        self.producer.push(Command::AllNotesOff).is_ok()
+        self.send(Command::AllNotesOff)
     }
 
     /// Queues releasing one key early — a MIDI note-off, or a
@@ -100,7 +117,7 @@ impl AudioSession {
     /// the voice is held rather than released immediately, same as a real
     /// piano. Same drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn note_off(&mut self, midi: u8) -> bool {
-        self.producer.push(Command::NoteOff { midi }).is_ok()
+        self.send(Command::NoteOff { midi })
     }
 
     /// Queues a new CC64 sustain-*pedal* hold state.
@@ -112,51 +129,47 @@ impl AudioSession {
     /// the pedal comes back up, everything it was holding is released for
     /// real. Same drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_sustain_pedal(&mut self, down: bool) -> bool {
-        self.producer.push(Command::SustainPedal { down }).is_ok()
+        self.send(Command::SustainPedal { down })
     }
 
     /// Queues the sustain pedal's continuous position, `0` (up) to `1`
     /// (down), for controllers that report half-pedalling (issue #61).
     /// Same drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_sustain_pedal_position(&mut self, position: f32) -> bool {
-        self.producer
-            .push(Command::SustainPedalPosition { position })
-            .is_ok()
+        self.send(Command::SustainPedalPosition { position })
     }
 
     /// Queues the sostenuto (middle) pedal's state (issue #60). Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_sostenuto_pedal(&mut self, down: bool) -> bool {
-        self.producer.push(Command::SostenutoPedal { down }).is_ok()
+        self.send(Command::SostenutoPedal { down })
     }
 
     /// Queues the keybed thump's level at full velocity (issue #64); `0`
     /// silences the action noise. Same drop-not-block behaviour as
     /// [`AudioSession::note_on`].
     pub fn set_action_noise_gain(&mut self, gain: f32) -> bool {
-        self.producer
-            .push(Command::SetActionNoiseGain { gain })
-            .is_ok()
+        self.send(Command::SetActionNoiseGain { gain })
     }
 
     /// Queues the bass's phantom-partial gain (issue #54); `0` turns
     /// phantoms off. Same drop-not-block behaviour as
     /// [`AudioSession::note_on`].
     pub fn set_phantom_gain(&mut self, gain: f32) -> bool {
-        self.producer.push(Command::SetPhantomGain { gain }).is_ok()
+        self.send(Command::SetPhantomGain { gain })
     }
 
     /// Queues the room's wet level; `0` is a dry instrument. A new session
     /// starts at [`piano_core::room::DEFAULT_ROOM_MIX`]. Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_room_mix(&mut self, mix: f32) -> bool {
-        self.producer.push(Command::SetRoomMix { mix }).is_ok()
+        self.send(Command::SetRoomMix { mix })
     }
 
     /// Queues the soft (una corda) pedal's state (issue #59). Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_soft_pedal(&mut self, down: bool) -> bool {
-        self.producer.push(Command::SoftPedal { down }).is_ok()
+        self.send(Command::SoftPedal { down })
     }
 
     /// Queues a new damping (high-frequency loss) for every voice, applied
@@ -164,7 +177,7 @@ impl AudioSession {
     /// is clamped into `[0, 1]` on the audio thread. Same drop-not-block
     /// behaviour as [`AudioSession::note_on`].
     pub fn set_damping(&mut self, damping: f32) -> bool {
-        self.producer.push(Command::SetDamping { damping }).is_ok()
+        self.send(Command::SetDamping { damping })
     }
 
     /// Queues a new sustain (broadband loop gain) for every voice, applied
@@ -172,7 +185,7 @@ impl AudioSession {
     /// is clamped into `[0, 1]` on the audio thread. Same drop-not-block
     /// behaviour as [`AudioSession::note_on`].
     pub fn set_sustain(&mut self, sustain: f32) -> bool {
-        self.producer.push(Command::SetSustain { sustain }).is_ok()
+        self.send(Command::SetSustain { sustain })
     }
 
     /// Queues rebuilding one of the soundboard's resonant modes live. See
@@ -185,9 +198,7 @@ impl AudioSession {
         index: usize,
         mode: piano_core::soundboard::SoundboardMode,
     ) -> bool {
-        self.producer
-            .push(Command::SetSoundboardMode { index, mode })
-            .is_ok()
+        self.send(Command::SetSoundboardMode { index, mode })
     }
 
     /// Queues a new soundboard mix gain, live (issue #78): how much of the
@@ -196,9 +207,7 @@ impl AudioSession {
     /// or a negative mutes the board. Same drop-not-block behaviour as
     /// [`AudioSession::note_on`].
     pub fn set_soundboard_mix_gain(&mut self, gain: f32) -> bool {
-        self.producer
-            .push(Command::SetSoundboardMixGain { gain })
-            .is_ok()
+        self.send(Command::SetSoundboardMixGain { gain })
     }
 
     /// Queues a new master output gain, live (issue #79): a linear gain
@@ -208,7 +217,7 @@ impl AudioSession {
     /// on the audio thread — `NaN` or a negative silences the output. Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_master_gain(&mut self, gain: f32) -> bool {
-        self.producer.push(Command::SetMasterGain { gain }).is_ok()
+        self.send(Command::SetMasterGain { gain })
     }
 
     /// Queues a new velocity-curve exponent, live (issue #79): every strike
@@ -219,9 +228,7 @@ impl AudioSession {
     /// `NaN` or a non-positive value falls back to a documented low bound.
     /// Same drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_velocity_curve(&mut self, exponent: f32) -> bool {
-        self.producer
-            .push(Command::SetVelocityCurve { exponent })
-            .is_ok()
+        self.send(Command::SetVelocityCurve { exponent })
     }
 
     /// Queues a new local (within-group) unison coupling gain for every
@@ -230,9 +237,7 @@ impl AudioSession {
     /// clamped into `[0, 1]` on the audio thread. Same drop-not-block
     /// behaviour as [`AudioSession::note_on`].
     pub fn set_local_coupling_gain(&mut self, gain: f32) -> bool {
-        self.producer
-            .push(Command::SetLocalCouplingGain { gain })
-            .is_ok()
+        self.send(Command::SetLocalCouplingGain { gain })
     }
 
     /// Queues a new global (cross-key, [`piano_core::BridgeBus`]) coupling
@@ -241,9 +246,7 @@ impl AudioSession {
     /// clamped into `[0, 1]` on the audio thread. Same drop-not-block
     /// behaviour as [`AudioSession::note_on`].
     pub fn set_global_coupling_gain(&mut self, gain: f32) -> bool {
-        self.producer
-            .push(Command::SetGlobalCouplingGain { gain })
-            .is_ok()
+        self.send(Command::SetGlobalCouplingGain { gain })
     }
 
     /// Queues a new damping for one string within `midi`'s unison, live.
@@ -252,13 +255,11 @@ impl AudioSession {
     /// ignored on the audio thread. Same drop-not-block behaviour as
     /// [`AudioSession::note_on`].
     pub fn set_string_damping(&mut self, midi: u8, string_index: u8, damping: f32) -> bool {
-        self.producer
-            .push(Command::SetStringDamping {
-                midi,
-                string_index,
-                damping,
-            })
-            .is_ok()
+        self.send(Command::SetStringDamping {
+            midi,
+            string_index,
+            damping,
+        })
     }
 
     /// Queues a new sustain for one string within `midi`'s unison, live.
@@ -266,13 +267,11 @@ impl AudioSession {
     /// out-of-range and drop-not-block behaviour as
     /// [`AudioSession::set_string_damping`].
     pub fn set_string_sustain(&mut self, midi: u8, string_index: u8, sustain: f32) -> bool {
-        self.producer
-            .push(Command::SetStringSustain {
-                midi,
-                string_index,
-                sustain,
-            })
-            .is_ok()
+        self.send(Command::SetStringSustain {
+            midi,
+            string_index,
+            sustain,
+        })
     }
 
     /// Queues a new inharmonicity coefficient for one string within
@@ -286,13 +285,11 @@ impl AudioSession {
         string_index: u8,
         inharmonicity: f32,
     ) -> bool {
-        self.producer
-            .push(Command::SetStringInharmonicity {
-                midi,
-                string_index,
-                inharmonicity,
-            })
-            .is_ok()
+        self.send(Command::SetStringInharmonicity {
+            midi,
+            string_index,
+            inharmonicity,
+        })
     }
 
     /// Queues retuning one string within `midi`'s unison to `cents` away
@@ -300,13 +297,11 @@ impl AudioSession {
     /// [`piano_core::UnisonGroup::set_string_detune`]. Same out-of-range
     /// and drop-not-block behaviour as [`AudioSession::set_string_damping`].
     pub fn set_string_detune(&mut self, midi: u8, string_index: u8, cents: f32) -> bool {
-        self.producer
-            .push(Command::SetStringDetune {
-                midi,
-                string_index,
-                cents,
-            })
-            .is_ok()
+        self.send(Command::SetStringDetune {
+            midi,
+            string_index,
+            cents,
+        })
     }
 
     /// Queues reseeding one string's excitation noise for its *next*
@@ -314,13 +309,11 @@ impl AudioSession {
     /// out-of-range and drop-not-block behaviour as
     /// [`AudioSession::set_string_damping`].
     pub fn set_string_seed(&mut self, midi: u8, string_index: u8, seed: u32) -> bool {
-        self.producer
-            .push(Command::SetStringSeed {
-                midi,
-                string_index,
-                seed,
-            })
-            .is_ok()
+        self.send(Command::SetStringSeed {
+            midi,
+            string_index,
+            seed,
+        })
     }
 
     /// Queues changing one string's felt-contact physics for its *next*
@@ -333,13 +326,11 @@ impl AudioSession {
         string_index: u8,
         hammer: piano_core::hammer::HammerConfig,
     ) -> bool {
-        self.producer
-            .push(Command::SetStringHammer {
-                midi,
-                string_index,
-                hammer,
-            })
-            .is_ok()
+        self.send(Command::SetStringHammer {
+            midi,
+            string_index,
+            hammer,
+        })
     }
 
     /// The sample rate the engine is tuned for: the output device's own

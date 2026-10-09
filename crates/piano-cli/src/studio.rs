@@ -265,6 +265,7 @@ fn run_until_quit(
     keyboard_available: bool,
 ) -> Result<()> {
     loop {
+        crate::keep_audio_alive(session);
         if let Some(listener) = listener.as_deref_mut() {
             drain_midi(session, listener);
         }

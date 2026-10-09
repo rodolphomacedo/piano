@@ -146,6 +146,7 @@ fn play_until_quit(
 ) -> Result<()> {
     let mut voicing = Voicing::defaults();
     loop {
+        crate::keep_audio_alive(session);
         if !event::poll(POLL_INTERVAL)? {
             continue;
         }

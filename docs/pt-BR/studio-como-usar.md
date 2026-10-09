@@ -91,12 +91,24 @@ tempo, cada um vendo o que o outro faz em tempo real.
 cargo run --release -p piano-cli -- studio --piano meu-piano.piano.json --midi
 ```
 
+Os três pedais do teclado MIDI funcionam:
+
+- **CC64, sustain (pedal da direita)**: o valor é usado de forma contínua.
+  Com um pedal que suporta meio-pedal, pisar até a metade deixa a nota soando
+  por menos tempo; pisar até o fundo segura tudo.
+- **CC66, sostenuto (pedal do meio)**: segura só as teclas que estavam
+  apertadas no instante em que você pisou nele.
+- **CC67, una corda (pedal da esquerda)**: o martelo passa a bater em uma
+  corda a menos por nota. O som fica mais baixo e mais "velado", não só mais
+  fraco.
+
 ## O que dá para fazer na página
 
 - **Tocar**: clique nas teclas do desenho do piano, ou use o teclado do
   computador (`a` até `;` na fileira de baixo, `w e t y u o p` na fileira de
   cima, seguindo o desenho de um piano de verdade). `z`/`x` descem/sobem uma
-  oitava. `espaço` segura o pedal de sustain.
+  oitava. `espaço` segura o pedal de sustain. As caixinhas "sostenuto" e
+  "una corda" ligam os outros dois pedais.
 - **Editar uma corda**: clique numa tecla, escolha qual das cordas daquele
   uníssono (uma, duas ou três, dependendo do registro) na abinha que
   aparece, e arraste os controles: amortecimento, sustentação,

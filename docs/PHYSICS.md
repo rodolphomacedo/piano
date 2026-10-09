@@ -502,6 +502,31 @@ per-instrument measurement to derive one from): every voice shares the
 same coupling gain and the same bus, an engineering simplification stated
 plainly rather than presented as more faithful than it is.
 
+## Why the pedals are three damper rules, not three switches (#59-#61)
+
+Every key's damper is recomputed from one rule whenever a key or a pedal
+moves: a key held by a finger, or caught by the sostenuto, has its damper
+lifted; every other key's damper rests with the pressure the sustain pedal's
+position leaves it. That single rule is the release, the pedal-held release,
+the sympathetic lift with the pedal down, half-pedalling and the sostenuto.
+
+- **Half-pedalling.** CC64 is a position, not a switch. Pressure falls along a
+  smoothstep between 25 % and 70 % of the stroke; a damper's per-round-trip
+  loss is `−ln(0.4)·pressure⁵`, because felt that only grazes the string damps
+  a sliver as hard as felt seated on it — linear in pressure, a half-damped A3
+  would still stop inside 50 ms. Measured: A3 released at mid-stroke rings
+  between the damped and the held note, more than 6 dB from each.
+- **Sostenuto** (CC66). Pressing it catches exactly the keys held at that
+  instant.
+- **Una corda** (CC67). The shifted action misses one string of every bichord
+  and trichord; the missed string's damper still lifts, so the struck pair
+  drives it through the coupling and it rings against them. Measured at A4:
+  the note is 4 dB quieter at the attack and loses 7.9 dB over its first
+  second instead of 11.2 — less prompt sound, more aftersound, which is the
+  veiled colour the pedal is played for (Weinreich 1977, §V). Single-string
+  bass keys are struck as usual; the softer felt region a real shifted
+  hammer presents is not modelled.
+
 ## Why every note is coloured by a soundboard (M6, `PERF-009`)
 
 A real piano's strings barely radiate sound on their own — their thin

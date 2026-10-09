@@ -414,8 +414,10 @@ impl UnisonGroup {
         // render check caught. Additive coupling removes that trap at the
         // source; see [`PluckedString::write_mixed_feedback`].
         let group_mean = local_group_mean(local_sum, receptive_count);
-        let bridge_drive = bridge.map_or(0.0, |(bus, index)| bus.add_and_read(index, group_mean))
-            * self.global_coupling_gain;
+        let bridge_drive = bridge.map_or(0.0, |(bus, index)| {
+            let (total, contributors) = bus.add_and_read_total(index, group_mean);
+            bridge_drive_for(total, contributors, self.global_coupling_gain)
+        });
 
         let mut output = 0.0f32;
         for (string, sample) in self.strings.iter_mut().zip(samples.iter()).take(self.count) {
@@ -463,10 +465,37 @@ struct StringSample {
 /// string's own round-trip loss keeps any value in `[0, 1]` safe regardless
 /// of `sustain`.
 ///
-/// Kept smaller than [`DEFAULT_LOCAL_COUPLING_GAIN`]: cross-key sympathetic
-/// resonance is a subtler effect than one note's own unison beating — same
-/// literature-order-of-magnitude honesty note as that constant.
-pub const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
+/// Set by measurement (`piano-audio/tests/sympathetic.rs`): a C5 held
+/// silently rings about 38 dB under a struck C4, an audible but discreet
+/// answer, and the sustain pedal's bloom stays about 17 dB under the note.
+/// A reasoned choice, not a measured bridge admittance (#90).
+pub const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.2;
+
+/// How hard the bridge drives a receptive string, given last block's
+/// `total` over `contributors` keys.
+///
+/// Physically the bridge moves with the *sum* of every string's force
+/// (Weinreich 1977), so a sounding key drives every listening string the
+/// same however many others are listening: `gain · total`. The bus once
+/// returned the *mean* instead, which kept it bounded but diluted every
+/// key's drive by the number of receptive keys — so lifting the sustain
+/// pedal, which makes all 88 receptive, cut sympathetic resonance by up to
+/// 39 dB, exactly backwards. The sum is used now, capped only where
+/// passivity needs it: every string writes back
+/// `sustain · (own + (1 - sustain) · drive)`, so a common mode across `N`
+/// keys has gain at most `sustain + sustain · (1 - sustain) · g · N`, which
+/// stays at or below 1 while `g · N <= 1`. [`BRIDGE_PASSIVITY_MARGIN`]
+/// keeps it strictly below.
+#[inline]
+fn bridge_drive_for(total: f32, contributors: u32, gain: f32) -> f32 {
+    let passive_ceiling = BRIDGE_PASSIVITY_MARGIN / contributors.max(1) as f32;
+    total * gain.min(passive_ceiling)
+}
+
+/// The fraction of the passivity bound [`bridge_drive_for`] lets the
+/// shared bridge use, so a full keyboard of receptive strings still loses
+/// energy rather than sitting on the edge of stability.
+const BRIDGE_PASSIVITY_MARGIN: f32 = 0.9;
 
 /// The mean dispersed signal across this group's `receptive_count`
 /// receptive strings — `0.0` when none are (nothing to contribute; also

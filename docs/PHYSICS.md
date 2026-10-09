@@ -489,7 +489,7 @@ the modules that fixed them.
 Before M6 the sustain pedal only changed *when* a struck voice's own
 damper engaged — it had no effect on any other string, because nothing
 coupled voices together. `piano_core::bridge::BridgeBus` is the fix: every
-voice writes its own bridge-end signal into one shared running average and
+voice writes its own bridge-end signal into one shared running total and
 reads back everyone else's, so a string whose damper the pedal has lifted
 (even if it was never struck) picks up a little energy from whatever *is*
 ringing and starts to audibly resonate — a real piano's sustain pedal
@@ -506,6 +506,20 @@ infeasible at this string count — see `PERF-008` in
 per-instrument measurement to derive one from): every voice shares the
 same coupling gain and the same bus, an engineering simplification stated
 plainly rather than presented as more faithful than it is.
+
+The bus was first read back as the *mean* of every receptive key's
+contribution, which kept it bounded but diluted every sounding key's drive
+by the number of listeners — so pressing the sustain pedal, which makes all
+88 keys listen, cut each one's share by up to 39 dB: the pedal made the
+instrument *less* resonant (#62). The bridge physically moves with the
+*sum* of the strings' forces, so the drive is now `g · Σ`, capped at
+`0.9 / N` per key only when `N` receptive keys would otherwise break
+passivity (`unison::bridge_drive_for`). At the default gain (0.2) a C5 held
+silently rings 38 dB under a struck C4, a fifth 43 dB under and a semitone
+69 dB under, so the harmonic selectivity comes out of the strings
+themselves. The pedal's bloom on a held C4 sits 17 dB under the note, and a
+full keyboard struck *fortissimo* with the pedal down still decays
+(`piano-audio/tests/sympathetic.rs`).
 
 ## Why the pedals are three damper rules, not three switches (#59-#61)
 

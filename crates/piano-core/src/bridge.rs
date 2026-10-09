@@ -13,8 +13,13 @@
 //! total and reads back a value everyone else's writes already went into,
 //! `O(N)` total.
 //!
-//! # Why the readback is an average, not a sum — a bug this project found
-//! # by testing, not by inspection
+//! # Why the readback was an average, and why the sum came back
+//!
+//! [`BridgeBus::add_and_read_total`] returns the raw total and contributor
+//! count; `crate::unison` scales the total by its coupling gain, capped at
+//! the passivity bound for that many contributors (`bridge_drive_for`),
+//! because the mean below diluted sympathetic resonance by the number of
+//! receptive keys (#62). The history that follows is why the cap exists.
 //!
 //! [`BridgeBus::add_and_read`] returns the *mean* of everything contributed
 //! last block, not the raw total. An earlier version returned the raw sum.
@@ -146,6 +151,17 @@ impl BridgeBus {
     /// size), not a crash.
     #[inline]
     pub fn add_and_read(&mut self, index: usize, contribution: f32) -> f32 {
+        let (sum, count) = self.add_and_read_total(index, contribution);
+        if count == 0 { 0.0 } else { sum / count as f32 }
+    }
+
+    /// [`BridgeBus::add_and_read`]'s write, returning the previous block's
+    /// raw `(total, contributor count)` at `index` instead of their mean —
+    /// for a caller that bounds the readback itself, as
+    /// `crate::unison::UnisonGroup` does (see `bridge_drive_for` there).
+    /// `(0.0, 0)` for an `index` beyond [`BridgeBus::capacity`].
+    #[inline]
+    pub fn add_and_read_total(&mut self, index: usize, contribution: f32) -> (f32, u32) {
         if let Some(sum) = self.current_sum.get_mut(index) {
             *sum += contribution;
         }
@@ -154,7 +170,7 @@ impl BridgeBus {
         }
         let sum = self.previous_sum.get(index).copied().unwrap_or(0.0);
         let count = self.previous_count.get(index).copied().unwrap_or(0);
-        if count == 0 { 0.0 } else { sum / count as f32 }
+        (sum, count)
     }
 }
 

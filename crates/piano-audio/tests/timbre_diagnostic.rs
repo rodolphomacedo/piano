@@ -39,7 +39,7 @@ fn sample_rate() -> SampleRate {
 }
 
 /// Renders `seconds` of `midi` through the same `config_for_key` voicing the
-/// engine uses. `with_soundboard` mirrors `Engine::process_chunk`'s own
+/// engine uses. `with_soundboard` mirrors `Engine::process_stereo_chunk`'s own
 /// parallel soundboard mix, so the two can be compared directly and the
 /// soundboard's own contribution to the timbre isolated.
 fn render(midi: u8, seconds: f32, with_soundboard: bool) -> Vec<f32> {
@@ -54,7 +54,7 @@ fn render(midi: u8, seconds: f32, with_soundboard: bool) -> Vec<f32> {
         .map(|_| {
             let dry = string.process();
             if with_soundboard {
-                // `Engine::process_chunk`'s own `SOUNDBOARD_MIX_GAIN`.
+                // `Engine::process_stereo_chunk`'s own `SOUNDBOARD_MIX_GAIN`.
                 dry + 0.5 * soundboard.process(dry)
             } else {
                 dry

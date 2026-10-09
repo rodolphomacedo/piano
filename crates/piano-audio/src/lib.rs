@@ -146,6 +146,13 @@ impl AudioSession {
         self.producer.push(Command::SetPhantomGain { gain }).is_ok()
     }
 
+    /// Queues the room's wet level; `0` is a dry instrument. A new session
+    /// starts at [`piano_core::room::DEFAULT_ROOM_MIX`]. Same
+    /// drop-not-block behaviour as [`AudioSession::note_on`].
+    pub fn set_room_mix(&mut self, mix: f32) -> bool {
+        self.producer.push(Command::SetRoomMix { mix }).is_ok()
+    }
+
     /// Queues the soft (una corda) pedal's state (issue #59). Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_soft_pedal(&mut self, down: bool) -> bool {

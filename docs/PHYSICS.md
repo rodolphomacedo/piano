@@ -170,7 +170,7 @@ invariant ("Output is bounded by construction",
 a full chord, or the sustain pedal's sympathetic resonance
 (`piano_core::bridge`), could sum past `±1.0` and hit whatever hard-clipping
 the host's `f32 -> PCM` conversion does. `piano_audio::engine`'s
-`process_chunk` now runs every sample through `limiter::soft_limit`: the
+`process_stereo_chunk` now runs every sample through `limiter::soft_limit`: the
 identity function below `0.9`, so a single voice's own render is bit-for-bit
 unaffected, and a smooth `tanh` saturation into the remaining headroom above
 it — a standard soft-knee limiter, not a physical model, so (unlike
@@ -610,6 +610,47 @@ they sit about 23-27 dB under the note across A0-A2 and rise more than
 10 dB relative to it from *p* to *ff*. The string's free longitudinal
 resonances are not modelled: their frequencies are scale-design data with
 no published source this project can use yet (#65).
+
+## Why the instrument is heard in stereo
+
+A piano heard from the bench is wide: the bass strings fan out to the
+player's left, the treble to the right, and the soundboard's modes each
+have their own shape over the board, so two ears (or a stereo microphone
+pair) receive every mode at a different strength. A mono render collapses
+all of that into a point.
+
+`engine_render.rs` places every key at a pan of `+0.5` (A0, left) to `-0.5`
+(C8, right), linear in key number, and `Soundboard::process_stereo` weighs
+each mode `1 ± spread` between the two channels, with spreads stepped by
+the golden angle so neighbouring modes land on unrelated sides. Every
+weight is `1 ± x`, so the mean of the two channels is *exactly* the mono
+instrument: every level, decay and tuning measurement in this repository
+still holds on the mono mean (`tests/stereo.rs` checks that, and that A0
+sits 8 dB left and C8 9 dB right).
+
+## Why the instrument is heard in a room
+
+Nobody hears a piano dry. Every recording a listener compares this
+instrument with was made in a hall or a studio, and the room is a large part
+of what makes a recorded concert grand sound rich: a few milliseconds of
+silence, then a dense, decorrelated tail that dies faster in the treble
+than in the bass.
+
+`piano_core::room::Room` is the feedback delay network of Jot and Chaigne
+(AES 1991): eight delay lines of 30-73 ms, fed back through an orthonormal
+(lossless) Hadamard matrix, each followed by a one-pole absorption filter
+solved so the tail reverberates 1.8 s at low frequencies and 0.5 s at
+Nyquist, after a 12 ms predelay. Left and right read the lines through
+orthogonal sign patterns, so the two channels are uncorrelated. It is fed
+the dry instrument after the soundboard and added back in stereo before the
+limiter.
+
+The live engine starts at `DEFAULT_ROOM_MIX` (0.25), which puts the room
+about 11-14 dB under the direct sound over a sustained note
+(`tests/room.rs`); `.piano.json`'s `instrument.room_mix` and the studio's
+room slider move it, and `0` is dry. Offline renders start dry, so every
+level, decay and tuning measurement in this repository sees the instrument
+alone.
 
 ## What the current model still does not do
 

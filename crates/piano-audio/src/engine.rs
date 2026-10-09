@@ -36,16 +36,16 @@
 //! (`PERF-006`) can safely skip: a voice can be silent yet still need
 //! processing, if the sustain pedal (or a held key) has its damper
 //! lifted — see [`UnisonGroup::is_receptive`] and
-//! [`Engine::process_chunk`]'s skip condition.
+//! [`Engine::process_stereo_chunk`]'s skip condition.
 
 use piano_core::action::ActionNoise;
 use piano_core::phantom::PhantomPartials;
+use piano_core::room::Room;
 use piano_core::soundboard::SoundboardMode;
 use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer, math};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 use rtrb::Consumer;
 
-use crate::limiter::{OUTPUT_LIMITER_THRESHOLD, soft_limit};
 use crate::velocity_curve::{self, DEFAULT_VELOCITY_CURVE_EXPONENT};
 
 use crate::commands::Command;
@@ -69,7 +69,7 @@ const BRIDGE_BLOCK_SAMPLES: usize = 128;
 
 /// Default for [`Engine::soundboard_mix_gain`]: how strongly the
 /// soundboard's radiated signal is mixed back into the direct one at
-/// [`Engine::process_chunk`]'s post-mix stage.
+/// [`Engine::process_stereo_chunk`]'s post-mix stage.
 ///
 /// A parallel mix, not a replacement — `docs/PHYSICS.md` explains the
 /// choice: replacing the direct signal entirely would be more faithful to
@@ -93,8 +93,8 @@ pub const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 const MAX_SOUNDBOARD_MIX_GAIN: f32 = 2.0;
 
 /// Default for [`Engine::master_gain`]: the linear gain applied to the mixed,
-/// soundboard-coloured signal just before [`soft_limit`] in
-/// [`Engine::process_chunk`].
+/// soundboard-coloured signal just before [`crate::limiter::soft_limit`] in
+/// [`Engine::process_stereo_chunk`].
 ///
 /// Unity, because the level every other part of this project was measured at
 /// is the level with no master gain in the path — M1's tuning, M4's
@@ -122,6 +122,8 @@ struct Voice {
     level: f32,
     /// This key's nonlinear tension mixing ([`voicing::phantom_gain_for_key`]).
     phantom: PhantomPartials,
+    /// Where this key sits in the stereo pair ([`render::pan_for_key`]).
+    pan: f32,
     /// `true` from [`Engine::note_on`] until the matching
     /// [`Engine::note_off`], regardless of pedal state. Distinct from
     /// `pending_pedal_release`: this tracks whether a *finger* is
@@ -153,6 +155,10 @@ pub(crate) struct Engine {
     /// by [`Command::SetSoundboardMixGain`], clamped to
     /// `[0, MAX_SOUNDBOARD_MIX_GAIN]`.
     soundboard_mix_gain: f32,
+    /// The room the instrument is heard in (`piano_core::room`), fed the
+    /// mixed instrument and added back in stereo. Silent until
+    /// [`Command::SetRoomMix`] raises its wet level.
+    room: Room,
     /// Master output gain, applied to the mixed signal just before
     /// [`soft_limit`]. Starts at [`DEFAULT_MASTER_GAIN`] (unity); moved live
     /// by [`Command::SetMasterGain`], clamped to `[0, MAX_MASTER_GAIN]`.
@@ -200,6 +206,7 @@ impl Engine {
             bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
             soundboard: Soundboard::new(sample_rate),
             soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
+            room: Room::new(sample_rate.hertz()),
             master_gain: DEFAULT_MASTER_GAIN,
             velocity_curve_exponent: DEFAULT_VELOCITY_CURVE_EXPONENT,
         }
@@ -213,49 +220,6 @@ impl Engine {
                 break;
             };
             self.apply(command);
-        }
-    }
-
-    /// Renders `output.len()` mixed, soundboard-coloured samples, adding
-    /// into `output` after zeroing it. Chunked into
-    /// [`BRIDGE_BLOCK_SAMPLES`]-sized pieces so [`BridgeBus`] always sees a
-    /// block no longer than it was sized for — a bounded loop over a
-    /// caller-supplied length, not a recursive or unbounded one.
-    pub(crate) fn process_block(&mut self, output: &mut [f32]) {
-        output.fill(0.0);
-        for chunk in output.chunks_mut(BRIDGE_BLOCK_SAMPLES) {
-            self.process_chunk(chunk);
-        }
-    }
-
-    /// Processes one bridge-bus block: every voice mixes into `chunk`
-    /// (skipped only when genuinely inert, see below), then the
-    /// soundboard's radiated contribution is mixed back in.
-    ///
-    /// A voice is skipped only when it is *both* silent and fully damped
-    /// (`!is_receptive`) — energy gating's original condition
-    /// (`is_silent`, `PERF-006`) alone would also skip a silent voice
-    /// whose damper the pedal has lifted, which must still be processed so
-    /// it can pick up sympathetic energy from [`Engine::bridge`] and wake
-    /// up; a fully damped voice genuinely cannot, so skipping it is exact.
-    fn process_chunk(&mut self, chunk: &mut [f32]) {
-        self.bridge.begin_block();
-        for voice in &mut self.voices {
-            let Some(strings) = voice.strings.as_mut() else {
-                continue;
-            };
-            if strings.is_silent() && !strings.is_receptive() {
-                continue;
-            }
-            for (index, sample) in chunk.iter_mut().enumerate() {
-                let transverse = voice.level * strings.process_with_bridge(&mut self.bridge, index);
-                *sample += voice.phantom.process(transverse);
-            }
-        }
-        for sample in chunk.iter_mut() {
-            let board_drive = *sample + self.action.next_sample();
-            *sample += self.soundboard_mix_gain * self.soundboard.process(board_drive);
-            *sample = soft_limit(self.master_gain * *sample, OUTPUT_LIMITER_THRESHOLD);
         }
     }
 
@@ -274,6 +238,7 @@ impl Engine {
             Command::SoftPedal { down } => self.set_soft_pedal(down),
             Command::SetActionNoiseGain { gain } => self.set_action_noise_gain(gain),
             Command::SetPhantomGain { gain } => self.set_phantom_gain(gain),
+            Command::SetRoomMix { mix } => self.set_room_mix(mix),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),
@@ -316,6 +281,11 @@ impl Engine {
     /// Sets the keybed thump's level. See [`Command::SetActionNoiseGain`].
     pub(crate) fn set_action_noise_gain(&mut self, gain: f32) {
         self.action.set_gain(gain);
+    }
+
+    /// Sets the room's wet level. See [`Command::SetRoomMix`].
+    pub(crate) fn set_room_mix(&mut self, mix: f32) {
+        self.room.set_mix(mix);
     }
 
     /// Rescales every key's phantom gain so the bass sits at `gain`. See
@@ -532,6 +502,7 @@ fn voice_for_key(
             strings: None,
             level: 1.0,
             phantom: PhantomPartials::new(0.0, sample_rate.hertz()),
+            pan: 0.0,
             held: false,
             sostenuto_latched: false,
         };
@@ -542,10 +513,14 @@ fn voice_for_key(
         strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),
         level: voicing::level_for_key(key),
         phantom: PhantomPartials::new(voicing::phantom_gain_for_key(key), sample_rate.hertz()),
+        pan: render::pan_for_key(key),
         held: false,
         sostenuto_latched: false,
     }
 }
+
+#[path = "engine_render.rs"]
+mod render;
 
 #[path = "engine_pedals.rs"]
 mod pedals;

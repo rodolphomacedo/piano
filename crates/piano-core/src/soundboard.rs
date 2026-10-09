@@ -339,6 +339,10 @@ impl Resonator {
 #[derive(Debug, Clone)]
 pub struct Soundboard {
     resonators: [Resonator; MODE_COUNT],
+    /// How much more each mode reaches the left microphone than the right,
+    /// in `[-STEREO_MODE_SPREAD, STEREO_MODE_SPREAD]`. See
+    /// [`Soundboard::process_stereo`].
+    stereo_spread: [f32; MODE_COUNT],
     /// Kept so [`Soundboard::set_mode`] can rebuild one resonator later
     /// without the caller having to re-supply the sample rate.
     sample_rate: f32,
@@ -354,8 +358,13 @@ impl Soundboard {
         for (slot, mode) in resonators.iter_mut().zip(DEFAULT_MODES) {
             *slot = Resonator::new(mode, hertz);
         }
+        let mut stereo_spread = [0.0; MODE_COUNT];
+        for (index, spread) in stereo_spread.iter_mut().enumerate() {
+            *spread = STEREO_MODE_SPREAD * math::cos(MODE_SPREAD_STEP_RADIANS * index as f32);
+        }
         Self {
             resonators,
+            stereo_spread,
             sample_rate: hertz,
         }
     }
@@ -399,7 +408,36 @@ impl Soundboard {
         }
         output
     }
+
+    /// [`Soundboard::process`] heard from two microphone positions: every
+    /// mode is the same resonance, but each has its own spatial shape over
+    /// the board, so two positions receive each mode at different
+    /// strengths. The weights are `1 ± spread`, so the two channels'
+    /// mean is exactly [`Soundboard::process`]'s mono output and the stereo
+    /// image costs the mono level nothing.
+    #[inline]
+    pub fn process_stereo(&mut self, driving_input: f32) -> (f32, f32) {
+        let driving_input = math::clamp_or_low(driving_input, -1.0e6, 1.0e6);
+        let mut left = 0.0f32;
+        let mut right = 0.0f32;
+        for (resonator, spread) in self.resonators.iter_mut().zip(self.stereo_spread) {
+            let mode = resonator.process(driving_input);
+            left += mode * (1.0 + spread);
+            right += mode * (1.0 - spread);
+        }
+        (left, right)
+    }
 }
+
+/// Largest per-mode left/right weight difference. A real stereo pair over
+/// a soundboard hears some modes several dB louder on one side; 0.6 gives
+/// up to 12 dB between channels for one mode while every mode still
+/// reaches both.
+const STEREO_MODE_SPREAD: f32 = 0.6;
+
+/// Steps each mode's spread by the golden angle, so neighbouring modes land
+/// on unrelated sides and no frequency band collapses into one channel.
+const MODE_SPREAD_STEP_RADIANS: f32 = 2.399_963;
 
 #[cfg(test)]
 mod tests {
@@ -715,6 +753,36 @@ mod tests {
         );
     }
 
+    fn stereo_impulse_response() -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let mut stereo = soundboard();
+        let mut mono = soundboard();
+        let (mut left, mut right, mut centre) = (Vec::new(), Vec::new(), Vec::new());
+        for n in 0..4_800 {
+            let input = if n == 0 { 1.0 } else { 0.0 };
+            let (l, r) = stereo.process_stereo(input);
+            left.push(l);
+            right.push(r);
+            centre.push(mono.process(input));
+        }
+        (left, right, centre)
+    }
+
+    #[test]
+    fn the_stereo_pair_averages_to_the_mono_board() {
+        let (left, right, centre) = stereo_impulse_response();
+        for ((l, r), c) in left.iter().zip(&right).zip(&centre) {
+            assert!((0.5 * (l + r) - c).abs() <= 1e-5 * c.abs().max(1.0));
+        }
+    }
+
+    #[test]
+    fn the_two_channels_hear_different_boards() {
+        let (left, right, _) = stereo_impulse_response();
+        let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+        let correlation = dot(&left, &right) / (dot(&left, &left) * dot(&right, &right)).sqrt();
+        assert!(correlation < 0.9, "{correlation}");
+    }
+
     proptest! {
         /// Whatever mode a caller live-sets, including NaN and +-infinity
         /// fields and an out-of-range index, the board must stay finite.
@@ -746,6 +814,15 @@ mod tests {
             for input in inputs {
                 let output = board.process(input);
                 prop_assert!(output.is_finite());
+            }
+        }
+
+        #[test]
+        fn any_input_sequence_is_total_in_stereo(inputs in proptest::collection::vec(proptest::num::f32::ANY, 0..500)) {
+            let mut board = soundboard();
+            for input in inputs {
+                let (left, right) = board.process_stereo(input);
+                prop_assert!(left.is_finite() && right.is_finite());
             }
         }
 

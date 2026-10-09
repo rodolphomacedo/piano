@@ -392,6 +392,14 @@ const BRIDGE_PARAMETERS = [
 ];
 
 function renderInstrumentPanel() {
+  const room = document.getElementById("room");
+  room.innerHTML = "";
+  room.appendChild(
+    buildSlider("room mix", state.snapshot.ranges.room_mix, state.snapshot.room_mix, (value) => {
+      postEdit({ type: "set_room_mix", value });
+    }),
+  );
+
   const modes = document.getElementById("modes");
   modes.innerHTML = "";
   const modeRanges = state.snapshot.ranges.modes;

@@ -177,6 +177,10 @@ pub struct Instrument {
     /// existed — leaves the engine at its own default. See
     /// [`piano_audio::AudioSession::set_velocity_curve`] (issue #79).
     pub velocity_curve_exponent: Option<f32>,
+    /// How much of the room the instrument is heard in. `None` leaves the
+    /// live engine's default, [`piano_core::room::DEFAULT_ROOM_MIX`]; `0`
+    /// is a dry instrument. See [`piano_audio::AudioSession::set_room_mix`].
+    pub room_mix: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

@@ -8,6 +8,7 @@ use piano_audio::voicing::{
 use piano_core::SampleRate;
 use piano_core::dispersion::DEFAULT_INHARMONICITY;
 use piano_core::hammer::{DEFAULT_HAMMER, HammerConfig};
+use piano_core::room::DEFAULT_ROOM_MIX;
 use piano_core::soundboard::{DEFAULT_MODE_BRIDGE_COUPLING, SoundboardMode};
 use piano_core::string::{DEFAULT_DAMPING, DEFAULT_SUSTAIN};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
@@ -78,6 +79,9 @@ pub struct ResolvedPiano {
     /// See [`piano_audio::AudioSession::set_velocity_curve`]. The exponent a
     /// strike velocity is warped through before it reaches the string.
     pub velocity_curve_exponent: f32,
+    /// See [`piano_audio::AudioSession::set_room_mix`]. How much of the
+    /// room the instrument is heard in.
+    pub room_mix: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -159,6 +163,7 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .instrument
             .velocity_curve_exponent
             .unwrap_or(DEFAULT_VELOCITY_CURVE_EXPONENT),
+        room_mix: file.instrument.room_mix.unwrap_or(DEFAULT_ROOM_MIX),
     }
 }
 

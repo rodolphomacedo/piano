@@ -105,6 +105,12 @@ impl OfflineEngine {
         self.engine.set_sostenuto_pedal(down);
     }
 
+    /// Sets the room's wet level. Offline renders start dry (`0`), so
+    /// measurements see the instrument alone.
+    pub fn set_room_mix(&mut self, mix: f32) {
+        self.engine.set_room_mix(mix);
+    }
+
     /// Sets the bass's phantom-partial gain; `0` turns phantoms off.
     pub fn set_phantom_gain(&mut self, gain: f32) {
         self.engine.set_phantom_gain(gain);
@@ -124,15 +130,28 @@ impl OfflineEngine {
     /// for a non-finite request) into a freshly allocated mono buffer.
     #[must_use]
     pub fn render(&mut self, seconds: f32) -> Vec<f32> {
-        let seconds = if seconds.is_finite() {
-            seconds.clamp(0.0, MAX_RENDER_SECONDS)
-        } else {
-            0.0
-        };
-        let count = (seconds * self.sample_rate.hertz()) as usize;
+        let count = frames_for(seconds, self.sample_rate.hertz());
         let mut output = vec![0.0; count];
         self.render_into(&mut output);
         output
+    }
+
+    /// Renders `seconds` (clamped like [`OfflineEngine::render`]) into a
+    /// freshly allocated stereo pair, `(left, right)`, heard from the
+    /// player's bench: bass to the left, treble to the right. The mean of
+    /// the two is exactly what [`OfflineEngine::render`] returns.
+    #[must_use]
+    pub fn render_stereo(&mut self, seconds: f32) -> (Vec<f32>, Vec<f32>) {
+        let count = frames_for(seconds, self.sample_rate.hertz());
+        let mut left = vec![0.0; count];
+        let mut right = vec![0.0; count];
+        for (left, right) in left
+            .chunks_mut(RENDER_BLOCK)
+            .zip(right.chunks_mut(RENDER_BLOCK))
+        {
+            self.engine.process_block_stereo(left, right);
+        }
+        (left, right)
     }
 
     /// Renders `output.len()` samples into `output`, in
@@ -143,6 +162,17 @@ impl OfflineEngine {
             self.engine.process_block(block);
         }
     }
+}
+
+/// Frames in `seconds`, clamped to `(0, MAX_RENDER_SECONDS]` and to `0`
+/// for a non-finite request.
+fn frames_for(seconds: f32, sample_rate_hz: f32) -> usize {
+    let seconds = if seconds.is_finite() {
+        seconds.clamp(0.0, MAX_RENDER_SECONDS)
+    } else {
+        0.0
+    };
+    (seconds * sample_rate_hz) as usize
 }
 
 impl core::fmt::Debug for OfflineEngine {

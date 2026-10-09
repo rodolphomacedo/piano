@@ -120,6 +120,12 @@ Os três pedais do teclado MIDI funcionam:
   daquela tecla) ou "seleção" (várias teclas escolhidas com shift-clique).
   A mudança se aplica a todas de uma vez, sempre corda por corda por baixo
   dos panos — nunca vira uma "entidade" nova dentro do arquivo.
+- **Sala**: o controle "room mix" decide quanto da sala o piano soa
+  dentro. `0` é o piano seco, como num estúdio abafado; o padrão (`0.25`)
+  põe uma sala média atrás do instrumento, como numa gravação de piano de
+  concerto. O som sai em estéreo: graves à esquerda, agudos à direita,
+  como o pianista ouve sentado no banco. O valor é salvo no arquivo como
+  `instrument.room_mix`.
 - **Editar o instrumento inteiro**: os 28 modos da caixa de ressonância
   (frequência, tempo de decaimento, ganho), o quanto da caixa entra de volta
   na mistura (`soundboard_mix_gain`), o volume geral de saída

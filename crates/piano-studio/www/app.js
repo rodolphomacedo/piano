@@ -295,6 +295,7 @@ const STRING_PARAMETERS = [
   { key: "hammer_stiffness", label: "hammer stiffness" },
   { key: "hammer_mass", label: "hammer mass" },
   { key: "hammer_string_impedance", label: "string impedance" },
+  { key: "hammer_felt_bandwidth", label: "felt brightness" },
 ];
 
 function wireStringScope() {
@@ -403,6 +404,7 @@ const INSTRUMENT_PARAMETERS = [
   { key: "damper_strength", label: "damper strength" },
   { key: "velocity_curve_exponent", label: "velocity curve" },
   { key: "master_gain", label: "master gain" },
+  { key: "limiter_threshold", label: "limiter threshold" },
 ];
 
 const BRIDGE_PARAMETERS = [

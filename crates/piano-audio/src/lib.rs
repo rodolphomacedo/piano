@@ -22,7 +22,7 @@ mod engine;
 mod error;
 #[doc(hidden)]
 pub mod fuzzing;
-mod limiter;
+pub mod limiter;
 pub mod offline;
 #[path = "session_recovery.rs"]
 mod recovery;
@@ -256,6 +256,13 @@ impl AudioSession {
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_master_gain(&mut self, gain: f32) -> bool {
         self.send(Command::SetMasterGain { gain })
+    }
+
+    /// Queues where the output limiter starts compressing, as a fraction of
+    /// full scale. Same drop-not-block behaviour as
+    /// [`AudioSession::note_on`].
+    pub fn set_limiter_threshold(&mut self, threshold: f32) -> bool {
+        self.send(Command::SetLimiterThreshold { threshold })
     }
 
     /// Queues a new velocity-curve exponent, live (issue #79): every strike

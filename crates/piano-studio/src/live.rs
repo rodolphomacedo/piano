@@ -374,6 +374,7 @@ fn write_string_field(string: &mut ResolvedString, parameter: StringParameter, v
         StringParameter::HammerStiffness => string.hammer.stiffness = value as f32,
         StringParameter::HammerMass => string.hammer.mass = value as f32,
         StringParameter::HammerStringImpedance => string.hammer.string_impedance = value as f32,
+        StringParameter::HammerFeltBandwidth => string.hammer.felt_bandwidth = value as f32,
     }
 }
 
@@ -426,7 +427,8 @@ fn command_for_field(string: &ResolvedString, parameter: StringParameter) -> Stu
         StringParameter::HammerContactExponent
         | StringParameter::HammerStiffness
         | StringParameter::HammerMass
-        | StringParameter::HammerStringImpedance => StudioCommand::SetStringHammer {
+        | StringParameter::HammerStringImpedance
+        | StringParameter::HammerFeltBandwidth => StudioCommand::SetStringHammer {
             midi,
             string_index,
             hammer: string.hammer,
@@ -461,6 +463,7 @@ fn string_snapshot(string: &ResolvedString) -> StringSnapshot {
         hammer_stiffness: string.hammer.stiffness,
         hammer_mass: string.hammer.mass,
         hammer_string_impedance: string.hammer.string_impedance,
+        hammer_felt_bandwidth: string.hammer.felt_bandwidth,
     }
 }
 
@@ -482,6 +485,7 @@ fn string_override(string: &ResolvedString) -> StringOverride {
                 stiffness: Some(string.hammer.stiffness),
                 mass: Some(string.hammer.mass),
                 string_impedance: Some(string.hammer.string_impedance),
+                felt_bandwidth: Some(string.hammer.felt_bandwidth),
             },
         },
     }

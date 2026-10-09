@@ -235,6 +235,9 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
         }
         StudioCommand::SetRoomPredelay { milliseconds } => session.set_room_predelay(milliseconds),
         StudioCommand::SetMasterGain { gain } => session.set_master_gain(gain),
+        StudioCommand::SetLimiterThreshold { threshold } => {
+            session.set_limiter_threshold(threshold)
+        }
         StudioCommand::SetVelocityCurve { exponent } => session.set_velocity_curve(exponent),
         StudioCommand::SetLocalCouplingGain { gain } => session.set_local_coupling_gain(gain),
         StudioCommand::SetGlobalCouplingGain { gain } => session.set_global_coupling_gain(gain),

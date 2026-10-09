@@ -138,6 +138,12 @@ impl OfflineEngine {
         self.engine.apply(Command::SetRoomPredelay { milliseconds });
     }
 
+    /// Sets where the output limiter starts compressing.
+    pub fn set_limiter_threshold(&mut self, threshold: f32) {
+        self.engine
+            .apply(Command::SetLimiterThreshold { threshold });
+    }
+
     /// Sets how hard every damper grips its string.
     pub fn set_damper_strength(&mut self, strength: f32) {
         self.engine.set_damper_strength(strength);

@@ -13,7 +13,7 @@
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey};
 
 use super::{BRIDGE_BLOCK_SAMPLES, Engine};
-use crate::limiter::{OUTPUT_LIMITER_THRESHOLD, soft_limit};
+use crate::limiter::soft_limit;
 
 /// How far the keyboard's ends sit off centre: A0's strings reach the left
 /// channel `(1 + w) / (1 - w)` times as strongly as the right — about
@@ -105,8 +105,8 @@ impl Engine {
             let (room_left, room_right) = self.room.process(f32::midpoint(mixed_left, mixed_right));
             let heard_left = mixed_left + room_left;
             let heard_right = mixed_right + room_right;
-            *left = soft_limit(self.master_gain * heard_left, OUTPUT_LIMITER_THRESHOLD);
-            *right = soft_limit(self.master_gain * heard_right, OUTPUT_LIMITER_THRESHOLD);
+            *left = soft_limit(self.master_gain * heard_left, self.limiter_threshold);
+            *right = soft_limit(self.master_gain * heard_right, self.limiter_threshold);
         }
     }
 }

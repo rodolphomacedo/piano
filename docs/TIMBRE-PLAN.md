@@ -351,15 +351,15 @@ changes the timbre:
 | ~~`SOUNDBOARD_MIX_GAIN` = 0.5~~ | `engine.rs` | **now `soundboard_mix_gain`, exposed live + file (#78)** |
 | ~~`MODE_COUNT` = 8~~ | `soundboard.rs` | **now 28; still a compile-time constant (audio thread cannot reallocate), but every mode's fields and the mix gain are on the cascade (#78)** |
 | ~~`RELEASE_LOSS_MULTIPLIER` = 0.4~~ | `string.rs` | **now `damper_strength` (`1 − 0.4`), exposed live + file (#82)** |
-| `EXCITATION_POLES` = 2 | `string.rs` | attack rolloff order |
-| `EXCITATION_BANDWIDTH_FACTOR` = 15.0 | `hammer.rs` | attack brightness |
-| `MIN/MAX_EXCITATION_CUTOFF_HZ` | `hammer.rs` | attack brightness bounds |
-| `COEFFICIENT_GAIN` = 200.0 | `dispersion.rs` | dispersion strength |
-| `DETUNE_CENTS_BICHORD/TRICHORD` | `unison.rs` | unison spread defaults |
-| unison count per key | `unison.rs` | 1/2/3 strings, fixed boundaries |
-| `BASS/MID/TREBLE_DECAY_SECONDS` | `voicing.rs` | register decay anchors |
-| `BASS/TREBLE_DAMPING`, `..._INHARMONICITY` | `voicing.rs` | register anchors |
-| `OUTPUT_LIMITER_THRESHOLD` = 0.9 | `limiter.rs` | output ceiling |
+| ~~`EXCITATION_POLES` = 2~~ | `string.rs` | **gone; now `excitation::FELT_POLES`, a filter order (structure, not a voicing value) — the felt's brightness is `felt_bandwidth`** |
+| ~~`EXCITATION_BANDWIDTH_FACTOR` = 15.0~~ | `hammer.rs` | **now `HammerConfig::felt_bandwidth`, per string, live + file (#82)** |
+| `MIN/MAX_EXCITATION_CUTOFF_HZ` | `hammer.rs` | attack brightness bounds — safety bounds on a filter corner, not a voicing choice; `felt_bandwidth` moves the corner inside them |
+| ~~`COEFFICIENT_GAIN` = 200.0~~ | `dispersion.rs` | **gone since `1782757`: the cascade is fitted per string to `inharmonicity`, which is live** |
+| ~~`DETUNE_CENTS_BICHORD/TRICHORD`~~ | `unison.rs` | **reachable per string through `detune_cents`, which now resolves to this spread instead of `0` — the studio had been retuning every unison perfectly in tune at load (#82)** |
+| unison count per key | `unison.rs` | 1/2/3 strings, fixed boundaries — **still fixed**: the count decides how many strings the engine allocates per voice, so changing it means rebuilding the engine, not moving a slider (#82) |
+| ~~`BASS/MID/TREBLE_DECAY_SECONDS`~~ | `voicing.rs` | **reachable through the file's `registers` block (#81)** |
+| ~~`BASS/TREBLE_DAMPING`, `..._INHARMONICITY`~~ | `voicing.rs` | **reachable through the file's `registers` block (#81)** |
+| ~~`OUTPUT_LIMITER_THRESHOLD` = 0.9~~ | `limiter.rs` | **now `limiter_threshold`, live + file (#82)** |
 | ~~room size, reverberation times, predelay~~ | `room.rs` | **now `room_size`, `room_reverb_seconds`, `room_treble_reverb_seconds`, `room_predelay_milliseconds`, exposed live + file (#82)** |
 | **master gain** | — | **does not exist** |
 | **velocity curve** | — | **does not exist**; raw MIDI velocity feeds `pluck` linearly |

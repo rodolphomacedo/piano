@@ -22,6 +22,8 @@ pub struct HammerOverrides {
     pub mass: Option<f32>,
     /// See [`piano_core::hammer::HammerConfig::string_impedance`].
     pub string_impedance: Option<f32>,
+    /// See [`piano_core::hammer::HammerConfig::felt_bandwidth`].
+    pub felt_bandwidth: Option<f32>,
 }
 
 /// The parameters one cascade tier (`defaults`, a group's `overrides`, or
@@ -212,6 +214,10 @@ pub struct Instrument {
     /// Silence before the room answers, in milliseconds: longer sounds like a farther wall. `None` leaves the engine default. See
     /// [`piano_audio::AudioSession::set_room_predelay`].
     pub room_predelay_milliseconds: Option<f32>,
+    /// Where the output limiter starts compressing. `None` leaves the
+    /// engine default. See
+    /// [`piano_audio::AudioSession::set_limiter_threshold`].
+    pub limiter_threshold: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

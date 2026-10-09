@@ -50,6 +50,7 @@ use rtrb::Consumer;
 use crate::velocity_curve::{self, DEFAULT_VELOCITY_CURVE_EXPONENT};
 
 use crate::commands::Command;
+use crate::limiter::{DEFAULT_LIMITER_THRESHOLD, MAX_LIMITER_THRESHOLD, MIN_LIMITER_THRESHOLD};
 use crate::voicing;
 
 /// Every key on a standard 88-key piano gets its own permanent voice.
@@ -166,6 +167,10 @@ pub(crate) struct Engine {
     /// [`soft_limit`]. Starts at [`DEFAULT_MASTER_GAIN`] (unity); moved live
     /// by [`Command::SetMasterGain`], clamped to `[0, MAX_MASTER_GAIN]`.
     master_gain: f32,
+    /// Where [`soft_limit`] starts compressing. Starts at
+    /// [`DEFAULT_LIMITER_THRESHOLD`]; moved live by
+    /// [`Command::SetLimiterThreshold`].
+    pub(crate) limiter_threshold: f32,
     /// Exponent [`Engine::note_on`] warps a strike velocity through before
     /// plucking. Starts at [`DEFAULT_VELOCITY_CURVE_EXPONENT`]; moved live
     /// by [`Command::SetVelocityCurve`], clamped to
@@ -211,6 +216,7 @@ impl Engine {
             soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
             room: Room::new(sample_rate.hertz()),
             master_gain: DEFAULT_MASTER_GAIN,
+            limiter_threshold: DEFAULT_LIMITER_THRESHOLD,
             velocity_curve_exponent: DEFAULT_VELOCITY_CURVE_EXPONENT,
         }
     }
@@ -255,6 +261,10 @@ impl Engine {
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),
+            Command::SetLimiterThreshold { threshold } => {
+                self.limiter_threshold =
+                    math::clamp_or_low(threshold, MIN_LIMITER_THRESHOLD, MAX_LIMITER_THRESHOLD);
+            }
             Command::SetVelocityCurve { exponent } => self.set_velocity_curve_exponent(exponent),
             Command::SetLocalCouplingGain { gain } => self.set_local_coupling_gain(gain),
             Command::SetGlobalCouplingGain { gain } => self.set_global_coupling_gain(gain),

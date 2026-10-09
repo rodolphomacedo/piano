@@ -569,11 +569,14 @@ fn spare_differential(own: f32, group_mean: f32, sustain: f32, share: f32) -> f3
     own + differential_boost * (own - group_mean)
 }
 
-/// How many strings a key with `key_index` unison strings should detune
-/// string `string_index` by, in cents. `_ => 0.0` covers the single-string
+/// How many cents string `string_index` of a `count`-string unison is
+/// detuned by when the group is built. `_ => 0.0` covers the single-string
 /// case (nothing to detune against) and any out-of-table index, total
-/// rather than requiring the caller to pre-validate.
-fn detune_cents(count: usize, string_index: usize) -> f32 {
+/// rather than requiring the caller to pre-validate. Public so a caller
+/// that retunes strings absolutely ([`UnisonGroup::set_string_detune`])
+/// can start from the same spread instead of collapsing it to zero.
+#[must_use]
+pub fn detune_cents(count: usize, string_index: usize) -> f32 {
     match count {
         2 => DETUNE_CENTS_BICHORD
             .get(string_index)

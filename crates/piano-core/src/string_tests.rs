@@ -997,3 +997,35 @@ fn block_processing_adds_into_the_buffer() {
     string.process_block_add(&mut buffer);
     assert!(buffer.iter().any(|sample| (sample - 1.0).abs() > 1e-6));
 }
+
+/// Share of the attack's energy in its sample-to-sample differences: a
+/// first-difference is a +6 dB/octave tilt, so a brighter attack scores
+/// higher with no FFT needed.
+fn attack_brightness(felt_bandwidth: f32) -> f32 {
+    let mut string = string_at(220.0);
+    string.set_hammer(hammer::HammerConfig {
+        felt_bandwidth,
+        ..string.hammer
+    });
+    string.pluck(0.7);
+    let attack: Vec<f32> = (0..2_400).map(|_| string.process()).collect();
+    let energy: f32 = attack.iter().map(|s| s * s).sum();
+    let slope: f32 = attack
+        .iter()
+        .zip(attack.iter().skip(1))
+        .map(|(before, after)| (after - before).powi(2))
+        .sum();
+    slope / energy
+}
+
+/// The felt's brightness reaches the string: the same strike through
+/// lacquered felt is audibly brighter than through needled felt (#82).
+#[test]
+fn brighter_felt_brightens_the_attack() {
+    let woolly = attack_brightness(hammer::MIN_FELT_BANDWIDTH);
+    let lacquered = attack_brightness(hammer::MAX_FELT_BANDWIDTH);
+    assert!(
+        lacquered > woolly * 1.2,
+        "woolly {woolly}, lacquered {lacquered}"
+    );
+}

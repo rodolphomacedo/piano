@@ -88,7 +88,7 @@ core field fails to compile there until it is exposed or explained (#84).
 | `damping` | `PluckedString::set_damping` |
 | `sustain` | `PluckedString::set_sustain` |
 | `inharmonicity` | `PluckedString::set_inharmonicity` |
-| `detune_cents` | `UnisonGroup::set_string_detune` |
+| `detune_cents` | `UnisonGroup::set_string_detune`; resolves by default to the engine's own unison spread (`piano_core::unison::detune_cents`), not `0`, since #82 |
 | `seed` | `PluckedString::set_seed` (next strike) |
 | `loop_zero_mix` | `PluckedString::set_loop_zero_mix`: the loss filter's zero, solved per key with damping and sustain |
 | `strike_position` | `PluckedString::set_strike_position` (next strike) |
@@ -97,6 +97,7 @@ core field fails to compile there until it is exposed or explained (#84).
 | `hammer.stiffness` | same |
 | `hammer.mass` | same |
 | `hammer.string_impedance` | same; floor `1e3` since #95 |
+| `hammer.felt_bandwidth` | same; the felt's brightness, `3`–`60`, default `15` (was `EXCITATION_BANDWIDTH_FACTOR`), since #82 |
 
 **Per-instrument** (a single value shared by the whole piano, not per
 string — because the physical thing they model is a single wooden board or
@@ -111,6 +112,7 @@ a single bridge, not a string):
 | `room_size` | Yes — `piano_core::room::DEFAULT_ROOM_SIZE` (1.0, range 0.5–2.0): scales the spacing of the room's reflections |
 | `room_reverb_seconds` | Yes — `piano_core::room::DEFAULT_ROOM_REVERB_SECONDS` (1.8 s, range 0.1–8): reverberation time in the bass |
 | `room_treble_reverb_seconds` | Yes — `piano_core::room::DEFAULT_ROOM_TREBLE_REVERB_SECONDS` (0.5 s, range 0.1–8): reverberation time at Nyquist |
+| `limiter_threshold` | Yes — `piano_audio::limiter::DEFAULT_LIMITER_THRESHOLD` (0.9, range 0.3–0.99): where the output limiter starts compressing |
 | `room_predelay_milliseconds` | Yes — `piano_core::room::DEFAULT_ROOM_PREDELAY_MILLISECONDS` (12 ms, range 0–100): silence before the room answers |
 
 **Groups**: a name plus a list of `{midi, string_index}` pairs plus a set of
@@ -137,7 +139,7 @@ strings[]  (explicit, one entry per string)
     "damping": 0.5,
     "sustain": 0.996,
     "inharmonicity": 0.0004,
-    "hammer": { "contact_exponent": 2.5, "stiffness": 1.7e9, "mass": 1.0, "string_impedance": 1.0e13 }
+    "hammer": { "contact_exponent": 2.5, "stiffness": 1.7e9, "mass": 1.0, "string_impedance": 1.0e13, "felt_bandwidth": 15.0 }
   },
   "registers": {
     "bass":   { "anchor_midi": 21,  "decay_seconds": 35.0, "damping": 0.6, "inharmonicity": 0.0003 },
@@ -160,6 +162,7 @@ strings[]  (explicit, one entry per string)
     ],
     "soundboard_mix_gain": 0.5,
     "master_gain": 1.0,
+    "limiter_threshold": 0.9,
     "velocity_curve_exponent": 1.0,
     "damper_strength": 0.6,
     "room_size": 1.0,

@@ -39,7 +39,7 @@
 //! [`simulate_contact`] below still solves the *uncoupled* problem this
 //! module used before #57 — the reference curve [`couple_contact_step`]'s
 //! force is normalised against, and the only input `excitation_cutoff_hz`'s
-//! bandwidth calibration reads. That is why [`EXCITATION_BANDWIDTH_FACTOR`]'s
+//! bandwidth calibration reads. That is why [`DEFAULT_FELT_BANDWIDTH`]'s
 //! own doc comment still says this model omits the back-reaction: it is
 //! correct for that constant specifically, even though the force the string
 //! actually receives during a real strike no longer is.
@@ -192,6 +192,12 @@ pub struct HammerConfig {
     /// [`MIN_STRING_IMPEDANCE`]'s doc comment for how far down its range
     /// lengthens the contact and softens the attack.
     pub string_impedance: f32,
+    /// How many times above `1/contact_duration` the felt's lowpass corner
+    /// sits — the felt's brightness independent of how long it touches the
+    /// string. A voicer needling a hammer lowers it; lacquering raises it.
+    /// See [`DEFAULT_FELT_BANDWIDTH`] for the calibration and
+    /// [`excitation_cutoff_hz`] for where it acts.
+    pub felt_bandwidth: f32,
 }
 
 /// [`HammerConfig`] matching this module's original, single shared
@@ -202,6 +208,7 @@ pub const DEFAULT_HAMMER: HammerConfig = HammerConfig {
     stiffness: CONTACT_STIFFNESS,
     mass: HAMMER_MASS,
     string_impedance: MAX_STRING_IMPEDANCE,
+    felt_bandwidth: DEFAULT_FELT_BANDWIDTH,
 };
 
 /// Hammer felt's Hertzian contact exponent, `F = K·x^p`, at [`DEFAULT_HAMMER`].
@@ -246,6 +253,11 @@ fn sanitize_hammer(hammer: HammerConfig) -> HammerConfig {
             hammer.string_impedance,
             MIN_STRING_IMPEDANCE,
             MAX_STRING_IMPEDANCE,
+        ),
+        felt_bandwidth: math::clamp_or_low(
+            hammer.felt_bandwidth,
+            MIN_FELT_BANDWIDTH,
+            MAX_FELT_BANDWIDTH,
         ),
     }
 }
@@ -300,7 +312,7 @@ fn usable_sample_rate(sample_rate_hz: f32) -> f32 {
 }
 
 /// How many times above `1/contact_duration` the excitation's lowpass corner
-/// sits.
+/// sits at [`DEFAULT_HAMMER`] — [`HammerConfig::felt_bandwidth`]'s default.
 ///
 /// Calibrated by measurement, the same way [`CONTACT_STIFFNESS`] was, and
 /// for the same reason it cannot be derived here: this model deliberately
@@ -313,7 +325,16 @@ fn usable_sample_rate(sample_rate_hz: f32) -> f32 {
 /// which is a plausible spread for felt and, unlike the flat excitation it
 /// replaces, is actually audible as brightness rather than only documented
 /// as such.
-const EXCITATION_BANDWIDTH_FACTOR: f32 = 15.0;
+pub const DEFAULT_FELT_BANDWIDTH: f32 = 15.0;
+
+/// Darkest [`HammerConfig::felt_bandwidth`]: the force pulse's own corner
+/// times three, a heavily needled, woolly hammer.
+pub const MIN_FELT_BANDWIDTH: f32 = 3.0;
+
+/// Brightest [`HammerConfig::felt_bandwidth`]. Past this nearly every
+/// strike already sits on [`MAX_EXCITATION_CUTOFF_HZ`], so a higher value
+/// would change nothing audible.
+pub const MAX_FELT_BANDWIDTH: f32 = 60.0;
 
 /// Darkest excitation this model produces, in hertz. Below roughly this the
 /// corner sits under the fundamental of much of the keyboard and the strike
@@ -329,7 +350,8 @@ const MIN_EXCITATION_CUTOFF_HZ: f32 = 500.0;
 const MAX_EXCITATION_CUTOFF_HZ: f32 = 8_000.0;
 
 /// The lowpass corner, in hertz, for an excitation shaped by a contact
-/// lasting `contact_samples` at `sample_rate_hz` — the second half of the
+/// lasting `contact_samples` at `sample_rate_hz` through felt of
+/// `felt_bandwidth` ([`HammerConfig::felt_bandwidth`]) — the second half of the
 /// hammer model, and the half that makes strike velocity audible as
 /// brightness.
 ///
@@ -362,16 +384,22 @@ const MAX_EXCITATION_CUTOFF_HZ: f32 = 8_000.0;
 /// mean.
 ///
 /// Total: any `contact_samples` (including `0` and `usize::MAX`) and any
-/// `sample_rate_hz` (including `NaN`, `±∞` and zero) yield a finite result
-/// in `[MIN_EXCITATION_CUTOFF_HZ, MAX_EXCITATION_CUTOFF_HZ]`.
+/// `sample_rate_hz` or `felt_bandwidth` (including `NaN`, `±∞` and zero)
+/// yield a finite result in `[MIN_EXCITATION_CUTOFF_HZ,
+/// MAX_EXCITATION_CUTOFF_HZ]`.
 #[must_use]
-pub fn excitation_cutoff_hz(contact_samples: usize, sample_rate_hz: f32) -> f32 {
+pub fn excitation_cutoff_hz(
+    contact_samples: usize,
+    sample_rate_hz: f32,
+    felt_bandwidth: f32,
+) -> f32 {
     // A zero-length contact has no duration to derive a corner from; one
     // sample is the shortest that does, and lands on the bright bound anyway.
     let samples = contact_samples.max(1) as f32;
     let seconds = samples / usable_sample_rate(sample_rate_hz);
+    let bandwidth = math::clamp_or_low(felt_bandwidth, MIN_FELT_BANDWIDTH, MAX_FELT_BANDWIDTH);
     math::clamp_or_low(
-        EXCITATION_BANDWIDTH_FACTOR / seconds,
+        bandwidth / seconds,
         MIN_EXCITATION_CUTOFF_HZ,
         MAX_EXCITATION_CUTOFF_HZ,
     )
@@ -683,7 +711,7 @@ mod tests {
         // force envelope alone never did (see `excitation_cutoff_hz`).
         let cutoff = |velocity: f32| {
             let (_, active) = simulate_contact(velocity, 48_000.0, DEFAULT_HAMMER);
-            excitation_cutoff_hz(active, 48_000.0)
+            excitation_cutoff_hz(active, 48_000.0, DEFAULT_FELT_BANDWIDTH)
         };
         let soft = cutoff(0.1);
         let hard = cutoff(1.0);
@@ -710,7 +738,7 @@ mod tests {
                 ..DEFAULT_HAMMER
             };
             let (_, active) = simulate_contact(0.7, 48_000.0, hammer);
-            excitation_cutoff_hz(active, 48_000.0)
+            excitation_cutoff_hz(active, 48_000.0, DEFAULT_FELT_BANDWIDTH)
         };
         assert!(cutoff(MAX_STIFFNESS) > cutoff(MIN_STIFFNESS));
     }
@@ -875,6 +903,7 @@ mod tests {
                 stiffness,
                 mass,
                 string_impedance,
+                felt_bandwidth: DEFAULT_FELT_BANDWIDTH,
             };
             let (next_state, force) = couple_contact_step(state, hammer, v_incoming, sample_rate_hz);
             prop_assert!(next_state.compression.is_finite());
@@ -886,13 +915,13 @@ mod tests {
 
     #[test]
     fn the_default_hammer_lands_between_a_dull_thud_and_a_click() {
-        // Guards the calibration of `EXCITATION_BANDWIDTH_FACTOR`: below
+        // Guards the calibration of `DEFAULT_FELT_BANDWIDTH`: below
         // roughly 1 kHz the attack disappears into the note, and above
         // roughly 6 kHz it starts measuring as the broadband click this
         // whole mechanism exists to remove.
         for velocity in [0.0, 0.5, 1.0] {
             let (_, active) = simulate_contact(velocity, 48_000.0, DEFAULT_HAMMER);
-            let cutoff = excitation_cutoff_hz(active, 48_000.0);
+            let cutoff = excitation_cutoff_hz(active, 48_000.0, DEFAULT_FELT_BANDWIDTH);
             assert!(
                 (1_000.0..6_000.0).contains(&cutoff),
                 "velocity {velocity}: a {cutoff} Hz corner is not felt"
@@ -901,8 +930,19 @@ mod tests {
     }
 
     #[test]
+    fn brighter_felt_moves_the_corner_up_for_the_same_contact() {
+        let (_, active) = simulate_contact(0.5, 48_000.0, DEFAULT_HAMMER);
+        let woolly = excitation_cutoff_hz(active, 48_000.0, MIN_FELT_BANDWIDTH);
+        let lacquered = excitation_cutoff_hz(active, 48_000.0, MAX_FELT_BANDWIDTH);
+        assert!(
+            lacquered > woolly * 2.0,
+            "woolly {woolly} Hz, lacquered {lacquered} Hz"
+        );
+    }
+
+    #[test]
     fn a_contact_the_simulation_could_not_measure_still_yields_a_usable_corner() {
-        let cutoff = excitation_cutoff_hz(0, 48_000.0);
+        let cutoff = excitation_cutoff_hz(0, 48_000.0, DEFAULT_FELT_BANDWIDTH);
         assert!(cutoff.is_finite());
         assert!((MIN_EXCITATION_CUTOFF_HZ..=MAX_EXCITATION_CUTOFF_HZ).contains(&cutoff));
     }
@@ -912,8 +952,8 @@ mod tests {
         // `contact_samples` is a count, not a duration: reading it at the
         // wrong rate mistunes the corner by the ratio between the two, which
         // is why both functions share `usable_sample_rate`.
-        let at_48k = excitation_cutoff_hz(200, 48_000.0);
-        let at_96k = excitation_cutoff_hz(400, 96_000.0);
+        let at_48k = excitation_cutoff_hz(200, 48_000.0, DEFAULT_FELT_BANDWIDTH);
+        let at_96k = excitation_cutoff_hz(400, 96_000.0, DEFAULT_FELT_BANDWIDTH);
         assert!(
             (at_48k - at_96k).abs() < 1.0,
             "the same 4.2 ms contact gave {at_48k} Hz at 48 kHz and {at_96k} Hz at 96 kHz"
@@ -929,8 +969,9 @@ mod tests {
         fn excitation_cutoff_is_total(
             contact_samples in proptest::num::usize::ANY,
             sample_rate_hz in proptest::num::f32::ANY,
+            felt_bandwidth in proptest::num::f32::ANY,
         ) {
-            let cutoff = excitation_cutoff_hz(contact_samples, sample_rate_hz);
+            let cutoff = excitation_cutoff_hz(contact_samples, sample_rate_hz, felt_bandwidth);
             prop_assert!(cutoff.is_finite());
             prop_assert!(
                 (MIN_EXCITATION_CUTOFF_HZ..=MAX_EXCITATION_CUTOFF_HZ).contains(&cutoff),

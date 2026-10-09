@@ -127,7 +127,10 @@ mod tests {
         );
         assert_eq!(a4_string0.damping, expected.damping);
         assert_eq!(a4_string0.hammer, expected.hammer);
-        assert_eq!(a4_string0.detune_cents, 0.0);
+        assert_eq!(
+            a4_string0.detune_cents,
+            piano_core::unison::detune_cents(3, 0)
+        );
     }
 
     #[test]
@@ -151,7 +154,7 @@ mod tests {
         // A sibling string on the same key, not named in `strings`, still
         // falls through to the register baseline untouched.
         let sibling = find(&piano, 69, 0);
-        assert_eq!(sibling.detune_cents, 0.0);
+        assert_eq!(sibling.detune_cents, piano_core::unison::detune_cents(3, 0));
         assert_eq!(sibling.seed, 0);
     }
 

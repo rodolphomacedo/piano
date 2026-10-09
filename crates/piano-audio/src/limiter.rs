@@ -7,7 +7,7 @@
 
 use piano_core::math;
 
-/// Magnitude below which [`soft_limit`] leaves a sample untouched.
+/// Magnitude below which [`soft_limit`] leaves a sample untouched, by default.
 ///
 /// Chosen for headroom, not modelled on anything physical: a single freshly
 /// struck voice never gets close to it (M4's hammer-excitation fix already
@@ -15,7 +15,15 @@ use piano_core::math;
 /// bit-identical to having no limiter at all. It only starts doing anything
 /// once enough simultaneously ringing voices — a chord, the sustain pedal's
 /// sympathetic resonance, `PERF-008`'s bridge bus — sum past it.
-pub(crate) const OUTPUT_LIMITER_THRESHOLD: f32 = 0.9;
+pub const DEFAULT_LIMITER_THRESHOLD: f32 = 0.9;
+
+/// Lowest threshold the live setting accepts: below this the limiter
+/// compresses ordinary single notes, not only the excess of a full chord.
+pub const MIN_LIMITER_THRESHOLD: f32 = 0.3;
+
+/// Highest threshold the live setting accepts. `1.0` would leave no
+/// headroom for the knee and turn the limiter into a hard clip.
+pub const MAX_LIMITER_THRESHOLD: f32 = 0.99;
 
 /// Softly caps `sample`'s magnitude to `1.0`, transparent below `threshold`.
 ///
@@ -57,29 +65,32 @@ mod tests {
 
     #[test]
     fn leaves_a_signal_below_threshold_untouched() {
-        assert_eq!(soft_limit(0.5, OUTPUT_LIMITER_THRESHOLD), 0.5);
-        assert_eq!(soft_limit(-0.5, OUTPUT_LIMITER_THRESHOLD), -0.5);
+        assert_eq!(soft_limit(0.5, DEFAULT_LIMITER_THRESHOLD), 0.5);
+        assert_eq!(soft_limit(-0.5, DEFAULT_LIMITER_THRESHOLD), -0.5);
     }
 
     #[test]
     fn compresses_a_signal_above_threshold_but_keeps_its_sign() {
-        let limited = soft_limit(1.05, OUTPUT_LIMITER_THRESHOLD);
-        assert!(limited > OUTPUT_LIMITER_THRESHOLD && limited < 1.0);
-        let limited_negative = soft_limit(-1.05, OUTPUT_LIMITER_THRESHOLD);
+        let limited = soft_limit(1.05, DEFAULT_LIMITER_THRESHOLD);
+        assert!(limited > DEFAULT_LIMITER_THRESHOLD && limited < 1.0);
+        let limited_negative = soft_limit(-1.05, DEFAULT_LIMITER_THRESHOLD);
         assert!((limited_negative + limited).abs() < 1e-6);
     }
 
     #[test]
     fn never_exceeds_full_scale_no_matter_how_loud_the_input() {
-        assert!(soft_limit(1_000.0, OUTPUT_LIMITER_THRESHOLD) <= 1.0);
-        assert!(soft_limit(f32::MAX, OUTPUT_LIMITER_THRESHOLD) <= 1.0);
+        assert!(soft_limit(1_000.0, DEFAULT_LIMITER_THRESHOLD) <= 1.0);
+        assert!(soft_limit(f32::MAX, DEFAULT_LIMITER_THRESHOLD) <= 1.0);
     }
 
     #[test]
     fn non_finite_input_maps_to_silence() {
-        assert_eq!(soft_limit(f32::NAN, OUTPUT_LIMITER_THRESHOLD), 0.0);
-        assert_eq!(soft_limit(f32::INFINITY, OUTPUT_LIMITER_THRESHOLD), 0.0);
-        assert_eq!(soft_limit(f32::NEG_INFINITY, OUTPUT_LIMITER_THRESHOLD), 0.0);
+        assert_eq!(soft_limit(f32::NAN, DEFAULT_LIMITER_THRESHOLD), 0.0);
+        assert_eq!(soft_limit(f32::INFINITY, DEFAULT_LIMITER_THRESHOLD), 0.0);
+        assert_eq!(
+            soft_limit(f32::NEG_INFINITY, DEFAULT_LIMITER_THRESHOLD),
+            0.0
+        );
     }
 
     /// Not a full property test (this crate has no `proptest` dependency

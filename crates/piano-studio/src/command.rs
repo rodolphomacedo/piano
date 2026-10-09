@@ -188,6 +188,11 @@ pub enum StudioCommand {
         /// The room's new wet level; `0` is a dry instrument.
         mix: f32,
     },
+    /// See [`piano_audio::AudioSession::set_limiter_threshold`].
+    SetLimiterThreshold {
+        /// Where the limiter starts compressing, as a fraction of full scale.
+        threshold: f32,
+    },
     /// See [`piano_audio::AudioSession::set_master_gain`].
     SetMasterGain {
         /// The new master output gain, applied just before the limiter.

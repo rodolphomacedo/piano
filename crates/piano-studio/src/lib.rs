@@ -88,7 +88,6 @@ pub fn save(path: &Path, file: &PianoFile) -> Result<(), StudioError> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
 
-    use piano_core::hammer::DEFAULT_HAMMER;
     use piano_core::string::{DEFAULT_DAMPING, DEFAULT_SUSTAIN};
     use piano_params::Tuning;
 
@@ -122,7 +121,7 @@ mod tests {
             sample_rate(),
         );
         assert_eq!(a4_string0.damping, expected.damping);
-        assert_eq!(a4_string0.hammer, DEFAULT_HAMMER);
+        assert_eq!(a4_string0.hammer, expected.hammer);
         assert_eq!(a4_string0.detune_cents, 0.0);
     }
 
@@ -236,10 +235,13 @@ mod tests {
         // `sustain`/`damping` at A4 come entirely from the register tier
         // in this test, so this just proves the two default constants
         // compile in — the direct check below is `hammer`, which nothing
-        // here overrides.
+        // here overrides: it falls back to A4's own register hammer.
         let _ = DEFAULT_SUSTAIN;
         let _ = DEFAULT_DAMPING;
-        assert_eq!(find(&piano, 69, 0).hammer, DEFAULT_HAMMER);
+        assert_eq!(
+            find(&piano, 69, 0).hammer,
+            piano_core::excitation::hammer_for_frequency(440.0)
+        );
     }
 
     #[test]

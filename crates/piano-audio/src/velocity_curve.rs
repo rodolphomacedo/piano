@@ -10,31 +10,25 @@ use piano_core::math;
 /// Default exponent [`warp_velocity`] applies: `pluck_velocity =
 /// velocity ^ this`.
 ///
-/// Measured, not guessed — `engine_tests.rs`'s
-/// `a_linear_velocity_map_is_far_from_even_in_decibels` records what A4's
-/// early-window RMS does across the velocity range with no curve at all
-/// (`exponent = 1.0`):
+/// `1.0`, the identity: a real action moves the hammer roughly in
+/// proportion to the key, and the strike now turns hammer velocity into
+/// sound the way a hammer does — low-frequency drive in proportion to its
+/// momentum, brightness on top from the shorter contact (see
+/// `piano_core::string::low_frequency_weight`). Measured at A4 with this
+/// exponent:
 ///
 /// | velocity | 0.10 | 0.25 | 0.40 | 0.55 | 0.70 | 0.85 | 1.00 |
 /// |---|---|---|---|---|---|---|---|
-/// | dB | −34.0 | −22.8 | −17.4 | −16.0 | −15.8 | −14.2 | −11.7 |
+/// | dB | −39.0 | −28.1 | −21.2 | −16.3 | −12.4 | −9.2 | −6.9 |
 ///
-/// Two-thirds of the available range (0.10 → 0.40) already covers 16.6 of
-/// the total 22.3 dB span; the top half (0.55 → 1.00) covers under 4.3 dB —
-/// exactly the reported "soft playing collapses into a narrow sliver near
-/// silence, and everything past mezzo-forte sounds the same". This is a
-/// felt hammer's own doing (`piano_core::hammer`'s stiffening Hertzian
-/// contact law is convex in compression), not a bug in the strike, so the
-/// compensating curve has to be convex too — a *concave* (`exponent < 1`)
-/// curve would only make the collapse worse.
-///
-/// A sweep of candidate exponents against that same table (least-squares
-/// fit of the resulting dB curve to a straight line) put `1.8` at the
-/// lowest residual (`2.16` dB) against `1.0`'s own `2.92`, `2.0`'s `2.23`
-/// and `2.5`'s `2.61` — the flattest achievable spread of loudness per unit
-/// of input velocity a single exponent gets, per the "Work" section of
-/// issue #79 ("an exponent, or a small breakpoint table").
-pub(crate) const DEFAULT_VELOCITY_CURVE_EXPONENT: f32 = 1.8;
+/// A 32 dB span with every step louder, inside the 30-40 dB a piano's
+/// fundamental covers from *pianissimo* to *fortissimo*. Issue #79's `1.8`
+/// compensated for the excitation it replaced, which normalised every
+/// strike's slope to unit peak and so gave a harder, shorter strike *less*
+/// low-frequency drive: A4 put 16.6 of its 22.3 dB in the bottom third of
+/// the range, and A6 stopped getting louder at all past *mezzo-forte*. Kept
+/// adjustable for a player whose controller's velocity response differs.
+pub const DEFAULT_VELOCITY_CURVE_EXPONENT: f32 = 1.0;
 
 /// Floor `Engine::set_velocity_curve_exponent` clamps into. At or below `0`
 /// `velocity.powf(exponent)` degenerates (a constant `1.0`, or a division
@@ -98,7 +92,7 @@ mod tests {
     #[test]
     fn an_exponent_above_one_pulls_every_interior_velocity_down() {
         for velocity in [0.1_f32, 0.25, 0.5, 0.75, 0.9] {
-            let warped = warp_velocity(velocity, DEFAULT_VELOCITY_CURVE_EXPONENT);
+            let warped = warp_velocity(velocity, 1.8);
             assert!(
                 warped < velocity,
                 "velocity {velocity} warped to {warped}, expected below the linear map"

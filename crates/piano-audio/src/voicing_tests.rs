@@ -65,15 +65,16 @@ fn every_key_gets_a_finite_in_range_voicing() {
 /// law), rather than restating the anchors, which `docs/PHYSICS.md`
 /// records and `docs/TIMBRE-PLAN.md` explains.
 ///
-/// C8's band is lower than the others because its 8th partial sits at
-/// 33 kHz: [`solved_partials`] fits its 5.2nd instead, so the ratio is
-/// measured against the same partial the solve actually targeted.
+/// C8's 8th partial sits at 33 kHz, so [`solved_partials`] fits its 5.2nd
+/// instead and the ratio is measured against that one. At 21.6 kHz it is
+/// [`HIGH_FREQUENCY_LOSS_SECONDS`]' ceiling, not the anchors, that sets its
+/// target (about 0.08 s), so C8's band sits higher than the others.
 #[test]
 fn upper_partials_decay_several_times_faster_than_the_fundamental() {
     for (name, midi, brightness_partial, band) in [
         ("A0", LOWEST_PIANO_KEY, BRIGHTNESS_PARTIAL, 4.0..9.0),
         ("A4", CONCERT_A_KEY, BRIGHTNESS_PARTIAL, 4.0..9.0),
-        ("C8", HIGHEST_PIANO_KEY, 5.16, 2.0..6.0),
+        ("C8", HIGHEST_PIANO_KEY, 5.16, 6.0..25.0),
     ] {
         let fundamental = achieved_decay_seconds(midi, 1.0);
         let bright = achieved_decay_seconds(midi, brightness_partial);
@@ -209,6 +210,7 @@ fn the_zero_mix_axis_inverts_its_own_loss_shape() {
 #[test]
 fn the_target_curve_falls_monotonically_with_partial_index() {
     let targets = DecayTargets {
+        fundamental_hz: 27.5,
         fundamental: BASS_DECAY_SECONDS,
         mid_partial: BASS_MID_PARTIAL_DECAY_SECONDS,
         brightness: BASS_BRIGHTNESS_DECAY_SECONDS,
@@ -508,7 +510,7 @@ proptest! {
     ) {
         let losses = solve_loop_losses(
             frequency,
-            DecayTargets { fundamental, mid_partial, brightness },
+            DecayTargets { fundamental_hz: frequency, fundamental, mid_partial, brightness },
             sample_rate(),
         );
         prop_assert!(losses.pole.is_finite() && (0.0..=1.0).contains(&losses.pole));

@@ -38,7 +38,9 @@
 //! carry the whole loss has to drag the filter's corner down far enough to
 //! take the harmonics with it. See [`solve_loop_losses`].
 
+use piano_core::excitation::hammer_for_frequency;
 use piano_core::filter::LoopFilter;
+use piano_core::hammer::HammerConfig;
 use piano_core::string::{SILENCE_THRESHOLD, StringConfig};
 use piano_core::{SampleRate, math};
 use piano_params::{CONCERT_A_KEY, HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
@@ -98,6 +100,17 @@ const MID_BRIGHTNESS_DECAY_SECONDS: f32 = 1.5;
 /// Target ring-out time for [`BRIGHTNESS_PARTIAL`] at C8 — see
 /// [`BASS_MID_PARTIAL_DECAY_SECONDS`].
 const TREBLE_BRIGHTNESS_DECAY_SECONDS: f32 = 0.3;
+
+/// The frequency-squared string loss coefficient `b₃`, in seconds, of
+/// A. Chaigne & A. Askenfelt's damping model `σ(ω) = b₁ + b₃·ω²` (JASA 95,
+/// 1994, Table I, their C4 string). Air viscosity and the wire's internal
+/// friction both grow with absolute frequency, not with partial number, so
+/// this caps how long *any* partial may ring, whatever the key: a 12 kHz
+/// partial is gone in a quarter of a second whether it is A4's 27th or
+/// C8's 3rd. Without the cap the treble's targets, anchored by partial
+/// number, let C8's partials ring at 8-20 kHz for most of a second — measured
+/// within 3 dB of the fundamental at the attack — which is heard as glass.
+const HIGH_FREQUENCY_LOSS_SECONDS: f32 = 6.25e-9;
 
 /// Hammer strike position at A0, as a fraction of the loop length. The
 /// classic ~1/8, which puts the strike-position comb's notch on the 8th
@@ -202,6 +215,9 @@ pub struct KeyVoicing {
     /// [`BASS_STRIKE_POSITION`] and [`TREBLE_STRIKE_POSITION`] across the
     /// keyboard, so the comb notch tracks the register (issue #32).
     pub strike_position: f32,
+    /// See [`StringConfig::hammer`]: lighter and harder toward the treble,
+    /// from [`piano_core::excitation::hammer_for_frequency`] (issue #58).
+    pub hammer: HammerConfig,
 }
 
 /// The three ring-out times one key's loop is solved against — its
@@ -209,6 +225,7 @@ pub struct KeyVoicing {
 /// seconds.
 #[derive(Debug, Clone, Copy)]
 struct DecayTargets {
+    fundamental_hz: f32,
     fundamental: f32,
     mid_partial: f32,
     brightness: f32,
@@ -221,6 +238,14 @@ impl DecayTargets {
     /// line in, so anchors that sit on that law stay on it between
     /// themselves instead of bulging away from it.
     fn seconds_for_partial(self, partial: f32) -> f32 {
+        self.anchored_seconds(partial)
+            .min(high_frequency_ceiling_seconds(
+                partial * self.fundamental_hz,
+            ))
+    }
+
+    /// The target the three register anchors alone give `partial`.
+    fn anchored_seconds(self, partial: f32) -> f32 {
         let (low, high) = if partial <= MID_PARTIAL {
             ((1.0, self.fundamental), (MID_PARTIAL, self.mid_partial))
         } else {
@@ -237,6 +262,16 @@ impl DecayTargets {
             math::ln(high.1),
         ))
     }
+}
+
+/// How long a partial at `frequency_hz` may ring before
+/// [`HIGH_FREQUENCY_LOSS_SECONDS`]' loss alone takes it to
+/// [`SILENCE_THRESHOLD`]: `ln(1/threshold)/(b₃·ω²)`. Infinite at DC, which
+/// `min` then ignores.
+fn high_frequency_ceiling_seconds(frequency_hz: f32) -> f32 {
+    let omega = core::f32::consts::TAU * frequency_hz;
+    -math::ln(SILENCE_THRESHOLD)
+        / (HIGH_FREQUENCY_LOSS_SECONDS * omega * omega).max(f32::MIN_POSITIVE)
 }
 
 /// A key's solved per-round-trip losses: the loop filter's two
@@ -406,6 +441,7 @@ pub fn voicing_for_key_with_registers(
             treble_hz,
             TREBLE_STRIKE_POSITION,
         ),
+        hammer: hammer_for_frequency(frequency),
     }
 }
 
@@ -458,6 +494,7 @@ fn decay_targets_for(
     };
     let (fundamental_bass, fundamental_mid, fundamental_treble) = fundamental_targets;
     DecayTargets {
+        fundamental_hz: frequency,
         fundamental: across_registers(fundamental_bass, fundamental_mid, fundamental_treble),
         mid_partial: across_registers(
             BASS_MID_PARTIAL_DECAY_SECONDS,
@@ -709,6 +746,7 @@ pub fn config_for_key(key: PianoKey, tuning: Tuning, sample_rate: SampleRate) ->
     config.inharmonicity = voicing.inharmonicity;
     config.loop_zero_mix = voicing.zero_mix;
     config.strike_position = voicing.strike_position;
+    config.hammer = voicing.hammer;
     config
 }
 

@@ -581,3 +581,32 @@ fn the_solved_strings_keep_the_wound_to_plain_break() {
         );
     }
 }
+
+/// `B` steps up where the wire changes from wound to plain, by more than
+/// any neighbouring pair of keys changes on either side, while A0 and A4
+/// keep the smooth curve's sourced values (issue #88).
+#[test]
+fn inharmonicity_steps_up_at_the_wound_to_plain_break() {
+    let tuning = Tuning::default();
+    let b = |midi: u8| voicing_for_key(key(midi), tuning, sample_rate()).inharmonicity;
+    let last_wound = scale::LAST_WOUND_ANCHOR.midi;
+    let across = b(last_wound + 1) / b(last_wound);
+    assert!(across > 1.3, "the break only moved B by {across}");
+    for midi in [last_wound - 2, last_wound + 2] {
+        let step = b(midi + 1) / b(midi);
+        assert!(
+            (step - 1.0).abs() < across - 1.0,
+            "MIDI {midi} steps by {step}, the break by {across}"
+        );
+    }
+}
+
+proptest! {
+    /// The scale's `B` is finite and inside the dispersion cascade's range
+    /// for every input, `NaN` and infinities included.
+    #[test]
+    fn the_scale_inharmonicity_is_total(frequency in proptest::num::f32::ANY) {
+        let b = inharmonicity::scale_inharmonicity(frequency, Tuning::default());
+        prop_assert!((0.0..=piano_core::dispersion::MAX_INHARMONICITY).contains(&b), "{b}");
+    }
+}

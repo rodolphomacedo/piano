@@ -105,6 +105,11 @@ impl OfflineEngine {
         self.engine.set_sostenuto_pedal(down);
     }
 
+    /// Sets the bass's phantom-partial gain; `0` turns phantoms off.
+    pub fn set_phantom_gain(&mut self, gain: f32) {
+        self.engine.set_phantom_gain(gain);
+    }
+
     /// Sets the keybed thump's level; `0` silences the action noise.
     pub fn set_action_noise_gain(&mut self, gain: f32) {
         self.engine.set_action_noise_gain(gain);

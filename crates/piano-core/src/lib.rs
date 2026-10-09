@@ -31,6 +31,7 @@ pub mod filter;
 pub mod hammer;
 pub mod math;
 pub mod noise;
+pub mod phantom;
 pub mod soundboard;
 pub mod string;
 pub mod unison;

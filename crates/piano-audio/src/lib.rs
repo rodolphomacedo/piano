@@ -139,6 +139,13 @@ impl AudioSession {
             .is_ok()
     }
 
+    /// Queues the bass's phantom-partial gain (issue #54); `0` turns
+    /// phantoms off. Same drop-not-block behaviour as
+    /// [`AudioSession::note_on`].
+    pub fn set_phantom_gain(&mut self, gain: f32) -> bool {
+        self.producer.push(Command::SetPhantomGain { gain }).is_ok()
+    }
+
     /// Queues the soft (una corda) pedal's state (issue #59). Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_soft_pedal(&mut self, down: bool) -> bool {

@@ -76,6 +76,16 @@ pub const SILENCE_THRESHOLD: f32 = 1e-4;
 /// real damped piano note shows.
 const RELEASE_LOSS_MULTIPLIER: f32 = 0.4;
 
+/// How a damper's pressure becomes loss: the per-round-trip loss in nepers
+/// is `−ln(RELEASE_LOSS_MULTIPLIER)·pressureⁿ`. A fully seated damper stops
+/// a string in a few dozen round trips, so a loss merely proportional to
+/// pressure would still kill a half-damped A3 inside 50 ms; felt that only
+/// grazes the string touches it over a sliver of its width and damps a
+/// small fraction as hard. With `n = 5` half pressure lets A3 ring for
+/// about a second and a quarter-pressure damper costs it little — the
+/// graded sustain half-pedalling is for (issue #61).
+const DAMPER_CONTACT_EXPONENT: f32 = 5.0;
+
 /// How far below its construction-time frequency [`PluckedString::set_frequency`]
 /// can retune without reallocating.
 ///
@@ -364,13 +374,18 @@ pub struct PluckedString {
     period: f32,
     loop_delay: f32,
     sustain: f32,
-    /// Set by [`PluckedString::release`], cleared by the next
-    /// [`PluckedString::pluck`]. Named for the physical damper rather than
-    /// anything to do with [`PluckedString::set_sustain`] — that is a
-    /// decay-*rate* voicing parameter a player never directly triggers;
-    /// this is a hammer/damper *event*, on or off, the same shape as a
-    /// piano key's own mechanism.
-    damper_engaged: bool,
+    /// How hard the felt damper presses on the string, in `[0, 1]`: `1` is
+    /// fully resting ([`PluckedString::release`]), `0` fully lifted (a held
+    /// key, or [`PluckedString::lift_damper`]), anything between a damper
+    /// grazing the string under a half-pressed pedal
+    /// ([`PluckedString::set_damper_pressure`]). Named for the physical
+    /// damper rather than anything to do with [`PluckedString::set_sustain`]
+    /// — that is a decay-*rate* voicing parameter a player never triggers.
+    damper_pressure: f32,
+    /// The extra per-round-trip gain [`PluckedString::damper_pressure`]
+    /// costs: `RELEASE_LOSS_MULTIPLIER^pressure`, kept so the per-sample
+    /// loop multiplies instead of calling `powf`.
+    damper_gain: f32,
     envelope: f32,
     /// Kept only for [`hammer::simulate_contact`]'s integration step at the
     /// next [`PluckedString::pluck`]; the audio-thread `process` loop never
@@ -558,7 +573,8 @@ impl PluckedString {
             // bridge coupling means that default now matters, since a
             // wrongly-lifted idle string would be able to pick up
             // sympathetic energy it never should while the pedal is up.
-            damper_engaged: true,
+            damper_pressure: 1.0,
+            damper_gain: RELEASE_LOSS_MULTIPLIER,
             envelope: 0.0,
             sample_rate: sample_rate.hertz(),
             hammer: config.hammer,
@@ -696,7 +712,7 @@ impl PluckedString {
         // A hammer strike lifts the damper off the string, same as a real
         // piano key: any release the previous ringing of this voice had
         // engaged no longer applies to the new note.
-        self.damper_engaged = false;
+        self.set_damper_pressure(0.0);
 
         self.write_excitation(velocity);
     }
@@ -952,7 +968,19 @@ impl PluckedString {
     /// called freely without checking the string's current state first.
     #[inline]
     pub fn release(&mut self) {
-        self.damper_engaged = true;
+        self.set_damper_pressure(1.0);
+    }
+
+    /// Rests the damper on the string with `pressure` in `[0, 1]` — the
+    /// continuous form of [`PluckedString::release`] (`1`) and
+    /// [`PluckedString::lift_damper`] (`0`) a half-pressed sustain pedal
+    /// needs (issue #61). See [`DAMPER_CONTACT_EXPONENT`] for how pressure
+    /// becomes loss. `NaN` maps to `0`, the same convention every other
+    /// live setter uses; idempotent.
+    pub fn set_damper_pressure(&mut self, pressure: f32) {
+        self.damper_pressure = math::clamp_or_low(pressure, 0.0, 1.0);
+        let contact = math::powf(self.damper_pressure, DAMPER_CONTACT_EXPONENT);
+        self.damper_gain = math::powf(RELEASE_LOSS_MULTIPLIER, contact);
     }
 
     /// Lifts the damper without a fresh strike.
@@ -969,7 +997,7 @@ impl PluckedString {
     /// Idempotent, same as [`PluckedString::release`].
     #[inline]
     pub fn lift_damper(&mut self) {
-        self.damper_engaged = false;
+        self.set_damper_pressure(0.0);
     }
 
     /// Whether the felt damper currently rests on the string.
@@ -982,7 +1010,7 @@ impl PluckedString {
     #[inline]
     #[must_use]
     pub fn damper_engaged(&self) -> bool {
-        self.damper_engaged
+        self.damper_pressure >= 1.0
     }
 
     /// Produces one output sample and advances the string by one sample.
@@ -1105,11 +1133,7 @@ impl PluckedString {
     /// Discontinuity").
     #[inline]
     pub fn write_mixed_feedback(&mut self, tap: f32, mixed: f32, coupling: f32) -> f32 {
-        let loop_gain = if self.damper_engaged {
-            self.sustain * RELEASE_LOSS_MULTIPLIER
-        } else {
-            self.sustain
-        };
+        let loop_gain = self.sustain * self.damper_gain;
         let bridge_admittance = 1.0 - loop_gain;
         let driven = mixed + coupling * bridge_admittance;
         // The hammer's continued push (`PendingContact`, when a strike's
@@ -1174,7 +1198,7 @@ impl PluckedString {
     #[inline]
     fn track_envelope(&mut self, output: f32) {
         let magnitude = math::abs(output);
-        let decay_rate = if self.damper_engaged {
+        let decay_rate = if self.damper_engaged() {
             RELEASED_ENVELOPE_DECAY
         } else {
             ENVELOPE_DECAY

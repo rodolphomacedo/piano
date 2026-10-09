@@ -50,6 +50,27 @@ pub(crate) enum Command {
         /// `true` while the pedal is held down.
         down: bool,
     },
+    /// The sustain pedal's continuous position, `0.0` (up) to `1.0` (fully
+    /// down) — what a half-pedalling controller sends on CC64 (issue #61).
+    /// [`Command::SustainPedal`] is the two-position shorthand for it.
+    SustainPedalPosition {
+        /// Pedal travel, clamped into `[0, 1]`.
+        position: f32,
+    },
+    /// The middle pedal (CC66, issue #60): while down, the keys that were
+    /// held at the moment it went down keep their dampers lifted after
+    /// they are released; every other key behaves normally.
+    SostenutoPedal {
+        /// `true` while the pedal is held down.
+        down: bool,
+    },
+    /// The soft pedal (CC67, issue #59): while down, every strike misses one
+    /// string of each bichord and trichord. See
+    /// [`piano_core::UnisonGroup::pluck_una_corda`].
+    SoftPedal {
+        /// `true` while the pedal is held down.
+        down: bool,
+    },
     /// Rebuilds one of the soundboard's resonant modes live. See
     /// [`piano_core::soundboard::Soundboard::set_mode`].
     SetSoundboardMode {

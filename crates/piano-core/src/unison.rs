@@ -185,6 +185,33 @@ impl UnisonGroup {
         }
     }
 
+    /// The una corda strike (issue #59): the soft pedal shifts the action
+    /// sideways so the hammer misses one string of every bichord and
+    /// trichord. The missed string is not struck but its damper is lifted
+    /// with the rest, so it picks up the struck strings' motion through the
+    /// coupling and rings out of phase with them — the veiled, aftersound-
+    /// heavy colour the pedal is played for, not merely a quieter note
+    /// (G. Weinreich, "Coupled piano strings", JASA 62(6), 1977, §V). A
+    /// single-string key has nothing to miss and is struck as usual.
+    pub fn pluck_una_corda(&mut self, velocity: f32) {
+        let struck = self.count.saturating_sub(1).max(1);
+        for (index, string) in self.strings.iter_mut().flatten().enumerate() {
+            if index < struck {
+                string.pluck(velocity);
+            } else {
+                string.lift_damper();
+            }
+        }
+    }
+
+    /// Rests every string's damper with `pressure`. See
+    /// [`PluckedString::set_damper_pressure`].
+    pub fn set_damper_pressure(&mut self, pressure: f32) {
+        for string in self.strings.iter_mut().flatten() {
+            string.set_damper_pressure(pressure);
+        }
+    }
+
     /// Releases every string in the group. See [`PluckedString::release`].
     pub fn release(&mut self) {
         for string in self.strings.iter_mut().flatten() {

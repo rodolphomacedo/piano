@@ -54,15 +54,22 @@ const DAMPING_CC: u8 = 74;
 const SUSTAIN_CC: u8 = 1;
 
 /// Control-change controller number of the sustain (hold) pedal — General
-/// MIDI's standard CC64, `>=64` is "down", `<64` is "up" (MIDI 1.0
-/// Detailed Specification, controller number assignments). Distinct from
-/// [`SUSTAIN_CC`]: this is the physical pedal, not a voicing knob.
+/// MIDI's standard CC64 (MIDI 1.0 Detailed Specification, controller number
+/// assignments). Passed on as a continuous position, not a switch: a
+/// switch pedal sends only 0 and 127, and a half-pedalling one (issue #61)
+/// sends everything between. Distinct from [`SUSTAIN_CC`]: this is the
+/// physical pedal, not a voicing knob.
 const SUSTAIN_PEDAL_CC: u8 = 64;
 
-/// The 7-bit MIDI value at which CC64 counts as "pedal down", in the same
-/// `[0, 1]`-normalised units `piano-midi` decodes every controller value
-/// into: `64 / 127`.
-const SUSTAIN_PEDAL_DOWN_THRESHOLD: f32 = 64.0 / 127.0;
+/// The sostenuto (middle) pedal, General MIDI's CC66 (issue #60).
+const SOSTENUTO_PEDAL_CC: u8 = 66;
+
+/// The soft (una corda) pedal, General MIDI's CC67 (issue #59).
+const SOFT_PEDAL_CC: u8 = 67;
+
+/// The value at which a switch controller counts as "down": `>= 64` of 127,
+/// per the MIDI 1.0 specification, in `piano-midi`'s `[0, 1]` units.
+const SWITCH_DOWN_THRESHOLD: f32 = 64.0 / 127.0;
 
 /// Arguments for `piano midi`.
 #[derive(Debug, clap::Args)]
@@ -211,7 +218,9 @@ fn apply_control_change(sink: &mut impl NoteSink, controller: u8, value: f32) {
     match controller {
         DAMPING_CC => sink.set_damping(1.0 - value),
         SUSTAIN_CC => sink.set_sustain(value),
-        SUSTAIN_PEDAL_CC => sink.set_sustain_pedal(value >= SUSTAIN_PEDAL_DOWN_THRESHOLD),
+        SUSTAIN_PEDAL_CC => sink.set_sustain_pedal_position(value),
+        SOSTENUTO_PEDAL_CC => sink.set_sostenuto_pedal(value >= SWITCH_DOWN_THRESHOLD),
+        SOFT_PEDAL_CC => sink.set_soft_pedal(value >= SWITCH_DOWN_THRESHOLD),
         // Every other control change is not one this instrument understands.
         _ => {}
     }
@@ -224,7 +233,7 @@ fn print_instructions(port_name: &str) {
         "CC{DAMPING_CC} (brightness) -> damping, inverted   CC{SUSTAIN_CC} (mod wheel) -> sustain"
     );
     println!(
-        "CC{SUSTAIN_PEDAL_CC} (sustain/hold pedal) -> holds every released note until the pedal comes back up"
+        "CC{SUSTAIN_PEDAL_CC} sustain pedal (half-pedalling too)   CC{SOSTENUTO_PEDAL_CC} sostenuto   CC{SOFT_PEDAL_CC} una corda"
     );
     println!("note-off releases a key early — release the damper instead of ringing on;");
     println!("play a chord and every held note sounds together.");
@@ -357,23 +366,39 @@ mod tests {
         assert_eq!(
             play_bytes(&[&[0xB0, 64, 127], &[0xB0, 64, 0]]),
             vec![
-                Played::SustainPedal { down: true },
-                Played::SustainPedal { down: false },
+                Played::SustainPedal { position: 1.0 },
+                Played::SustainPedal { position: 0.0 },
             ]
         );
     }
 
     #[test]
-    fn the_pedal_threshold_sits_where_the_midi_specification_puts_it() {
-        // 63 is up, 64 is down — a half-pedal controller sweeping through
-        // the middle must switch at exactly one place, and the right one.
+    fn a_half_pressed_sustain_pedal_reaches_the_engine_as_a_position() {
+        // A half-pedalling controller's middle values must not collapse
+        // onto "up" or "down" (issue #61).
         assert_eq!(
             play_bytes(&[&[0xB0, 64, 63]]),
-            vec![Played::SustainPedal { down: false }]
+            vec![Played::SustainPedal {
+                position: 63.0 / 127.0
+            }]
         );
+    }
+
+    #[test]
+    fn the_middle_and_left_pedals_switch_where_the_specification_puts_it() {
         assert_eq!(
-            play_bytes(&[&[0xB0, 64, 64]]),
-            vec![Played::SustainPedal { down: true }]
+            play_bytes(&[
+                &[0xB0, 66, 64],
+                &[0xB0, 66, 63],
+                &[0xB0, 67, 127],
+                &[0xB0, 67, 0]
+            ]),
+            vec![
+                Played::Sostenuto { down: true },
+                Played::Sostenuto { down: false },
+                Played::SoftPedal { down: true },
+                Played::SoftPedal { down: false },
+            ]
         );
     }
 
@@ -406,7 +431,7 @@ mod tests {
         assert_eq!(
             play_bytes(&[&[0xB0, 64, 127], &[0xB0, 1, 127]]),
             vec![
-                Played::SustainPedal { down: true },
+                Played::SustainPedal { position: 1.0 },
                 Played::Sustain { sustain: 1.0 },
             ]
         );

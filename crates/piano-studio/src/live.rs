@@ -143,6 +143,8 @@ impl LiveState {
             Edit::NoteOff { midi } => vec![StudioCommand::NoteOff { midi: *midi }],
             Edit::AllNotesOff => vec![StudioCommand::AllNotesOff],
             Edit::SustainPedal { down } => vec![StudioCommand::SustainPedal { down: *down }],
+            Edit::SostenutoPedal { down } => vec![StudioCommand::SostenutoPedal { down: *down }],
+            Edit::SoftPedal { down } => vec![StudioCommand::SoftPedal { down: *down }],
             Edit::SetString {
                 midi,
                 string_index,
@@ -473,6 +475,24 @@ mod tests {
             Tuning::default(),
             sample_rate(),
         )
+    }
+
+    #[test]
+    fn the_page_reaches_all_three_pedals() {
+        let mut state = state();
+        for (json, expected) in [
+            (
+                r#"{"type":"sostenuto_pedal","down":true}"#,
+                StudioCommand::SostenutoPedal { down: true },
+            ),
+            (
+                r#"{"type":"soft_pedal","down":false}"#,
+                StudioCommand::SoftPedal { down: false },
+            ),
+        ] {
+            let edit: Edit = serde_json::from_str(json).expect("a pedal edit parses");
+            assert_eq!(state.apply(&edit), vec![expected]);
+        }
     }
 
     fn find(state: &LiveState, midi: u8, string_index: u8) -> ResolvedString {

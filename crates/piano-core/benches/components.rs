@@ -54,7 +54,7 @@ fn bench_dispersion_cascade(c: &mut Criterion) {
         ("a4_2_sections", 440.0, 0.000_4),
     ] {
         group.bench_function(label, |b| {
-            let mut cascade = DispersionCascade::new(frequency, inharmonicity);
+            let mut cascade = DispersionCascade::new(48_000.0 / frequency, inharmonicity);
             b.iter(|| {
                 let mut sample = 0.0f32;
                 for _ in 0..BLOCK_SAMPLES {

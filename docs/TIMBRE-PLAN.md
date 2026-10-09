@@ -264,6 +264,34 @@ that harness's regression bands. Tracked as **#92**; its real fix is the
 bridge/soundboard coupling work (`docs/MODEL-REVIEW.md` P4, #89), not
 another dispersion constant.
 
+### D11 — *Bug*: the stiffness model was wrong three ways, and the unison coupling damped the aftersound. *(the "still metallic" report, mid and upper register)*
+
+Found by locating each partial's real spectral peak per key instead of
+probing exact `n·f0` — which is also why D1-D10's diagnostics never saw it.
+Issue #96; reproduce with
+`cargo test --release -p piano-audio --test keyboard_stiffness_and_tuning -- --nocapture`.
+
+1. The default `B` curve ran linearly from `10⁻⁴` to `0.05`: A4 asked for
+   `0.028`, ~40x a real string.
+2. The dispersion cascade realised 1-13 % of the requested `B` below C6
+   (`a = -200·B`, clamped) and none above it (section count 0).
+3. The loop was tuned by phase delays at DC; at the fundamental they are
+   smaller, so the mid/treble sat sharp — +22 cents at A5.
+4. The unison blend `(1−w)·own + w·mean(others)` damped differential modes
+   by `1.5·w` per round trip; detuning pumps energy into them, so treble
+   trichords lost up to 96 % of their level by 0.4 s (A6 the worst — D10's
+   fix had only moved the edge).
+
+**Fixed.** Two-asymptote `B` curve (Rigaud et al. 2013); cascade fitted
+per string to Fletcher's curve; loop tuned at the fundamental; Weinreich
+coupling that spares differential modes 75 % of the loss; asymmetric
+trichord detune `[-0.8, 0, +0.5]` cents and bichord `±1` (a symmetric trichord
+beats to a dead null). Measured after: every key's fundamental within
+±1.4 cents, realised `B` within 35 % of requested (most within 15 %), A4's
+attack spectrum `H2 −6 dB, H3 −12 dB` (was `−47/−72 dB`), and the all-88
+engine sweep's trichord/monochord late-energy ratio `0.72-11.8` (was
+`0.09` at worst). Cost: `PERF-005` reopened, +35 % at full polyphony.
+
 ### D4 — The excitation is white noise, not a hammer. *(strike position now fixed, #32)*
 
 `PluckedString::write_excitation` fills the delay line with

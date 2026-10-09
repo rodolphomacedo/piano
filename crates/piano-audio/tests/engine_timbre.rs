@@ -28,14 +28,13 @@
 //! The representative-keys test runs in the normal gate and is the CI guard.
 //!
 //! The sweep that calibrated the bands (`MEASURED_OVER_ANALYTIC`,
-//! `DECAY_BAND`, `UNISON_ENERGY_BAND`) also surfaced a residual: across the
-//! upper treble the trichord radiates less late-window energy than its own
-//! monochord, worst at A5 — the same region as D10, not fully cleared by
-//! the dispersion-coefficient fix that closed it. A5's fundamental decays at
-//! 0.42× its solved intent and its trichord at 0.09× its monochord: inside
-//! the bands here, but the closest any key comes to failing. Tracked in
-//! issue #92; a fix belongs to the bridge/soundboard-coupling milestone
-//! (`docs/MODEL-REVIEW.md` P4), not to this harness.
+//! `DECAY_BAND`, `UNISON_ENERGY_BAND`) originally surfaced a residual: the
+//! upper-treble trichord radiated as little as 0.09x its own monochord's
+//! late energy, worst at A5. Issue #96 traced it to the unison coupling
+//! damping every differential mode (`piano_core::unison`'s
+//! `DEFAULT_LOCAL_COUPLING_GAIN`); with Weinreich's coupling the same sweep
+//! spans 0.72x-11.8x, the high end being the aftersound a trichord has and
+//! a monochord cannot.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -105,12 +104,14 @@ const LATE_RMS_FLOOR: f32 = 1.0e-4;
 
 /// Bounds on trichord-energy / monochord-energy in the later window. D10 was
 /// a trichord at essentially zero against a healthy monochord; the upper
-/// bound catches the opposite runaway. The all-88 sweep spans 0.09–2.55
-/// (A5 the low end, top of the treble the high end — the same upper-treble
-/// trichord lean as `DECAY_BAND`'s note, issue #92); `0.04..4.0` clears
-/// every current key while still failing a trichord that has genuinely
-/// collapsed (D10 measured ~5e-3) or run away.
-const UNISON_ENERGY_BAND: std::ops::Range<f32> = 0.04..4.0;
+/// bound catches the opposite runaway. Since issue #96 the all-88 sweep
+/// spans 0.72 (D#5) to 11.8 (C8): three strings radiate up to 3x one in
+/// phase, and from E5 up their aftersound outlives the monochord's single,
+/// prompt-rate mode several times over, so the late ratio grows well past
+/// 3 by design. `0.3..20.0` clears every key with margin while still failing
+/// a genuine collapse (D10 measured ~5e-3) or a differential mode that has
+/// stopped decaying.
+const UNISON_ENERGY_BAND: std::ops::Range<f32> = 0.3..20.0;
 
 /// Keys spanning the compass, including the G5–B5 band where D10's single
 /// dispersion section makes a trichord unstable and A5 where it was worst,

@@ -76,7 +76,7 @@ than building a second, parallel timing mechanism just for benchmarking.
 | [PERF-002](#perf-002) | Denormal handling in decaying tails | M2 | Mitigated, unmeasured |
 | [PERF-003](#perf-003) | Per-sample dispatch in the voice loop | M5 | Mitigated, **measured in isolation (M7)** |
 | [PERF-004](#perf-004) | Linear interpolation in the fractional delay | M4 | Implemented, unmeasured |
-| [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | Implemented, **measured (M7)** |
+| [PERF-005](#perf-005) | Dispersion allpass cascade | M4 | **Open again (#96)** — fitted design costs +35 % at full polyphony; SoA rewrite is the mitigation |
 | [PERF-006](#perf-006) | Polyphony and voice management | M5 | Mitigated (energy gating), **gate's saving measured (M7)** |
 | [PERF-007](#perf-007) | Hammer–string contact solver | M4 | **Closed — coupled solve implemented and measured (#57): 239.01 ns/iteration** |
 | [PERF-008](#perf-008) | Sympathetic resonance coupling | M6 | Implemented, **isolated cost measured (M7)** |
@@ -338,6 +338,27 @@ whole measured history depends on, for a saving that (per the paragraph
 above) is not currently the block's dominant cost. Recorded here, honestly,
 as a real measured opportunity for a future milestone rather than either
 silently skipped or shipped without weighing the risk.
+
+*Status (#96)*: **Regressed by design, measured; mitigation known.** The
+register-scaled design above realised 1-13 % of the requested `B` below C6
+and none above it (section count reached 0), and tuned the loop at DC, so
+the mid/treble sat up to 22 cents sharp. `piano_core::dispersion` now
+*fits* section count and coefficient per string against Fletcher's curve
+(two-cent tolerance on partials 2-8), and the loop is tuned at the
+fundamental. The fit moved the sections to where the stiffness actually is:
+1 section across most of the bass (whose `B` is tiny), 8 from E4 to B6 —
+1 062 string-sections across the keyboard's 222 strings, against roughly a
+third of that before. Measured with
+`cargo bench -p piano-core --bench components -- full_88_key` on the same
+machine, back to back: **1.49 ms → 2.02 ms per 128-sample block (+35 %)**
+for the ungated all-88-keys-ringing worst case, 76 % of the 2.67 ms
+deadline. Loosening the tolerance to 3/4/5 cents cut the total to
+920/810/693 string-sections but put the realised `B` of some keys outside
+`keyboard_stiffness_and_tuning`'s 35 % band, so it was not taken. The
+mitigation is the structure-of-arrays rewrite measured above at −41 % for a
+trichord's cascade — declined in M7 because dispersion was not then the
+dominant cost; it now is the clearest saving available. Open until that
+lands and is measured.
 
 ---
 

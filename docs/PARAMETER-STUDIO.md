@@ -127,9 +127,9 @@ strings[]  (explicit, one entry per string)
     "hammer": { "contact_exponent": 2.5, "stiffness": 1.7e9, "mass": 1.0, "string_impedance": 1.0e13 }
   },
   "registers": {
-    "bass":   { "anchor_midi": 21,  "decay_seconds": 35.0, "damping": 0.6, "inharmonicity": 0.0001 },
+    "bass":   { "anchor_midi": 21,  "decay_seconds": 35.0, "damping": 0.6, "inharmonicity": 0.0003 },
     "mid":    { "anchor_midi": 69,  "decay_seconds": 11.0 },
-    "treble": { "anchor_midi": 108, "decay_seconds": 1.5,  "damping": 0.4, "inharmonicity": 0.05 }
+    "treble": { "anchor_midi": 108, "decay_seconds": 1.5,  "damping": 0.4, "inharmonicity": 0.015 }
   },
   "groups": [
     {
@@ -148,7 +148,7 @@ strings[]  (explicit, one entry per string)
     "soundboard_mix_gain": 0.5,
     "master_gain": 1.0,
     "velocity_curve_exponent": 1.8,
-    "bridge": { "local_coupling_gain": 0.15, "global_coupling_gain": 0.08 }
+    "bridge": { "local_coupling_gain": 0.75, "global_coupling_gain": 0.08 }
   }
 }
 ```

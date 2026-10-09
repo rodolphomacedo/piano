@@ -56,22 +56,34 @@ use crate::{
 /// The most strings a real piano note is ever struck by.
 pub const MAX_UNISON_STRINGS: usize = 3;
 
-/// How strongly this note's own strings couple to *each other*, every
-/// sample, through the local bridge contact — see the module docs.
+/// How much of a string's round-trip loss its note's *differential* modes —
+/// strings moving against each other — are spared. See [`spare_differential`].
 ///
-/// The mixing this weights is a **convex combination** (`crate::string`'s
-/// `PluckedString::write_mixed_feedback` doc comment explains why that,
-/// not a raw sum, is what keeps a coupled group stable for any `sustain`)
-/// so this constant can be chosen purely for how audible the beating is,
-/// with no stability constraint of its own — any value in `[0, 1]` is
-/// safe. Weinreich (1977) reports the coupled-string beating and
-/// two-stage decay arise from a bridge admittance small relative to a
-/// string's own characteristic impedance, i.e. weak coupling; this
-/// project has no per-instrument admittance measurement to fit to, so
-/// this specific figure is a reasoned choice within that "weak coupling"
-/// order of magnitude, honestly labelled as such — the same pattern
-/// `piano_audio::voicing`'s per-partial decay anchors already use.
-const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.15;
+/// G. Weinreich, "Coupled piano strings", JASA 62(6), 1977: when a note's
+/// strings move together (the common mode) they push the bridge together,
+/// and that mode's energy drains into the soundboard fast — the loud,
+/// quickly-decaying *prompt sound*. Once a few cents of mistuning has
+/// rotated part of the energy into modes where the strings oppose each
+/// other, the bridge barely moves and that energy rings on far longer —
+/// the quiet, long *aftersound* that makes a piano note sing. Most of a
+/// struck string's loss is through the bridge, so the differential modes
+/// keep only the remainder: at `0.75` they lose a quarter of what the
+/// common mode does per round trip, four times longer-lived, inside the
+/// "several times slower" Weinreich reports. The figure itself is a
+/// reasoned choice, not a measurement of one instrument.
+///
+/// The previous coupling was a convex blend `(1-w)·own + w·mean(others)`,
+/// which does the opposite: it leaves the common mode alone and *damps*
+/// every differential mode by `1.5·w` per round trip. With detuning
+/// pumping energy into those modes continuously, treble trichords lost up
+/// to 96% of their level against three independent strings by 0.4 s
+/// (issue #96).
+pub const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.75;
+
+/// Highest share accepted. At `1.0` a differential mode would lose nothing
+/// at DC (the loss filter passes DC unchanged), so a struck group could
+/// ring forever and never free its voice.
+const MAX_LOCAL_COUPLING_GAIN: f32 = 0.95;
 
 /// Detuning, in cents, for a 2-string (bichord) unison group, symmetric
 /// around the nominal pitch.
@@ -81,12 +93,25 @@ const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.15;
 /// specific cents figure is this project's own reasoned choice within the
 /// "a few cents" order of magnitude that literature reports for real
 /// instruments, not a measurement of one.
-const DETUNE_CENTS_BICHORD: [f32; 2] = [-2.5, 2.5];
+///
+/// Weinreich (1977) finds the aftersound fully developed with unisons
+/// mistuned by about a cent, which is also roughly where a careful tuner
+/// leaves them. Halved from `±2.5` once the coupling stopped locking the
+/// strings together ([`DEFAULT_LOCAL_COUPLING_GAIN`], issue #96): free
+/// strings 5 cents apart beat to a null every 2 s at F2, audibly a
+/// mistuned unison rather than a warm one.
+const DETUNE_CENTS_BICHORD: [f32; 2] = [-1.0, 1.0];
 
 /// Detuning, in cents, for a 3-string (trichord) unison group — the middle
-/// string left at the nominal pitch, the outer two spread symmetrically.
-/// See [`DETUNE_CENTS_BICHORD`] for the honesty note on the exact figure.
-const DETUNE_CENTS_TRICHORD: [f32; 3] = [-4.0, 0.0, 4.0];
+/// string left at the nominal pitch, the outer two deliberately *not*
+/// symmetric. Three strings at `-φ, 0, +φ` sum to `1 + 2·cos φ`, which is
+/// exactly zero once φ reaches `2π/3`: a symmetric trichord beats to a
+/// periodic dead null no real unison, tuned by ear, ever lands on. Measured
+/// through the engine at A4 (issue #96), `±1.5` dropped the fundamental
+/// 22 dB at 0.7 s and back; this pair gives Weinreich's two-stage decay — a
+/// prompt fall, one shallow dip, then the aftersound plateau. See
+/// [`DETUNE_CENTS_BICHORD`] for the honesty note on the exact figures.
+const DETUNE_CENTS_TRICHORD: [f32; 3] = [-0.8, 0.0, 0.5];
 
 /// A group of 1-3 [`PluckedString`]s struck together by one hammer,
 /// coupled to each other through a local bridge contact.
@@ -191,14 +216,12 @@ impl UnisonGroup {
         }
     }
 
-    /// Adjusts how strongly this group's own strings couple to each other,
-    /// live — see [`DEFAULT_LOCAL_COUPLING_GAIN`] for the physical meaning.
-    /// Clamped into `[0, 1]`, the same range [`blend`] itself expects
-    /// (`blend` clamps too, so this is a defensive, redundant-by-design
-    /// second clamp — the same pattern [`crate::string::PluckedString::
-    /// set_damping`] already uses for its own pole coefficient).
+    /// Adjusts how much of the round-trip loss this group's differential
+    /// modes are spared, live — see [`DEFAULT_LOCAL_COUPLING_GAIN`] for the
+    /// physical meaning. `0` makes the strings independent. Clamped into
+    /// `[0, MAX_LOCAL_COUPLING_GAIN]`.
     pub fn set_local_coupling_gain(&mut self, gain: f32) {
-        self.local_coupling_gain = math::clamp_or_low(gain, 0.0, 1.0);
+        self.local_coupling_gain = math::clamp_or_low(gain, 0.0, MAX_LOCAL_COUPLING_GAIN);
     }
 
     /// Adjusts how strongly this group blends with the shared, cross-key
@@ -376,11 +399,13 @@ impl UnisonGroup {
             // anything back from it, so it writes only its own signal —
             // `PluckedString::write_mixed_feedback`'s damper invariant.
             let (mixed, coupling) = if sample.receptive {
-                let local_mean = other_strings_mean(local_sum, sample.dispersed, receptive_count);
-                (
-                    blend(sample.dispersed, local_mean, self.local_coupling_gain),
-                    bridge_drive,
-                )
+                let spared = spare_differential(
+                    sample.dispersed,
+                    group_mean,
+                    string.sustain(),
+                    self.local_coupling_gain,
+                );
+                (spared, bridge_drive)
             } else {
                 (sample.dispersed, 0.0)
             };
@@ -414,7 +439,7 @@ struct StringSample {
 /// Kept smaller than [`DEFAULT_LOCAL_COUPLING_GAIN`]: cross-key sympathetic
 /// resonance is a subtler effect than one note's own unison beating — same
 /// literature-order-of-magnitude honesty note as that constant.
-const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
+pub const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
 
 /// The mean dispersed signal across this group's `receptive_count`
 /// receptive strings — `0.0` when none are (nothing to contribute; also
@@ -428,29 +453,26 @@ fn local_group_mean(local_sum: f32, receptive_count: usize) -> f32 {
     }
 }
 
-/// The mean dispersed signal of every *other* receptive string in the
-/// group, excluding `own_signal` — falls back to `own_signal` itself when
-/// there is no other receptive string to average (so blending with it is a
-/// no-op, never a division by zero), which is exactly the monochord (bass,
-/// single-string) case: nothing to beat against.
+/// Spares `own`'s differential part — what differs from the group's mean —
+/// `share` of the string's round-trip loss `1 - sustain`, leaving the
+/// common part (the mean) to lose exactly `sustain` once
+/// `write_mixed_feedback` applies it.
+///
+/// Per round trip the group's scattering is `(1 + k)·I − k·J/N` with
+/// `k = share·(1 − sustain)/sustain`: eigenvalue `1` on the common mode,
+/// `1 + k` on every differential mode. After `sustain` that is `sustain`
+/// and `sustain + share·(1 − sustain) < 1` — the matrix is symmetric, so
+/// its norm is its largest eigenvalue and the group stays passive for any
+/// `share < 1`. A single string *is* its own mean, so it is untouched and
+/// still decays exactly as `piano_audio::voicing` solved it.
 #[inline]
-fn other_strings_mean(local_sum: f32, own_signal: f32, receptive_count: usize) -> f32 {
-    if receptive_count <= 1 {
-        own_signal
-    } else {
-        (local_sum - own_signal) / (receptive_count - 1) as f32
+fn spare_differential(own: f32, group_mean: f32, sustain: f32, share: f32) -> f32 {
+    let share = math::clamp_or_low(share, 0.0, MAX_LOCAL_COUPLING_GAIN);
+    if sustain.is_nan() || sustain <= 0.0 {
+        return own;
     }
-}
-
-/// A convex combination of `own` and `other`, weighted by `weight` (clamped
-/// into `[0, 1]`): `weight = 0` returns `own` unchanged, `weight = 1`
-/// returns `other` unchanged. Bounded by construction between `own` and
-/// `other`, for any weight — the property `write_mixed_feedback`'s doc
-/// comment relies on for stability regardless of `sustain`.
-#[inline]
-fn blend(own: f32, other: f32, weight: f32) -> f32 {
-    let weight = math::clamp_or_low(weight, 0.0, 1.0);
-    own + weight * (other - own)
+    let differential_boost = share * (1.0 - sustain) / sustain;
+    own + differential_boost * (own - group_mean)
 }
 
 /// How many strings a key with `key_index` unison strings should detune
@@ -900,7 +922,7 @@ mod tests {
         group.set_local_coupling_gain(-5.0);
         assert_eq!(group.local_coupling_gain, 0.0);
         group.set_local_coupling_gain(5.0);
-        assert_eq!(group.local_coupling_gain, 1.0);
+        assert_eq!(group.local_coupling_gain, MAX_LOCAL_COUPLING_GAIN);
     }
 
     #[test]

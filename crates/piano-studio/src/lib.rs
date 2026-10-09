@@ -246,9 +246,18 @@ mod tests {
     fn instrument_wide_settings_fall_back_to_documented_defaults() {
         let file = PianoFile::default();
         let piano = resolve(&file, Tuning::default(), sample_rate());
-        assert!(piano.soundboard_modes.is_empty());
-        assert_eq!(piano.local_coupling_gain, 0.15);
-        assert_eq!(piano.global_coupling_gain, 0.08);
+        assert_eq!(
+            piano.soundboard_modes,
+            [] as [piano_core::soundboard::SoundboardMode; 0]
+        );
+        assert_eq!(
+            piano.local_coupling_gain,
+            piano_core::unison::DEFAULT_LOCAL_COUPLING_GAIN
+        );
+        assert_eq!(
+            piano.global_coupling_gain,
+            piano_core::unison::DEFAULT_GLOBAL_COUPLING_GAIN
+        );
     }
 
     #[test]

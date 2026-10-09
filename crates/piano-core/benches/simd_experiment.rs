@@ -35,9 +35,9 @@ fn bench_sequential_trichord(c: &mut Criterion) {
     // independent `DispersionCascade`s, called one after another.
     c.bench_function("dispersion_trichord_sequential", |b| {
         let mut cascades = [
-            DispersionCascade::new(27.5, 0.000_1),
-            DispersionCascade::new(27.6, 0.000_1),
-            DispersionCascade::new(27.4, 0.000_1),
+            DispersionCascade::new(48_000.0 / 27.5, 0.000_1),
+            DispersionCascade::new(48_000.0 / 27.6, 0.000_1),
+            DispersionCascade::new(48_000.0 / 27.4, 0.000_1),
         ];
         b.iter(|| {
             let mut sums = [0.0f32; 3];

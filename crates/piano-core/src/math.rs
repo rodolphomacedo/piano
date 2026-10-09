@@ -77,6 +77,44 @@ pub fn powf(base: f32, exponent: f32) -> f32 {
     }
 }
 
+/// Four-quadrant arctangent of `y / x`, in `(-π, π]`.
+#[inline]
+#[must_use]
+pub fn atan2(y: f32, x: f32) -> f32 {
+    #[cfg(feature = "std")]
+    {
+        y.atan2(x)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        libm::atan2f(y, x)
+    }
+}
+
+/// Phase delay, in samples, of the first-order allpass
+/// `H(z) = (a + z⁻¹) / (1 + a·z⁻¹)` at `omega` radians per sample.
+///
+/// Both the dispersion cascade and the delay line's fractional-delay
+/// interpolator are this exact section, and a string is only in tune if the
+/// loop is tuned by their delay *at the fundamental* — at DC their delay is
+/// larger, by enough to put A5 22 cents sharp (issue #96). Returns the DC
+/// limit `(1 - a)/(1 + a)` for `omega` too small to divide by.
+#[inline]
+#[must_use]
+pub fn allpass_phase_delay(coefficient: f32, omega: f32) -> f32 {
+    if omega.is_nan() || omega <= MIN_PHASE_OMEGA {
+        return (1.0 - coefficient) / (1.0 + coefficient);
+    }
+    let (sine, cosine) = (sin(omega), cos(omega));
+    let numerator = atan2(-sine, coefficient + cosine);
+    let denominator = atan2(-coefficient * sine, 1.0 + coefficient * cosine);
+    -(numerator - denominator) / omega
+}
+
+/// Below this many radians per sample a phase delay is taken at its DC
+/// limit: dividing a phase this small by `omega` loses all precision in `f32`.
+pub const MIN_PHASE_OMEGA: f32 = 1e-4;
+
 /// Magnitudes below this are treated as silence.
 ///
 /// A decaying string tail eventually produces denormal floats, and on x86 every
@@ -127,6 +165,25 @@ mod tests {
     fn leaves_audible_values_untouched() {
         assert_eq!(flush_denormal(0.5), 0.5);
         assert_eq!(flush_denormal(-0.5), -0.5);
+    }
+
+    #[test]
+    fn allpass_phase_delay_matches_its_dc_limit_at_low_frequency() {
+        for coefficient in [-0.9, -0.5, 0.0, 0.5] {
+            let dc = (1.0 - coefficient) / (1.0 + coefficient);
+            let low = allpass_phase_delay(coefficient, 2e-3);
+            assert!(
+                (low - dc).abs() < 1e-2 * dc.max(1.0),
+                "{coefficient}: {low} vs {dc}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_negative_coefficient_delays_high_frequencies_less() {
+        let low = allpass_phase_delay(-0.8, 0.05);
+        let high = allpass_phase_delay(-0.8, 1.0);
+        assert!(high < low, "low {low} high {high}");
     }
 
     #[test]

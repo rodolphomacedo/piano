@@ -48,7 +48,8 @@ fn every_key_gets_a_finite_in_range_voicing() {
         assert!(voicing.sustain.is_finite() && (0.0..=1.0).contains(&voicing.sustain));
         assert!(
             voicing.inharmonicity.is_finite()
-                && (0.0..=MAX_INHARMONICITY).contains(&voicing.inharmonicity)
+                && (0.0..=piano_core::dispersion::MAX_INHARMONICITY)
+                    .contains(&voicing.inharmonicity)
         );
         assert!(voicing.zero_mix.is_finite() && (0.0..=0.5).contains(&voicing.zero_mix));
     }
@@ -384,34 +385,21 @@ fn overriding_an_inharmonicity_anchor_lands_there_and_leaves_the_others_alone() 
     );
 }
 
-/// An unset middle-anchor inharmonicity must fall back to exactly what the
-/// original two-point bass-to-treble line already produced there —
-/// [`inharmonicity_for`]'s degenerate-to-a-straight-line claim, checked
-/// rather than trusted.
+/// With no overrides the curve is the two-asymptote default: highest at
+/// the top, a minimum in the low tenor below both ends' neighbours, and A4
+/// within the physical range — not the forty-times-too-stiff straight line
+/// issue #96 replaced.
 #[test]
-fn an_unset_middle_inharmonicity_anchor_matches_the_original_two_point_line() {
+fn the_default_inharmonicity_curve_has_a_tenor_minimum_and_a_physical_a4() {
     let tuning = Tuning::default();
-    let bass_hz = anchor_hz(LOWEST_PIANO_KEY, tuning);
-    let mid_hz = anchor_hz(CONCERT_A_KEY, tuning);
-    let treble_hz = anchor_hz(HIGHEST_PIANO_KEY, tuning);
-    let two_point_line = interpolate_log_frequency(
-        mid_hz,
-        bass_hz,
-        BASS_INHARMONICITY,
-        treble_hz,
-        TREBLE_INHARMONICITY,
-    );
-    let three_point = inharmonicity_for(
-        mid_hz,
-        bass_hz,
-        mid_hz,
-        treble_hz,
-        RegisterOverrides::default(),
-    );
+    let b = |midi: u8| voicing_for_key(key(midi), tuning, sample_rate()).inharmonicity;
+    let tenor_minimum = (21..=69).map(b).fold(f32::INFINITY, f32::min);
     assert!(
-        (two_point_line - three_point).abs() < 1e-6,
-        "an unset middle anchor changed the curve: {two_point_line} vs {three_point}"
+        tenor_minimum < b(21) && tenor_minimum < b(69),
+        "no tenor minimum"
     );
+    assert!((3e-4..=8e-4).contains(&b(69)), "A4 B = {}", b(69));
+    assert!((1e-2..=2e-2).contains(&b(108)), "C8 B = {}", b(108));
 }
 
 /// The regression test for [`RegisterAnchorOverride::damping`]'s scope

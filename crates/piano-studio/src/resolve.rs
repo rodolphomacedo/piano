@@ -23,21 +23,14 @@ const DEFAULT_DETUNE_CENTS: f32 = 0.0;
 /// Default excitation seed a string resolves to when nothing overrides it.
 const DEFAULT_SEED: u32 = 0;
 
-/// Mirrors `piano_core::unison`'s private `DEFAULT_LOCAL_COUPLING_GAIN` —
-/// duplicated, not imported, because that constant is deliberately not
-/// part of `piano-core`'s public API. Matches
-/// `docs/PARAMETER-STUDIO.md`'s own JSON example value.
-const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.15;
-
-/// Mirrors `piano_core::unison`'s private `DEFAULT_GLOBAL_COUPLING_GAIN`.
-/// See [`DEFAULT_LOCAL_COUPLING_GAIN`].
-const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
+// Imported, not mirrored: a duplicated copy kept `0.15` here after the
+// core default moved to `0.75` with a new meaning (issue #96), which would
+// have left the studio — the MIDI playing path — almost uncoupled.
+use piano_core::unison::{DEFAULT_GLOBAL_COUPLING_GAIN, DEFAULT_LOCAL_COUPLING_GAIN};
 
 /// Mirrors `piano_audio`'s crate-private `DEFAULT_SOUNDBOARD_MIX_GAIN` —
 /// the engine's starting mix level for the modal soundboard (issue #78).
-/// Duplicated, not imported, for the same reason as
-/// [`DEFAULT_LOCAL_COUPLING_GAIN`]: it is not part of `piano-audio`'s
-/// public API. A file with no `instrument.soundboard_mix_gain` resolves to
+/// Duplicated, not imported: it is not part of `piano-audio`'s public API. A file with no `instrument.soundboard_mix_gain` resolves to
 /// this, i.e. leaves the engine at its own default.
 const DEFAULT_SOUNDBOARD_MIX_GAIN: f32 = 0.5;
 

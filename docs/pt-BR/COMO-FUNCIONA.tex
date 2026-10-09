@@ -1053,9 +1053,14 @@ Não é preciso decorar a fórmula --- o que ela diz, em palavras, é: \enquote{
 harmônico número $n$ fica um pouquinho mais agudo do que $n$ vezes a
 fundamental, e esse desvio cresce com o quadrado de $n$ (então harmônicos
 mais altos desviam proporcionalmente mais), multiplicado por um número $B$
-que descreve o quão rígida é aquela corda específica}. Cordas grossas e
-curtas (as graves) têm um $B$ maior; cordas finas e longas (as agudas) têm
-um $B$ menor.
+que descreve o quão rígida é aquela corda específica}. O $B$ não cresce
+sempre na mesma direção: nos graves, as cordas encapadas com cobre vão
+ficando relativamente menos rígidas conforme sobem, e o $B$ cai de uns
+$0{,}0003$ no Lá mais grave até um mínimo perto de $0{,}0001$ na região do
+Dó grave; dali para cima, as cordas lisas de aço ficam muito mais curtas do
+que mais finas, e o $B$ cresce depressa --- uns $0{,}0005$ no Lá central e
+$0{,}015$ no último Dó. Os agudos são, proporcionalmente, as cordas mais
+rígidas do piano.
 
 Este é, aliás, o motivo pelo qual afinadores de piano profissionais não
 afinam o instrumento em oitavas \emph{matematicamente} exatas --- eles
@@ -1084,14 +1089,22 @@ volume.
 
 Encadear vários desses filtros (\enquote{uma cascata}) dentro do laço da
 corda aproxima, com boa precisão, a curva de inarmonicidade real. Quantos
-filtros são necessários varia por registro --- cordas graves precisam de
-mais seções (cerca de 8 para a nota mais grave do piano) e cordas agudas
-precisam de quase nenhuma (0 a 1 para as notas mais agudas), porque o
-efeito de inarmonicidade é fisicamente mais forte nas cordas grossas e
-curtas do que nas finas e longas. Usar sempre o número máximo de seções,
-mesmo onde o ouvido não notaria diferença, gastaria processador à toa ---
-por isso o projeto escala esse número por registro (documentado como
-decisão de performance \texttt{PERF-005}).
+filtros usar, e com que coeficiente, o projeto \textbf{ajusta por corda}:
+para cada nota, ele procura a combinação que coloca os harmônicos 2 a 8 a
+no máximo dois cents de onde a fórmula de Fletcher manda, e para assim que
+chega lá, porque cada filtro a mais custa processamento (decisão de
+performance \texttt{PERF-005}). Na prática, os graves precisam de 1 filtro
+e o médio-agudo, de 8.
+
+Há um detalhe que custou caro descobrir (issue \#96): um filtro allpass
+atrasa mais as frequências baixas do que as altas, e a afinação da corda
+depende do atraso \emph{na frequência da própria nota}. Uma versão anterior
+afinava pelo atraso em frequência zero e deixava o Lá5 22 cents acima do
+certo. Pior: ela pedia um $B$ umas 40 vezes maior que o real no Lá central e
+entregava só uma fração dele. Harmônicos esticados demais, mais uma
+fundamental desafinada, soam como sino --- era o \enquote{metálico} que se
+ouvia no médio. Hoje um teste mede a afinação e o $B$ de verdade das 88
+teclas, a partir do som gerado.
 
 % =============================================================================
 \chapter{O martelo de feltro: como uma martelada vira som}
@@ -1225,25 +1238,34 @@ pouquinho. Essa conexão parcial faz o som de uma nota de piano decair em
 \textbf{dois estágios}, não um só:
 
 \begin{enumerate}[leftmargin=1.6em]
-\item \textbf{Pré-decaimento} (rápido): logo após a martelada, as cordas
-ligeiramente desafinadas batem entre si e perdem energia relativa umas às
-outras rapidamente --- essa fase soa mais \enquote{cheia} e um pouco
-instável.
-\item \textbf{Cauda} (mais lenta): depois que essa energia diferencial se
-dissipa, as cordas se estabilizam num modo compartilhado que decai numa
-taxa parecida com a de uma única corda \enquote{natural} --- essa é a fase
-mais longa e estável, o \enquote{sustain} que você ouve segurando a tecla.
+\item \textbf{Som imediato} (\emph{prompt sound}, rápido): logo após a
+martelada, as cordas vibram juntas, em fase, e empurram a ponte juntas. A
+ponte cede, passa a energia para o tampo, que a irradia --- é a fase mais
+alta, e ela decai depressa justamente porque está entregando energia para
+fora.
+\item \textbf{Som residual} (\emph{aftersound}, lento): a pequena
+desafinação entre as cordas vai, aos poucos, tirando-as de fase. Quando uma
+sobe enquanto a outra desce, as forças sobre a ponte se cancelam, a ponte
+quase não se mexe, e essa energia fica presa nas cordas por muito mais
+tempo. É o \enquote{canto} longo e baixo que você ouve segurando a tecla.
 \end{enumerate}
+
+Uma versão anterior deste projeto fazia o contrário: misturava as cordas de
+um jeito que amortecia justamente as vibrações em oposição. Com a
+desafinação empurrando energia para lá o tempo todo, as notas de três
+cordas do agudo perdiam até 96\% do som em menos de meio segundo --- a
+\enquote{lata abafada} do Lá5 e do Lá6 (issue \#96).
 
 Este projeto implementa exatamente esse mecanismo (não um envelope
 artificial \enquote{desenhado à mão} para parecer parecido) em duas
 camadas:
 
 \begin{itemize}
-\item \textbf{Acoplamento local} (\texttt{piano\_core::unison}): as 1 a 3
-cordas da mesma tecla se misturam entre si a cada amostra individual ---
-é barato de calcular porque essas cordas já são processadas juntas de
-qualquer forma.
+\item \textbf{Acoplamento local} (\texttt{piano\_core::unison}): a cada
+volta da onda, a parte de cada corda que é \emph{igual} à média das cordas
+da tecla perde a energia normal da corda, e a parte que é \emph{diferente}
+da média é poupada de três quartos dessa perda --- o som residual dura umas
+quatro vezes mais que o imediato.
 \item \textbf{Acoplamento global} (\texttt{piano\_core::bridge::BridgeBus},
 capítulo~13): a interação entre teclas \emph{diferentes}, através da
 ponte compartilhada de todo o piano.

@@ -63,6 +63,18 @@ fn render(midi: u8, seconds: f32, with_soundboard: bool) -> Vec<f32> {
         .collect()
 }
 
+/// Where partial `n` of `midi` actually sits: stretched by the key's own
+/// inharmonicity (`f_n = n·f0·sqrt((1 + B·n²)/(1 + B))`, the curve the
+/// dispersion cascade is fitted to). Measuring at exact `n·f0` instead put
+/// the probe off the real peak once partials were stretched, which is how
+/// this diagnostic once reported A4's second partial at -47 dB (issue #96).
+fn partial_hz(midi: u8, n: usize) -> f32 {
+    let key = PianoKey::from_midi(midi).expect("key is on the keyboard");
+    let b = config_for_key(key, Tuning::default(), sample_rate()).inharmonicity;
+    let n = n as f32;
+    n * key.frequency(Tuning::default()).hertz() * ((1.0 + b * n * n) / (1.0 + b)).sqrt()
+}
+
 /// Magnitude of `samples` at `frequency_hz`, by direct evaluation of the
 /// DFT at that one frequency — no interpolation error from snapping a
 /// harmonic to the nearest FFT bin, which matters here because piano
@@ -156,7 +168,7 @@ fn report_per_harmonic_decay_across_the_keyboard() {
             .hertz();
         print!("{name} (f0={fundamental:.1} Hz)  ");
         for harmonic in 1..=8 {
-            let frequency = fundamental * harmonic as f32;
+            let frequency = partial_hz(midi, harmonic);
             if frequency > SAMPLE_RATE_HZ * 0.45 {
                 break;
             }
@@ -216,12 +228,8 @@ fn report_harmonic_amplitude_profile_at_the_attack() {
 
     for (name, midi) in [("A2", 45u8), ("A4", 69)] {
         let samples = render(midi, 1.0, false);
-        let fundamental = PianoKey::from_midi(midi)
-            .expect("key")
-            .frequency(Tuning::default())
-            .hertz();
         let magnitudes: Vec<f32> = (1..=HARMONICS)
-            .map(|harmonic| magnitude_at(&samples[..WINDOW], fundamental * harmonic as f32))
+            .map(|harmonic| magnitude_at(&samples[..WINDOW], partial_hz(midi, harmonic)))
             .collect();
         let peak = magnitudes.iter().copied().fold(0.0f32, f32::max).max(1e-12);
         print!("{name}: ");

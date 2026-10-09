@@ -335,8 +335,19 @@ reproduces this with a cascade of first-order allpass sections inside the
 loop, after the loss filter (Jaffe & Smith 1983's extension to
 Karplus-Strong): each section is flat in magnitude but adds a
 frequency-dependent phase delay, and enough of them approximate the stretched
-dispersion curve. Section count scales with register per the table below —
-the bass needs many, the treble barely any.
+dispersion curve. Section count and the shared coefficient are *fitted* per
+string (issue #96): the fewest sections that place partials 2-8 within two
+cents of Fletcher's curve, which in practice is 1 across most of the bass
+and 8 from E4 to B6. The loop is tuned by every element's phase delay *at
+the fundamental*, not at DC — tuning at DC left A5 22 cents sharp.
+
+The default `B` curve (`piano_audio::voicing`, `voicing_inharmonicity.rs`)
+is the two-asymptote shape of Rigaud, David & Daudet (JASA 133(5), 2013) —
+`B` falling from ~`3·10⁻⁴` at A0 to a tenor minimum near `10⁻⁴`, then rising
+exponentially to ~`5·10⁻⁴` at A4 and `1.5·10⁻²` at C8 — anchored inside
+Fletcher & Rossing's ranges, not measured on one instrument.
+`crates/piano-audio/tests/keyboard_stiffness_and_tuning.rs` measures every
+key's realised `B` and fundamental from its rendered sound.
 
 ## Why most notes are more than one string (M6)
 
@@ -370,22 +381,25 @@ G. Weinreich, "Coupled Piano Strings" (JASA 62(6), 1977) is the seminal
 model and measurement of this: near-unison strings are not independent —
 they share one mechanical connection, the bridge, and that shared,
 slightly-yielding contact point is what makes a real piano note's envelope
-bend rather than follow one clean exponential. Two strings tuned a few
-cents apart, coupled through a shared bridge, first beat and dephase
-against each other (a fast "pre-decay"), then — once that differential
-energy has dissipated — settle into a shared mode that decays close to
-what a single string's own natural loss rate would give (a slower
-"aftersound").
+bend rather than follow one clean exponential. Struck together, a note's
+strings start in phase: that common mode drives the bridge, drains into the
+soundboard and decays fast (the *prompt sound*). A cent or so of mistuning
+rotates energy into differential modes, where the strings' forces on the
+bridge cancel; the bridge barely moves, and that energy rings on several
+times longer (the *aftersound*).
 
 This project reproduces that mechanism, not a hand-tuned envelope shape,
-with two coupling tiers implemented as a **convex combination** of each
-string's own signal with its neighbours' (`piano_core::string::
-PluckedString::write_mixed_feedback`'s doc comment explains why a convex
-blend, not a raw sum, is what keeps this stable for any `sustain`):
+with two coupling tiers:
 
-- **Local** (`piano_core::unison`): a note's own 1-3 strings blend
-  sample-accurately, every sample — cheap, since a unison group already
-  processes all its strings in one call.
+- **Local** (`piano_core::unison`): every round trip, the part of each
+  string equal to its group's mean loses the string's full `sustain` loss,
+  and the part that differs from the mean is spared
+  `DEFAULT_LOCAL_COUPLING_GAIN` (0.75) of it — a symmetric scattering with
+  eigenvalues `sustain` and `sustain + 0.75·(1 − sustain)`, passive for any
+  `sustain`. A single string is its own mean and decays exactly as voiced.
+  The earlier convex blend `(1−w)·own + w·mean(others)` did the reverse —
+  it damped the differential modes — and treble trichords collapsed
+  (issue #96).
 - **Global** (`piano_core::bridge::BridgeBus`, `PERF-008`): cross-*key*
   coupling, e.g. from the sustain pedal, blends with one block
   (~2.7 ms at 48 kHz) of latency, because summing all 88 keys' contributions

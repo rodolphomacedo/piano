@@ -64,6 +64,12 @@ pub(crate) enum Command {
         /// `true` while the pedal is held down.
         down: bool,
     },
+    /// Sets the keybed thump's level at full velocity (issue #64); `0`
+    /// silences the action. See [`piano_core::action::ActionNoise::set_gain`].
+    SetActionNoiseGain {
+        /// New peak level, clamped into `[0, MAX_THUMP_GAIN]`.
+        gain: f32,
+    },
     /// The soft pedal (CC67, issue #59): while down, every strike misses one
     /// string of each bichord and trichord. See
     /// [`piano_core::UnisonGroup::pluck_una_corda`].

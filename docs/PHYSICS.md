@@ -527,6 +527,21 @@ the sympathetic lift with the pedal down, half-pedalling and the sostenuto.
   bass keys are struck as usual; the softer felt region a real shifted
   hammer presents is not modelled.
 
+## Why a note starts with a knock that never touches a string (#64)
+
+A. Askenfelt ("Observations on the transient components of the piano tone",
+STL-QPSR 34(4), 1993) separates the onset of a real note into the string's
+tone and mechanical transients that never pass through a string, the largest
+being the key bottoming on the keybed a few milliseconds after the hammer
+meets the string. It drives the case and board directly and is heard as a
+dull knock under the tone — plainly in the treble, where the tone is thin.
+`piano_core::action::ActionNoise` synthesises it as a half-sine force pulse
+(4 ms at *pianissimo*, 1.5 ms at *fortissimo*, amplitude ∝ velocity^1.5)
+fed into the soundboard only, so the board's modes give it the body's
+colour. Measured over a note's first 50 ms: about 27 dB under a
+*fortissimo* A4, 11 dB quieter at velocity 0.3, and 2 dB more prominent at
+C7 than at C4. `AudioSession::set_action_noise_gain` sets it, `0` removes it.
+
 ## Why every note is coloured by a soundboard (M6, `PERF-009`)
 
 A real piano's strings barely radiate sound on their own — their thin

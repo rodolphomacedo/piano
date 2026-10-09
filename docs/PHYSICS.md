@@ -336,9 +336,14 @@ more. A-weighted at *mezzo-forte* the raw keyboard spanned 26 dB with 5 dB
 cliffs at both breaks. A technician evens a real piano out after the
 physics, by needling and hardening individual hammers; `voicing::
 level_for_key` does the same with a measured per-key gain
-(`voicing_level.rs`), regulated to a curve that is flat from C3 to C7, lower
+(`voicing_level.rs`), regulated to a curve that is flat from C3 to C6, lower
 on the meter in the bass (A-weighting discounts 50-200 Hz 10-15 dB more than
-the ear does at playing level, ISO 226) and 4 dB lower at C8. The
+the ear does at playing level, ISO 226) and falling 8 dB from C6 to C8. The
+treble taper started at C7 at first and the top two octaves were heard as
+shrill: at 70 phon the ear is about 3 dB more sensitive at 2-4 kHz than at
+1 kHz, where A-weighting credits only about 1 dB, so a treble that is flat on
+an A-weighted meter sounds too loud — and a real piano's radiated level
+falls away there anyway. The
 `keyboard_loudness` test fails if any key drifts more than 2 dB off the
 curve, and regenerates the table.
 

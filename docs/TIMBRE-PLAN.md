@@ -625,6 +625,18 @@ the numbers are available without a test runner.
 
 ---
 
+## After D12: measuring against a reference, not against theory
+
+Every diagnosis above compared the model with **physics**: what a stiff
+string's partials or a felt hammer's attack should do. After #117–#120 the
+reports changed character. *"Sounds like a guitar"* (#122) and *"the strike
+is far too loud"* (#121) are comparisons with a **real piano**, and no
+equation tells us how loud a real A2's thump is relative to its tone. The
+next diagnoses therefore need a measured target. M19 builds one: the same
+MIDI notes played through the model, GarageBand and a Yamaha P-125, all
+measured by `piano-analysis`. See `docs/CALIBRATION.md`. #121 and #122
+should be closed by the numbers from #125's `--compare`, not by argument.
+
 ## Sequencing
 
 F1 alone should be audible immediately and is the single highest-value
@@ -650,7 +662,14 @@ Every item above is a GitHub issue, ordered by priority label.
 | M17 | [#83](https://github.com/rodolphomacedo/piano/issues/83) Ranges and display curves worth dragging | P3 | 3 — medium |
 | M17 | [#84](https://github.com/rodolphomacedo/piano/issues/84) Gate: every core parameter reachable from the studio | P4 | 3 — medium |
 | M18 — Control surfaces | [#85](https://github.com/rodolphomacedo/piano/issues/85) `piano-mcp` crate | S2 | 3 — medium |
-| M18 | [#86](https://github.com/rodolphomacedo/piano/issues/86) `piano analyze` CLI subcommand | S3 | 3 — medium |
+| M18 | [#86](https://github.com/rodolphomacedo/piano/issues/86) `piano analyze` CLI subcommand — **done** | S3 | 3 — medium |
+| M16 | [#121](https://github.com/rodolphomacedo/piano/issues/121) Hammer strike too loud — attack thump dominates | — | open |
+| M16 | [#122](https://github.com/rodolphomacedo/piano/issues/122) Timbre reads as a guitar | — | open |
+| M19 — Calibrate against a reference | [#123](https://github.com/rodolphomacedo/piano/issues/123) ADR: sampled instruments as offline targets | — | 2 — high |
+| M19 | [#124](https://github.com/rodolphomacedo/piano/issues/124) Capture protocol and MIDI test set | — | 2 — high |
+| M19 | [#125](https://github.com/rodolphomacedo/piano/issues/125) `piano analyze` on an external WAV, `--compare` | — | 2 — high |
+| M19 | [#126](https://github.com/rodolphomacedo/piano/issues/126) Sensitivity map | — | 2 — high |
+| M19 | [#127](https://github.com/rodolphomacedo/piano/issues/127) Bayesian estimation (separate repo) | — | 3 — medium |
 
 [#63](https://github.com/rodolphomacedo/piano/issues/63) ("Expand the
 soundboard's modal bank", M11) was closed as superseded by #78, which carries

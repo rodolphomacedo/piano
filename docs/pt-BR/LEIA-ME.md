@@ -195,6 +195,11 @@ Opções úteis:
 - `--source string` mede só a corda, sem caixa nem o resto;
 - `--json` imprime em formato de máquina.
 
+Hoje ele só mede notas do próprio modelo. O plano para medir também um
+piano de referência (o seu Yamaha P-125, o GarageBand) e ajustar os
+parâmetros a partir dessa comparação está em
+[`docs/pt-BR/calibracao.md`](calibracao.md).
+
 ## Por que o projeto é construído do jeito que é
 
 Três ideias guiam basicamente toda decisão técnica deste projeto:

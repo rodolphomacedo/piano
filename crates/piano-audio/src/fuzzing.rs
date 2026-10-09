@@ -34,7 +34,7 @@ const MAX_STEPS: usize = 2_048;
 const MAX_BLOCK_FRAMES: usize = 512;
 
 /// How many distinct step kinds a selector byte chooses between.
-const STEP_KINDS: u8 = 38;
+const STEP_KINDS: u8 = 39;
 
 /// What one stream produced.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -168,7 +168,7 @@ impl ByteReader<'_> {
         let kind = self.byte()? % STEP_KINDS;
         match kind {
             0..=7 => self.performance(kind).map(Step::Apply),
-            8..=18 | 32..=37 => self.global_setting(kind).map(Step::Apply),
+            8..=18 | 32..=38 => self.global_setting(kind).map(Step::Apply),
             19..=29 => self.per_string_setting(kind).map(Step::Apply),
             30 => self.frames().map(Step::RenderMono),
             _ => self.frames().map(Step::RenderStereo),
@@ -217,6 +217,7 @@ impl ByteReader<'_> {
                 milliseconds: value,
             },
             37 => Command::SetLimiterThreshold { threshold: value },
+            38 => Command::SetBoardLoadGain { gain: value },
             _ => Command::SetGlobalCouplingGain { gain: value },
         })
     }

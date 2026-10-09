@@ -402,6 +402,7 @@ const INSTRUMENT_PARAMETERS = [
   { key: "phantom_gain", label: "phantom partials (bass)" },
   { key: "duplex_gain", label: "duplex ring (treble)" },
   { key: "damper_strength", label: "damper strength" },
+  { key: "board_load_gain", label: "soundboard load on strings" },
   { key: "velocity_curve_exponent", label: "velocity curve" },
   { key: "master_gain", label: "master gain" },
   { key: "limiter_threshold", label: "limiter threshold" },

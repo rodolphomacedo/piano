@@ -113,6 +113,7 @@ a single bridge, not a string):
 | `room_reverb_seconds` | Yes — `piano_core::room::DEFAULT_ROOM_REVERB_SECONDS` (1.8 s, range 0.1–8): reverberation time in the bass |
 | `room_treble_reverb_seconds` | Yes — `piano_core::room::DEFAULT_ROOM_TREBLE_REVERB_SECONDS` (0.5 s, range 0.1–8): reverberation time at Nyquist |
 | `limiter_threshold` | Yes — `piano_audio::limiter::DEFAULT_LIMITER_THRESHOLD` (0.9, range 0.3–0.99): where the output limiter starts compressing |
+| `board_load_gain` | Yes — `piano_core::bridge_load::DEFAULT_BOARD_LOAD_GAIN` (1.0, range 0–4): how strongly the soundboard's modes take energy from the strings, so partials near a board resonance decay sooner (#90, #91) |
 | `room_predelay_milliseconds` | Yes — `piano_core::room::DEFAULT_ROOM_PREDELAY_MILLISECONDS` (12 ms, range 0–100): silence before the room answers |
 
 **Groups**: a name plus a list of `{midi, string_index}` pairs plus a set of
@@ -164,6 +165,7 @@ strings[]  (explicit, one entry per string)
     "soundboard_mix_gain": 0.5,
     "master_gain": 1.0,
     "limiter_threshold": 0.9,
+    "board_load_gain": 1.0,
     "velocity_curve_exponent": 1.0,
     "damper_strength": 0.6,
     "room_size": 1.0,

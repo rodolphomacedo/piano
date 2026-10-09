@@ -47,6 +47,7 @@
 
 use crate::{
     bridge::BridgeBus,
+    bridge_load::{BridgeLoad, DEFAULT_BOARD_LOAD_GAIN, MAX_BOARD_LOAD_GAIN},
     error::ParamError,
     hammer, math,
     string::{PluckedString, StringConfig},
@@ -131,6 +132,10 @@ pub struct UnisonGroup {
     /// per-string detuning — the reference [`UnisonGroup::set_string_detune`]
     /// computes an absolute retuned frequency from.
     base_frequency: Hz,
+    /// The soundboard's modes as this key's strings feel them (#90, #91).
+    board: BridgeLoad,
+    /// See [`UnisonGroup::set_board_load_gain`].
+    board_load_gain: f32,
 }
 
 impl UnisonGroup {
@@ -174,6 +179,8 @@ impl UnisonGroup {
             local_coupling_gain: DEFAULT_LOCAL_COUPLING_GAIN,
             global_coupling_gain: DEFAULT_GLOBAL_COUPLING_GAIN,
             base_frequency: base_config.frequency,
+            board: BridgeLoad::new(sample_rate, base_config.frequency.hertz()),
+            board_load_gain: DEFAULT_BOARD_LOAD_GAIN,
         })
     }
 
@@ -265,6 +272,19 @@ impl UnisonGroup {
     /// [`UnisonGroup::set_local_coupling_gain`].
     pub fn set_global_coupling_gain(&mut self, gain: f32) {
         self.global_coupling_gain = math::clamp_or_low(gain, 0.0, 1.0);
+    }
+
+    /// How strongly the soundboard's modes load this group's strings, live.
+    /// `0` leaves only the flat bridge bus. Clamped into
+    /// `[0, MAX_BOARD_LOAD_GAIN]`. See [`crate::bridge_load`].
+    pub fn set_board_load_gain(&mut self, gain: f32) {
+        self.board_load_gain = math::clamp_or_low(gain, 0.0, MAX_BOARD_LOAD_GAIN);
+    }
+
+    /// Retunes the board mode `index` this group's strings feel, so it
+    /// tracks the radiating board's. See [`BridgeLoad::set_mode`].
+    pub fn set_board_mode(&mut self, index: usize, mode: crate::soundboard::SoundboardMode) {
+        self.board.set_mode(index, mode);
     }
 
     /// Adjusts one string's damping, live, leaving its unison siblings
@@ -452,10 +472,18 @@ impl UnisonGroup {
         // render check caught. Additive coupling removes that trap at the
         // source; see [`PluckedString::write_mixed_feedback`].
         let group_mean = local_group_mean(local_sum, receptive_count);
-        let bridge_drive = bridge.map_or(0.0, |(bus, index)| {
+        // Gain zero skips the bank entirely, so turning the load off also
+        // gives back its cost (`PERF-015`).
+        let board_velocity = if self.board_load_gain > 0.0 {
+            self.board.process(group_mean)
+        } else {
+            0.0
+        };
+        let bus_drive = bridge.map_or(0.0, |(bus, index)| {
             let (total, contributors) = bus.add_and_read_total(index, group_mean);
             bridge_drive_for(total, contributors, self.global_coupling_gain)
         });
+        let bridge_drive = bus_drive - self.board_load_gain * board_velocity;
 
         let mut output = 0.0f32;
         for (string, sample) in self.strings.iter_mut().zip(samples.iter()).take(self.count) {

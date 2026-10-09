@@ -222,6 +222,10 @@ pub struct Instrument {
     /// engine default. See
     /// [`piano_audio::AudioSession::set_limiter_threshold`].
     pub limiter_threshold: Option<f32>,
+    /// How strongly the soundboard's modes take energy from the strings.
+    /// `None` leaves the engine default. See
+    /// [`piano_audio::AudioSession::set_board_load_gain`].
+    pub board_load_gain: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

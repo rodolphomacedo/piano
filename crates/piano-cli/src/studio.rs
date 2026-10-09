@@ -238,6 +238,7 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
         StudioCommand::SetLimiterThreshold { threshold } => {
             session.set_limiter_threshold(threshold)
         }
+        StudioCommand::SetBoardLoadGain { gain } => session.set_board_load_gain(gain),
         StudioCommand::SetVelocityCurve { exponent } => session.set_velocity_curve(exponent),
         StudioCommand::SetLocalCouplingGain { gain } => session.set_local_coupling_gain(gain),
         StudioCommand::SetGlobalCouplingGain { gain } => session.set_global_coupling_gain(gain),

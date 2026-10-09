@@ -265,6 +265,13 @@ impl AudioSession {
         self.send(Command::SetLimiterThreshold { threshold })
     }
 
+    /// Queues how strongly the soundboard loads the strings (issues #90,
+    /// #91); `0` turns the load off. Same drop-not-block behaviour as
+    /// [`AudioSession::note_on`].
+    pub fn set_board_load_gain(&mut self, gain: f32) -> bool {
+        self.send(Command::SetBoardLoadGain { gain })
+    }
+
     /// Queues a new velocity-curve exponent, live (issue #79): every strike
     /// arriving through [`AudioSession::note_on`] afterwards is warped
     /// through `pluck_velocity = velocity.powf(exponent)` before it reaches

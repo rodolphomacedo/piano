@@ -249,6 +249,10 @@ const fn mode(frequency_hz: f32, q: f32, gain: f32, bridge_coupling: f32) -> Sou
     }
 }
 
+/// Floor on `2·sin θ` in [`Resonator::bandpass_normaliser`]: the value at
+/// 1 Hz and 48 kHz, so no mode the table can hold is clipped by it.
+const MIN_BANDPASS_SINE: f32 = 1.3e-4;
+
 /// One mode's two-pole resonator state. See the module docs for the
 /// difference equation and its derivation.
 #[derive(Debug, Clone, Copy, Default)]
@@ -314,6 +318,31 @@ impl Resonator {
             state1: 0.0,
             state2: 0.0,
         }
+    }
+
+    /// Advances the mode by one sample and returns its bandpass output,
+    /// `(1 − z⁻²)` applied to the resonator's: the form whose real part is
+    /// never negative, which `crate::bridge_load` needs to be a load.
+    #[inline]
+    pub(crate) fn process_bandpass(&mut self, input: f32) -> f32 {
+        let two_back = self.state2;
+        self.process(input) - two_back
+    }
+
+    /// `1 / (2·sin θ)`: what brings `(1 − z⁻²)` times this unit-peak
+    /// resonator back to unit gain at resonance, where `(1 − e^{−j2θ})` has
+    /// magnitude `2·sin θ`. `θ` is recovered from the coefficients, so it is
+    /// the one the recursion actually uses; floored so a mode at DC or
+    /// Nyquist (`sin θ → 0`) yields a large but finite factor.
+    pub(crate) fn bandpass_normaliser(&self) -> f32 {
+        let radius = math::sqrt(math::abs(self.neg_r_squared));
+        let cos_theta = if radius > 0.0 {
+            math::clamp_or_low(self.two_r_cos_theta / (2.0 * radius), -1.0, 1.0)
+        } else {
+            1.0
+        };
+        let sin_theta = math::sqrt(1.0 - cos_theta * cos_theta);
+        1.0 / (2.0 * sin_theta).max(MIN_BANDPASS_SINE)
     }
 
     #[inline]

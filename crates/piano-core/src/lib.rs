@@ -24,6 +24,7 @@ extern crate alloc;
 
 pub mod action;
 pub mod bridge;
+pub mod bridge_load;
 pub mod delay;
 pub mod dispersion;
 pub mod duplex;

@@ -86,6 +86,7 @@ than building a second, parallel timing mechanism just for benchmarking.
 | [PERF-012](#perf-012) | Allocation at note-on | M2 | Closed |
 | [PERF-013](#perf-013) | `f32` precision in long bass decays | M7 | **Closed — measured, no stall found** |
 | [PERF-014](#perf-014) | `wasm-bindgen` call overhead at the JS↔Wasm boundary | M3 | Open |
+| [PERF-015](#perf-015) | Soundboard as a load on the strings (`BridgeLoad`) | P4 | **Open** — measured +0.30 ms/block (+15%) at full 88-key polyphony; `board_load_gain = 0` removes it |
 
 ---
 
@@ -937,3 +938,40 @@ not be treated as settled without a number.
 sustained note, comparing GC pause frequency/duration against the
 alternative `&mut [f32]`-parameter design, at whatever polyphony M3's
 successor milestones eventually add to the browser build.
+
+---
+
+### PERF-015
+
+**The soundboard as a load on the strings (#90, #91).**
+
+Every `UnisonGroup` carries its own `piano_core::bridge_load::BridgeLoad`:
+the board modes between `0.8 × f0` and the modal ceiling (1 kHz), each a
+two-pole resonator in bandpass form, driven sample by sample by the group's
+own strings. Per key and sample that is one resonator update per carried
+mode. A0 carries 18 modes, A4 carries 6, and keys above about 1.25 kHz carry
+none.
+
+A single bank shared by the whole instrument (`2 × MODE_COUNT` updates per
+sample, predicting the board's free response one block ahead) was the first
+design. It was dropped because it measured as not passive, not because of
+its cost
+(`docs/superpowers/specs/2026-10-09-soundboard-bridge-load-design.md`).
+Carrying all 28 modes per key cost +0.80 ms per block at full polyphony,
+2.85 ms against a 2.67 ms budget. That is why the band limit exists.
+
+*Measured* (`cargo bench -p piano-core --bench components`, same machine,
+HEAD against working tree):
+
+| Benchmark | Before | After |
+|---|---|---|
+| `trichord_unison_group_process_block_local_coupling` (A4) | 31.4 µs | 34.2 µs (+9%) |
+| `full_88_key_222_string_block_core_level` | 2.04 ms | 2.35 ms (+15%) |
+
+At `board_load_gain = 0` the group skips its bank and the cost is gone.
+
+*Still open because*: 2.35 ms leaves 12% of a 128-sample block's budget at
+the worst case of every key sounding. The next step is to skip a bank whose
+group is fully damped and whose bank has rung down, since a damped key
+neither drives nor reads it. The entry closes once a full-polyphony callback
+measurement with real pedalled playing confirms the headroom.

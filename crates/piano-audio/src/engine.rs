@@ -38,6 +38,7 @@
 //! lifted — see [`UnisonGroup::is_receptive`] and
 //! [`Engine::process_chunk`]'s skip condition.
 
+use piano_core::action::ActionNoise;
 use piano_core::soundboard::SoundboardMode;
 use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer, math};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
@@ -137,6 +138,8 @@ pub(crate) struct Engine {
     voices: [Voice; KEY_COUNT],
     /// Where the three pedals are. See `engine_pedals.rs`.
     pedals: PedalState,
+    /// Keybed thumps, fed to the soundboard only (issue #64).
+    action: ActionNoise,
     /// Cross-key sympathetic resonance (`PERF-008`). See the module docs.
     bridge: BridgeBus,
     /// Post-mix modal-synthesis soundboard (`PERF-009`). See the module
@@ -190,6 +193,7 @@ impl Engine {
                 voice_for_key(index, sample_rate, tuning, unison_override)
             }),
             pedals: PedalState::default(),
+            action: ActionNoise::new(sample_rate.hertz()),
             bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
             soundboard: Soundboard::new(sample_rate),
             soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
@@ -245,7 +249,8 @@ impl Engine {
             }
         }
         for sample in chunk.iter_mut() {
-            *sample += self.soundboard_mix_gain * self.soundboard.process(*sample);
+            let board_drive = *sample + self.action.next_sample();
+            *sample += self.soundboard_mix_gain * self.soundboard.process(board_drive);
             *sample = soft_limit(self.master_gain * *sample, OUTPUT_LIMITER_THRESHOLD);
         }
     }
@@ -263,6 +268,7 @@ impl Engine {
             }
             Command::SostenutoPedal { down } => self.set_sostenuto_pedal(down),
             Command::SoftPedal { down } => self.set_soft_pedal(down),
+            Command::SetActionNoiseGain { gain } => self.set_action_noise_gain(gain),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),
@@ -302,6 +308,11 @@ impl Engine {
         }
     }
 
+    /// Sets the keybed thump's level. See [`Command::SetActionNoiseGain`].
+    pub(crate) fn set_action_noise_gain(&mut self, gain: f32) {
+        self.action.set_gain(gain);
+    }
+
     /// Re-strikes the voice already allocated for `midi`. Silently ignores
     /// notes off the keyboard and keys whose voice could not be tuned at
     /// construction — the same "invalid input is dropped" pattern used
@@ -310,6 +321,9 @@ impl Engine {
     pub(crate) fn note_on(&mut self, midi: u8, velocity: f32) {
         let pluck_velocity = velocity_curve::warp_velocity(velocity, self.velocity_curve_exponent);
         let soft_down = self.pedals.soft_down;
+        if PianoKey::from_midi(midi).is_ok() {
+            self.action.strike(pluck_velocity);
+        }
         let Some(voice) = self.voice_for_midi(midi) else {
             return;
         };

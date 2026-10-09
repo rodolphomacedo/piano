@@ -105,6 +105,11 @@ impl OfflineEngine {
         self.engine.set_sostenuto_pedal(down);
     }
 
+    /// Sets the keybed thump's level; `0` silences the action noise.
+    pub fn set_action_noise_gain(&mut self, gain: f32) {
+        self.engine.set_action_noise_gain(gain);
+    }
+
     /// Sets the soft (una corda) pedal.
     pub fn set_soft_pedal(&mut self, down: bool) {
         self.engine.set_soft_pedal(down);

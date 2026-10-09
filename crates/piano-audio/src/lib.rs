@@ -130,6 +130,15 @@ impl AudioSession {
         self.producer.push(Command::SostenutoPedal { down }).is_ok()
     }
 
+    /// Queues the keybed thump's level at full velocity (issue #64); `0`
+    /// silences the action noise. Same drop-not-block behaviour as
+    /// [`AudioSession::note_on`].
+    pub fn set_action_noise_gain(&mut self, gain: f32) -> bool {
+        self.producer
+            .push(Command::SetActionNoiseGain { gain })
+            .is_ok()
+    }
+
     /// Queues the soft (una corda) pedal's state (issue #59). Same
     /// drop-not-block behaviour as [`AudioSession::note_on`].
     pub fn set_soft_pedal(&mut self, down: bool) -> bool {

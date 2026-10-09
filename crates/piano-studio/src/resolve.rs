@@ -13,8 +13,8 @@ use piano_core::hammer::{DEFAULT_HAMMER, HammerConfig};
 use piano_core::room::DEFAULT_ROOM_MIX;
 use piano_core::soundboard::{DEFAULT_MODE_BRIDGE_COUPLING, SoundboardMode};
 use piano_core::string::{
-    DEFAULT_DAMPING, DEFAULT_EXCITATION_NOISE_MIX, DEFAULT_LOOP_ZERO_MIX, DEFAULT_STRIKE_POSITION,
-    DEFAULT_SUSTAIN,
+    DEFAULT_DAMPER_STRENGTH, DEFAULT_DAMPING, DEFAULT_EXCITATION_NOISE_MIX, DEFAULT_LOOP_ZERO_MIX,
+    DEFAULT_STRIKE_POSITION, DEFAULT_SUSTAIN,
 };
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
@@ -99,6 +99,8 @@ pub struct ResolvedPiano {
     pub phantom_gain: f32,
     /// See [`piano_audio::AudioSession::set_duplex_gain`].
     pub duplex_gain: f32,
+    /// See [`piano_audio::AudioSession::set_damper_strength`].
+    pub damper_strength: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -190,6 +192,10 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .unwrap_or(DEFAULT_THUMP_GAIN),
         phantom_gain: file.instrument.phantom_gain.unwrap_or(PHANTOM_GAIN_IN_BASS),
         duplex_gain: file.instrument.duplex_gain.unwrap_or(DUPLEX_GAIN),
+        damper_strength: file
+            .instrument
+            .damper_strength
+            .unwrap_or(DEFAULT_DAMPER_STRENGTH),
     }
 }
 

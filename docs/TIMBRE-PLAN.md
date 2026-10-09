@@ -350,7 +350,7 @@ changes the timbre:
 | `loop_zero_mix` | `string.rs` | loop-filter zero — added this week, wired nowhere |
 | ~~`SOUNDBOARD_MIX_GAIN` = 0.5~~ | `engine.rs` | **now `soundboard_mix_gain`, exposed live + file (#78)** |
 | ~~`MODE_COUNT` = 8~~ | `soundboard.rs` | **now 28; still a compile-time constant (audio thread cannot reallocate), but every mode's fields and the mix gain are on the cascade (#78)** |
-| `RELEASE_LOSS_MULTIPLIER` = 0.4 | `string.rs` | damper strength |
+| ~~`RELEASE_LOSS_MULTIPLIER` = 0.4~~ | `string.rs` | **now `damper_strength` (`1 − 0.4`), exposed live + file (#82)** |
 | `EXCITATION_POLES` = 2 | `string.rs` | attack rolloff order |
 | `EXCITATION_BANDWIDTH_FACTOR` = 15.0 | `hammer.rs` | attack brightness |
 | `MIN/MAX_EXCITATION_CUTOFF_HZ` | `hammer.rs` | attack brightness bounds |

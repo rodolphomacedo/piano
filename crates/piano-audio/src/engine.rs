@@ -242,6 +242,7 @@ impl Engine {
             Command::SetActionNoiseGain { gain } => self.set_action_noise_gain(gain),
             Command::SetPhantomGain { gain } => self.set_phantom_gain(gain),
             Command::SetDuplexGain { gain } => self.set_duplex_gain(gain),
+            Command::SetDamperStrength { strength } => self.set_damper_strength(strength),
             Command::SetRoomMix { mix } => self.set_room_mix(mix),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
@@ -392,6 +393,18 @@ impl Engine {
     /// [`UnisonGroup::set_damping`](piano_core::UnisonGroup::set_damping).
     /// A global "brightness" knob, not per-key: a hardware controller has
     /// one physical knob, not eighty-eight.
+    /// Sets every string's damper strength. See
+    /// [`Command::SetDamperStrength`].
+    pub(crate) fn set_damper_strength(&mut self, strength: f32) {
+        for strings in self
+            .voices
+            .iter_mut()
+            .filter_map(|voice| voice.strings.as_mut())
+        {
+            strings.set_damper_strength(strength);
+        }
+    }
+
     fn set_damping(&mut self, damping: f32) {
         for voice in &mut self.voices {
             if let Some(strings) = voice.strings.as_mut() {

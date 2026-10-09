@@ -76,6 +76,7 @@ fn setting_key(command: &Command) -> Option<SettingKey> {
         Command::SetPhantomGain { .. } => global(7),
         Command::SetRoomMix { .. } => global(8),
         Command::SetDuplexGain { .. } => global(21),
+        Command::SetDamperStrength { .. } => global(25),
         Command::SetSoundboardMixGain { .. } => global(9),
         Command::SetMasterGain { .. } => global(10),
         Command::SetVelocityCurve { .. } => global(11),

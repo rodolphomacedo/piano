@@ -212,6 +212,14 @@ impl UnisonGroup {
         }
     }
 
+    /// Sets every string's damper strength. See
+    /// [`PluckedString::set_damper_strength`].
+    pub fn set_damper_strength(&mut self, strength: f32) {
+        for string in self.strings.iter_mut().flatten() {
+            string.set_damper_strength(strength);
+        }
+    }
+
     /// Releases every string in the group. See [`PluckedString::release`].
     pub fn release(&mut self) {
         for string in self.strings.iter_mut().flatten() {

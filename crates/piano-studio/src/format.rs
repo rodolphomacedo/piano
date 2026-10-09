@@ -197,6 +197,9 @@ pub struct Instrument {
     /// How strongly the treble's duplex segments ring. `None` leaves the
     /// engine default. See [`piano_audio::AudioSession::set_duplex_gain`].
     pub duplex_gain: Option<f32>,
+    /// How hard the dampers grip a string once seated. `None` leaves the
+    /// engine default. See [`piano_audio::AudioSession::set_damper_strength`].
+    pub damper_strength: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

@@ -158,6 +158,11 @@ pub enum StudioCommand {
         /// The treble's duplex-segment gain.
         gain: f32,
     },
+    /// See [`piano_audio::AudioSession::set_damper_strength`].
+    SetDamperStrength {
+        /// Fraction of a wave a seated damper takes per round trip.
+        strength: f32,
+    },
     /// See [`piano_audio::AudioSession::set_room_mix`].
     SetRoomMix {
         /// The room's new wet level; `0` is a dry instrument.

@@ -553,6 +553,35 @@ fn release_makes_a_ringing_note_decay_much_faster() {
     );
 }
 
+/// Samples a released string at 220 Hz takes to fall silent with the given
+/// damper strength.
+fn samples_to_silence_after_release(strength: f32) -> usize {
+    let mut string = string_at(220.0);
+    string.set_damper_strength(strength);
+    string.pluck(1.0);
+    for _ in 0..2_000 {
+        string.process();
+    }
+    string.release();
+    (0..200_000)
+        .find(|_| {
+            string.process();
+            string.is_silent()
+        })
+        .unwrap_or(200_000)
+}
+
+#[test]
+fn a_stronger_damper_stops_a_released_note_sooner() {
+    let weak = samples_to_silence_after_release(MIN_DAMPER_STRENGTH);
+    let default = samples_to_silence_after_release(DEFAULT_DAMPER_STRENGTH);
+    let strong = samples_to_silence_after_release(MAX_DAMPER_STRENGTH);
+    assert!(
+        strong < default && default < weak,
+        "{strong} / {default} / {weak}"
+    );
+}
+
 #[test]
 fn release_before_plucking_is_harmless() {
     let mut string = string_at(440.0);
@@ -924,6 +953,21 @@ proptest! {
                 prop_assert!(sample.is_finite());
                 prop_assert!(sample.abs() < 4.0, "sample {sample} escaped at {frequency} Hz");
             }
+        }
+    }
+
+    /// Any damper strength, `NaN` and infinities included, leaves a
+    /// released string finite and bounded.
+    #[test]
+    fn any_damper_strength_keeps_the_string_bounded(strength in proptest::num::f32::ANY) {
+        let mut string = string_at(220.0);
+        string.pluck(1.0);
+        string.set_damper_strength(strength);
+        string.release();
+        for _ in 0..2_000 {
+            let sample = string.process();
+            prop_assert!(sample.is_finite());
+            prop_assert!(sample.abs() < 4.0, "sample {sample} escaped at {strength}");
         }
     }
 

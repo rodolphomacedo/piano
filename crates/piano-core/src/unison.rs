@@ -78,7 +78,7 @@ pub const MAX_UNISON_STRINGS: usize = 3;
 /// pumping energy into those modes continuously, treble trichords lost up
 /// to 96% of their level against three independent strings by 0.4 s
 /// (issue #96).
-const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.75;
+pub const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.75;
 
 /// Highest share accepted. At `1.0` a differential mode would lose nothing
 /// at DC (the loss filter passes DC unchanged), so a struck group could
@@ -439,7 +439,7 @@ struct StringSample {
 /// Kept smaller than [`DEFAULT_LOCAL_COUPLING_GAIN`]: cross-key sympathetic
 /// resonance is a subtler effect than one note's own unison beating — same
 /// literature-order-of-magnitude honesty note as that constant.
-const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
+pub const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.08;
 
 /// The mean dispersed signal across this group's `receptive_count`
 /// receptive strings — `0.0` when none are (nothing to contribute; also

@@ -38,7 +38,6 @@
 //! carry the whole loss has to drag the filter's corner down far enough to
 //! take the harmonics with it. See [`solve_loop_losses`].
 
-use piano_core::dispersion::MAX_INHARMONICITY;
 use piano_core::filter::LoopFilter;
 use piano_core::string::{SILENCE_THRESHOLD, StringConfig};
 use piano_core::{SampleRate, math};
@@ -99,14 +98,6 @@ const MID_BRIGHTNESS_DECAY_SECONDS: f32 = 1.5;
 /// Target ring-out time for [`BRIGHTNESS_PARTIAL`] at C8 — see
 /// [`BASS_MID_PARTIAL_DECAY_SECONDS`].
 const TREBLE_BRIGHTNESS_DECAY_SECONDS: f32 = 0.3;
-
-/// Inharmonicity `B` at A0. Fletcher & Rossing's range, already cited in
-/// [`piano_core::dispersion`], bottoms out "roughly 0.0001 in the bass".
-const BASS_INHARMONICITY: f32 = 0.000_1;
-
-/// Inharmonicity `B` at C8: the top of the same cited range,
-/// [`MAX_INHARMONICITY`].
-const TREBLE_INHARMONICITY: f32 = MAX_INHARMONICITY;
 
 /// Hammer strike position at A0, as a fraction of the loop length. The
 /// classic ~1/8, which puts the strike-position comb's notch on the 8th
@@ -441,38 +432,6 @@ fn anchor_damping_pin(
     } else {
         None
     }
-}
-
-/// Interpolates inharmonicity across the three register anchors. The
-/// middle anchor's default (when [`RegisterAnchorOverride::inharmonicity`]
-/// leaves it unset) is computed from the *resolved* bass/treble values at
-/// `mid_hz`, which sit exactly on the straight line between them — so the
-/// three-point curve this produces degenerates to the same bass-to-treble
-/// line [`voicing_for_key`] always used, unless the file overrides the
-/// middle anchor specifically.
-fn inharmonicity_for(
-    frequency: f32,
-    bass_hz: f32,
-    mid_hz: f32,
-    treble_hz: f32,
-    registers: RegisterOverrides,
-) -> f32 {
-    let clamp = |value: f32| math::clamp_or_low(value, 0.0, MAX_INHARMONICITY);
-    let bass = clamp(registers.bass.inharmonicity.unwrap_or(BASS_INHARMONICITY));
-    let treble = clamp(
-        registers
-            .treble
-            .inharmonicity
-            .unwrap_or(TREBLE_INHARMONICITY),
-    );
-    let mid_default = interpolate_log_frequency(mid_hz, bass_hz, bass, treble_hz, treble);
-    let mid = clamp(registers.mid.inharmonicity.unwrap_or(mid_default));
-    interpolate_two_segments(
-        frequency,
-        (bass_hz, bass),
-        (mid_hz, mid),
-        (treble_hz, treble),
-    )
 }
 
 /// Interpolates all three of this key's decay targets across the register
@@ -835,6 +794,10 @@ fn interpolate_two_segments(
         interpolate_log_frequency(frequency, mid.0, mid.1, high.0, high.1)
     }
 }
+
+#[path = "voicing_inharmonicity.rs"]
+mod inharmonicity;
+use inharmonicity::inharmonicity_for;
 
 // Split into `voicing_tests.rs` to keep this file under the project's
 // 500-line limit (`CONTRIBUTING.md`) — still compiles as `voicing::tests`.

@@ -1,0 +1,48 @@
+name: Fuzz
+
+# Arbitrary command streams into the whole engine (issue #56). Too slow for
+# every pull request — each input builds a full 88-key engine — so it runs
+# weekly, and on demand from the Actions tab.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  command_stream:
+    name: Fuzz the engine's command stream
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the nightly toolchain cargo-fuzz needs
+        run: rustup toolchain install nightly --profile minimal
+
+      # piano-audio links against ALSA through cpal; see ci.yml.
+      - name: Install ALSA development headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # -len_control=0 lets inputs grow to max_len at once: the bugs worth
+      # finding here are long orderings, not short ones.
+      - name: Fuzz for 30 minutes from the committed corpus
+        run: >
+          cargo +nightly fuzz run command_stream fuzz/corpus/command_stream --
+          -max_total_time=1800 -max_len=4096 -len_control=0
+
+      - name: Keep any crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts

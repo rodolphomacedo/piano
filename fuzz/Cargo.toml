@@ -1,0 +1,25 @@
+[package]
+name = "piano-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+piano-audio = { path = "../crates/piano-audio" }
+
+# Kept out of the main workspace: cargo-fuzz needs nightly and a sanitizer
+# build, and the workspace must stay buildable on stable.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "command_stream"
+path = "fuzz_targets/command_stream.rs"
+test = false
+doc = false
+bench = false

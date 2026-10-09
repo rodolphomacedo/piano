@@ -60,6 +60,15 @@ These are the rules this codebase is actually held to.
 - **Determinism is required.** The excitation is a seeded PRNG precisely so that a
   failing render can be reproduced exactly.
 
+- **The whole engine is fuzzed.** `piano_audio::fuzzing` decodes any byte string
+  into a sample rate and a stream of commands — notes, pedals and live settings,
+  `NaN`s and out-of-range indices included — and checks that every output sample
+  is finite and inside `[-1, 1]`. A proptest drives it on stable in every CI run,
+  under the allocation guard. `cargo-fuzz` drives it with coverage guidance every
+  week (`.github/workflows/fuzz.yml`), and locally with
+  `cargo +nightly fuzz run command_stream fuzz/corpus/command_stream`. A crashing
+  input lands in `fuzz/artifacts/`. Once its fix is in, add it to the corpus.
+
 Coverage is not yet gated, but every new module is expected to arrive with tests.
 The long-term target is 100 % line and branch coverage in `piano-core`.
 

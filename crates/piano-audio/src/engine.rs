@@ -226,7 +226,7 @@ impl Engine {
         }
     }
 
-    fn apply(&mut self, command: Command) {
+    pub(crate) fn apply(&mut self, command: Command) {
         match command {
             Command::NoteOn { midi, velocity } => self.note_on(midi, velocity),
             Command::AllNotesOff => self.silence_all(),

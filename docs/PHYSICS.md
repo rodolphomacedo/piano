@@ -590,13 +590,34 @@ note's spectral centroid only a few percent (a spectral centroid is a
 poor detector of a fast-decaying body under a broadband note), but changes
 its radiated energy by 3–10% in the low and mid register.
 
+## Why the bass has partials no string harmonic explains (#54)
+
+Transverse vibration stretches a string, and the tension change goes with
+the *square* of the displacement. That square holds every sum `f_m + f_n`
+of the string's partials, and it reaches the bridge longitudinally. Conklin
+(JASA 105(1), 1999) measured these "phantom partials" in real pianos; Bank
+and Sujbert (JASA 117(4), 2005) traced them to the longitudinal motion and
+found them strong in the bass and tenor, negligible in the short treble
+strings. They are the metallic edge of a hard-struck low note.
+
+`piano_core::phantom::PhantomPartials` squares each voice's output,
+highpasses away the DC the square carries (20 Hz corner), and adds it back
+at a per-key gain (`voicing::phantom_gain_for_key`): full up to A2, tapering
+to nothing by E5. Being quadratic, the phantoms grow 2 dB for every 1 dB the
+note grows, so they are near-absent at *piano* and plainly there at
+*fortissimo*. Measured (`piano-audio/tests/phantom_partials.rs`): at *ff*
+they sit about 23-27 dB under the note across A0-A2 and rise more than
+10 dB relative to it from *p* to *ff*. The string's free longitudinal
+resonances are not modelled: their frequencies are scale-design data with
+no published source this project can use yet (#65).
+
 ## What the current model still does not do
 
 Stated plainly, because these are the gaps a later milestone would close:
 
 | Missing | Consequence | Milestone |
 |---|---|---|
-| **Longitudinal modes** | No metallic "phantom partials" of the low bass. | Backlog |
+| **Free longitudinal modes** | The phantom partials' nonlinear mixing is modelled (above); the string's own longitudinal resonances, at frequencies set by scale design, are not (#65). | Backlog |
 | **Simultaneous hammer/string coupling** | The hammer model (above) does not yet feed the string's own motion back into the contact force during the strike. | Backlog |
 | **Per-string bridge admittance** | Every voice couples to the shared bridge bus at the same fixed gain; a real bridge's admittance varies with frequency and string position. | Backlog |
 | **The hammer excitation's noise burst still does not concentrate perfectly on the resonant fundamental** | `PluckedString::pluck` seeds the loop with broadband noise, shaped only in envelope and overall cutoff (see "Why the excitation is a shaped noise burst", above) — most of that energy is off-resonance and the delay line's own comb selectivity cancels it out over the first several hundred round trips, *regardless* of how gentle the loop filter is. `PendingContact` (see "Why the zero had to become a second, per-string parameter", above) closes most of the resulting shortfall by continuing to inject the hammer's own contact force for as many round trips as it actually lasts, rather than truncating it to one loop length — measured on a real, calibrated C8: about 1.4 s now reached, close to the 1-2 s target. What is left is genuinely the excitation's spectral concentration, not truncation, and it shows up in two places. First, the *envelope* reaches silence sooner than the fundamental does, because most of what the envelope is tracking is off-resonance noise: measured to `SILENCE_THRESHOLD`, A0 lands at about 9.6 s and A4 at about 6.8 s against analytic loop targets of 33.9 s and 10.7 s (the fundamental itself does reach those — see "Why the loop is solved against three decay times, not one"). Second, and worse, the upper partials are barely excited at all: A4's attack has H2 at −57 dB and H3 at −76 dB relative to its fundamental, so there is almost nothing for the loop filter's now-correct slope to act on. Both close with a deterministic hammer pulse injected at a strike position rather than a noise burst (`docs/TIMBRE-PLAN.md`, F2). | Backlog |

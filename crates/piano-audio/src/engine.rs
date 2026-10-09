@@ -39,6 +39,7 @@
 //! [`Engine::process_chunk`]'s skip condition.
 
 use piano_core::action::ActionNoise;
+use piano_core::phantom::PhantomPartials;
 use piano_core::soundboard::SoundboardMode;
 use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer, math};
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
@@ -119,6 +120,8 @@ struct Voice {
     strings: Option<UnisonGroup>,
     /// This key's regulation gain, [`voicing::level_for_key`].
     level: f32,
+    /// This key's nonlinear tension mixing ([`voicing::phantom_gain_for_key`]).
+    phantom: PhantomPartials,
     /// `true` from [`Engine::note_on`] until the matching
     /// [`Engine::note_off`], regardless of pedal state. Distinct from
     /// `pending_pedal_release`: this tracks whether a *finger* is
@@ -245,7 +248,8 @@ impl Engine {
                 continue;
             }
             for (index, sample) in chunk.iter_mut().enumerate() {
-                *sample += voice.level * strings.process_with_bridge(&mut self.bridge, index);
+                let transverse = voice.level * strings.process_with_bridge(&mut self.bridge, index);
+                *sample += voice.phantom.process(transverse);
             }
         }
         for sample in chunk.iter_mut() {
@@ -269,6 +273,7 @@ impl Engine {
             Command::SostenutoPedal { down } => self.set_sostenuto_pedal(down),
             Command::SoftPedal { down } => self.set_soft_pedal(down),
             Command::SetActionNoiseGain { gain } => self.set_action_noise_gain(gain),
+            Command::SetPhantomGain { gain } => self.set_phantom_gain(gain),
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),
@@ -311,6 +316,16 @@ impl Engine {
     /// Sets the keybed thump's level. See [`Command::SetActionNoiseGain`].
     pub(crate) fn set_action_noise_gain(&mut self, gain: f32) {
         self.action.set_gain(gain);
+    }
+
+    /// Rescales every key's phantom gain so the bass sits at `gain`. See
+    /// [`Command::SetPhantomGain`].
+    pub(crate) fn set_phantom_gain(&mut self, gain: f32) {
+        let scale = gain / voicing::PHANTOM_GAIN_IN_BASS;
+        for (midi, voice) in (LOWEST_PIANO_KEY..).zip(self.voices.iter_mut()) {
+            let key_gain = PianoKey::from_midi(midi).map_or(0.0, voicing::phantom_gain_for_key);
+            voice.phantom.set_gain(scale * key_gain);
+        }
     }
 
     /// Re-strikes the voice already allocated for `midi`. Silently ignores
@@ -516,6 +531,7 @@ fn voice_for_key(
         return Voice {
             strings: None,
             level: 1.0,
+            phantom: PhantomPartials::new(0.0, sample_rate.hertz()),
             held: false,
             sostenuto_latched: false,
         };
@@ -525,6 +541,7 @@ fn voice_for_key(
     Voice {
         strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),
         level: voicing::level_for_key(key),
+        phantom: PhantomPartials::new(voicing::phantom_gain_for_key(key), sample_rate.hertz()),
         held: false,
         sostenuto_latched: false,
     }

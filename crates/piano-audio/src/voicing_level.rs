@@ -73,3 +73,26 @@ pub const LEVEL_CORRECTION_DB: [f32; 88] = [
     4.1, 3.2, 3.0, 2.4, 2.8, 2.5, 1.7, 1.9, 2.2, 1.6, -0.1, -0.7, -1.2, -2.7, -3.7, -4.6, -4.7,
     -4.9, -5.2, -4.9, -4.7, -5.1, -5.0, -3.0, -1.8, -3.3, -1.1, 1.1, 3.9, 3.2, 6.0, 4.5, 2.8, 0.7,
 ];
+
+/// How strongly `key` mixes phantom partials ([`piano_core::phantom`]):
+/// [`PHANTOM_GAIN_IN_BASS`] up to A2, tapering to nothing by E5. Conklin
+/// (1999) and Bank & Sujbert (2005) find the nonlinear mixing prominent in
+/// the bass and tenor, where long, heavily wound strings stretch the most,
+/// and negligible in the short treble strings.
+#[must_use]
+pub fn phantom_gain_for_key(key: PianoKey) -> f32 {
+    let midi = f32::from(key.midi_number());
+    let taper =
+        (PHANTOM_TAPER_END_MIDI - midi) / (PHANTOM_TAPER_END_MIDI - PHANTOM_FULL_UNTIL_MIDI);
+    PHANTOM_GAIN_IN_BASS * math::clamp_or_low(taper, 0.0, 1.0)
+}
+
+/// Phantom gain below A2, set by measurement: see `PHYSICS.md`'s phantom
+/// partials section for the level it puts the sum-frequency partials at.
+pub const PHANTOM_GAIN_IN_BASS: f32 = 0.1;
+
+/// Last key with the full bass phantom gain: A2.
+const PHANTOM_FULL_UNTIL_MIDI: f32 = 45.0;
+
+/// First key with no phantom partials: E5.
+const PHANTOM_TAPER_END_MIDI: f32 = 76.0;

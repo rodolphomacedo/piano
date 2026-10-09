@@ -70,6 +70,13 @@ pub(crate) enum Command {
         /// New peak level, clamped into `[0, MAX_THUMP_GAIN]`.
         gain: f32,
     },
+    /// Sets the bass's phantom-partial gain (issue #54); the tenor keeps
+    /// its taper relative to it and `0` turns phantoms off. See
+    /// [`crate::voicing::phantom_gain_for_key`].
+    SetPhantomGain {
+        /// New bass gain, clamped into `[0, MAX_PHANTOM_GAIN]`.
+        gain: f32,
+    },
     /// The soft pedal (CC67, issue #59): while down, every strike misses one
     /// string of each bichord and trichord. See
     /// [`piano_core::UnisonGroup::pluck_una_corda`].

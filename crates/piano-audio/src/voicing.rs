@@ -839,7 +839,10 @@ use inharmonicity::inharmonicity_for;
 
 #[path = "voicing_level.rs"]
 mod level;
-pub use level::{LEVEL_CORRECTION_DB, level_for_key, loudness_target_db};
+pub use level::{
+    LEVEL_CORRECTION_DB, PHANTOM_GAIN_IN_BASS, level_for_key, loudness_target_db,
+    phantom_gain_for_key,
+};
 
 // Split into `voicing_tests.rs` to keep this file under the project's
 // 500-line limit (`CONTRIBUTING.md`) — still compiles as `voicing::tests`.

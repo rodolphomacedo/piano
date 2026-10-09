@@ -174,6 +174,11 @@ Os três pedais do teclado MIDI funcionam:
   - `limiter_threshold` ("limiter threshold"): a partir de que volume o
     limitador de saída começa a segurar o som. Mais baixo protege acordes
     fortes de distorcer, mas achata a dinâmica; o padrão é `0.9`.
+  - `board_load_gain` ("soundboard load on strings"): quanto o tampo
+    "puxa" energia das cordas. Num piano de verdade, a nota que cai perto
+    de uma ressonância do tampo morre mais rápido, porque o tampo a absorve
+    melhor. `0` desliga esse efeito; o padrão é `1.0`; até `4.0` deixa o
+    efeito bem exagerado, bom para ouvir a diferença.
 - **Personalidade dos martelos** (no arquivo, não na página): num piano de
   verdade, cada martelo tem um feltro um pouco diferente do vizinho, por
   fabricação e desgaste, e é isso que dá "personalidade" ao teclado. O

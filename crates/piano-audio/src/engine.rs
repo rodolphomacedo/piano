@@ -261,6 +261,15 @@ impl Engine {
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),
+            Command::SetBoardLoadGain { gain } => {
+                for strings in self
+                    .voices
+                    .iter_mut()
+                    .filter_map(|voice| voice.strings.as_mut())
+                {
+                    strings.set_board_load_gain(gain);
+                }
+            }
             Command::SetLimiterThreshold { threshold } => {
                 self.limiter_threshold =
                     math::clamp_or_low(threshold, MIN_LIMITER_THRESHOLD, MAX_LIMITER_THRESHOLD);
@@ -448,6 +457,13 @@ impl Engine {
     /// [`Engine::voices`].
     fn set_soundboard_mode(&mut self, index: usize, mode: SoundboardMode) {
         self.soundboard.set_mode(index, mode);
+        for strings in self
+            .voices
+            .iter_mut()
+            .filter_map(|voice| voice.strings.as_mut())
+        {
+            strings.set_board_mode(index, mode);
+        }
     }
 
     /// Sets how much of the soundboard's radiated signal is mixed back in,

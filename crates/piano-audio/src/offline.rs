@@ -138,6 +138,11 @@ impl OfflineEngine {
         self.engine.apply(Command::SetRoomPredelay { milliseconds });
     }
 
+    /// Sets how strongly the soundboard loads the strings.
+    pub fn set_board_load_gain(&mut self, gain: f32) {
+        self.engine.apply(Command::SetBoardLoadGain { gain });
+    }
+
     /// Sets where the output limiter starts compressing.
     pub fn set_limiter_threshold(&mut self, threshold: f32) {
         self.engine

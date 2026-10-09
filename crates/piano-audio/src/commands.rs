@@ -147,6 +147,13 @@ pub(crate) enum Command {
         /// measured at); values above deliberately drive the limiter.
         gain: f32,
     },
+    /// Sets how strongly the soundboard loads the strings (issues #90,
+    /// #91); `0` turns the load off. Clamped into
+    /// `[0, piano_core::bridge_load::MAX_BOARD_LOAD_GAIN]` engine-side.
+    SetBoardLoadGain {
+        /// New load gain.
+        gain: f32,
+    },
     /// Sets where the output limiter starts compressing (issue #82),
     /// clamped into `[MIN_LIMITER_THRESHOLD, MAX_LIMITER_THRESHOLD]`
     /// engine-side; `NaN` lands on the minimum.

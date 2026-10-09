@@ -8,6 +8,7 @@
 //! `match` here knows its range, its command and its file field (#84).
 
 use piano_audio::limiter::{MAX_LIMITER_THRESHOLD, MIN_LIMITER_THRESHOLD};
+use piano_core::bridge_load::MAX_BOARD_LOAD_GAIN;
 use piano_core::room::{
     MAX_ROOM_PREDELAY_MILLISECONDS, MAX_ROOM_REVERB_SECONDS, MAX_ROOM_SIZE,
     MIN_ROOM_REVERB_SECONDS, MIN_ROOM_SIZE,
@@ -54,10 +55,13 @@ pub enum InstrumentParameter {
     /// scale: lower keeps loud chords further from clipping, at the cost of
     /// squeezing them.
     LimiterThreshold,
+    /// How strongly the soundboard's modes take energy from the strings:
+    /// higher makes notes near the board's resonances die away sooner.
+    BoardLoadGain,
 }
 
 /// Every [`InstrumentParameter`], in the order the page lists them.
-pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 13] = [
+pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 14] = [
     InstrumentParameter::RoomMix,
     InstrumentParameter::RoomSize,
     InstrumentParameter::RoomReverbSeconds,
@@ -68,6 +72,7 @@ pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 13] = [
     InstrumentParameter::PhantomGain,
     InstrumentParameter::DuplexGain,
     InstrumentParameter::DamperStrength,
+    InstrumentParameter::BoardLoadGain,
     InstrumentParameter::VelocityCurveExponent,
     InstrumentParameter::MasterGain,
     InstrumentParameter::LimiterThreshold,
@@ -107,6 +112,7 @@ impl InstrumentParameter {
             Self::RoomPredelay => {
                 ParameterRange::new(0.0, f64::from(MAX_ROOM_PREDELAY_MILLISECONDS), 0.5)
             }
+            Self::BoardLoadGain => ParameterRange::new(0.0, f64::from(MAX_BOARD_LOAD_GAIN), 0.05),
         }
     }
 
@@ -127,6 +133,7 @@ impl InstrumentParameter {
                 StudioCommand::SetRoomTrebleReverbSeconds { seconds: value }
             }
             Self::LimiterThreshold => StudioCommand::SetLimiterThreshold { threshold: value },
+            Self::BoardLoadGain => StudioCommand::SetBoardLoadGain { gain: value },
             Self::RoomPredelay => StudioCommand::SetRoomPredelay {
                 milliseconds: value,
             },
@@ -163,6 +170,8 @@ pub struct InstrumentSettings {
     pub room_predelay_milliseconds: f32,
     /// See [`InstrumentParameter::LimiterThreshold`].
     pub limiter_threshold: f32,
+    /// See [`InstrumentParameter::BoardLoadGain`].
+    pub board_load_gain: f32,
 }
 
 impl InstrumentSettings {
@@ -183,6 +192,7 @@ impl InstrumentSettings {
             room_treble_reverb_seconds: resolved.room_treble_reverb_seconds,
             room_predelay_milliseconds: resolved.room_predelay_milliseconds,
             limiter_threshold: resolved.limiter_threshold,
+            board_load_gain: resolved.board_load_gain,
         }
     }
 
@@ -201,6 +211,7 @@ impl InstrumentSettings {
             InstrumentParameter::RoomTrebleReverbSeconds => &mut self.room_treble_reverb_seconds,
             InstrumentParameter::RoomPredelay => &mut self.room_predelay_milliseconds,
             InstrumentParameter::LimiterThreshold => &mut self.limiter_threshold,
+            InstrumentParameter::BoardLoadGain => &mut self.board_load_gain,
         }
     }
 
@@ -236,6 +247,7 @@ impl InstrumentSettings {
         instrument.room_treble_reverb_seconds = Some(self.room_treble_reverb_seconds);
         instrument.room_predelay_milliseconds = Some(self.room_predelay_milliseconds);
         instrument.limiter_threshold = Some(self.limiter_threshold);
+        instrument.board_load_gain = Some(self.board_load_gain);
     }
 }
 
@@ -268,6 +280,8 @@ pub struct InstrumentRanges {
     pub room_predelay_milliseconds: ParameterRange,
     /// See [`InstrumentParameter::LimiterThreshold`].
     pub limiter_threshold: ParameterRange,
+    /// See [`InstrumentParameter::BoardLoadGain`].
+    pub board_load_gain: ParameterRange,
 }
 
 impl Default for InstrumentRanges {
@@ -286,6 +300,7 @@ impl Default for InstrumentRanges {
             room_treble_reverb_seconds: InstrumentParameter::RoomTrebleReverbSeconds.range(),
             room_predelay_milliseconds: InstrumentParameter::RoomPredelay.range(),
             limiter_threshold: InstrumentParameter::LimiterThreshold.range(),
+            board_load_gain: InstrumentParameter::BoardLoadGain.range(),
         }
     }
 }
@@ -311,6 +326,7 @@ mod tests {
             room_treble_reverb_seconds: 0.5,
             room_predelay_milliseconds: 12.0,
             limiter_threshold: 0.9,
+            board_load_gain: 1.0,
         }
     }
 

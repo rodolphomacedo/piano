@@ -108,6 +108,8 @@ pub struct ResolvedPiano {
     pub room_predelay_milliseconds: f32,
     /// See [`piano_audio::AudioSession::set_limiter_threshold`].
     pub limiter_threshold: f32,
+    /// See [`piano_audio::AudioSession::set_board_load_gain`].
+    pub board_load_gain: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -220,6 +222,10 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .instrument
             .limiter_threshold
             .unwrap_or(piano_audio::limiter::DEFAULT_LIMITER_THRESHOLD),
+        board_load_gain: file
+            .instrument
+            .board_load_gain
+            .unwrap_or(piano_core::bridge_load::DEFAULT_BOARD_LOAD_GAIN),
     }
 }
 

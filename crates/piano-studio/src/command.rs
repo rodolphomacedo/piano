@@ -193,6 +193,11 @@ pub enum StudioCommand {
         /// Where the limiter starts compressing, as a fraction of full scale.
         threshold: f32,
     },
+    /// See [`piano_audio::AudioSession::set_board_load_gain`].
+    SetBoardLoadGain {
+        /// How strongly the soundboard's modes take energy from the strings.
+        gain: f32,
+    },
     /// See [`piano_audio::AudioSession::set_master_gain`].
     SetMasterGain {
         /// The new master output gain, applied just before the limiter.

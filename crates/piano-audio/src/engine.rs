@@ -244,6 +244,14 @@ impl Engine {
             Command::SetDuplexGain { gain } => self.set_duplex_gain(gain),
             Command::SetDamperStrength { strength } => self.set_damper_strength(strength),
             Command::SetRoomMix { mix } => self.set_room_mix(mix),
+            Command::SetRoomSize { size } => self.room.set_size(size),
+            Command::SetRoomReverbSeconds { seconds } => self.room.set_reverb_seconds(seconds),
+            Command::SetRoomTrebleReverbSeconds { seconds } => {
+                self.room.set_treble_reverb_seconds(seconds);
+            }
+            Command::SetRoomPredelay { milliseconds } => {
+                self.room.set_predelay_milliseconds(milliseconds);
+            }
             Command::SetSoundboardMode { index, mode } => self.set_soundboard_mode(index, mode),
             Command::SetSoundboardMixGain { gain } => self.set_soundboard_mix_gain(gain),
             Command::SetMasterGain { gain } => self.set_master_gain(gain),

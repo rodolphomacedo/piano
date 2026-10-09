@@ -200,6 +200,18 @@ pub struct Instrument {
     /// How hard the dampers grip a string once seated. `None` leaves the
     /// engine default. See [`piano_audio::AudioSession::set_damper_strength`].
     pub damper_strength: Option<f32>,
+    /// How big the room is: how far apart its first reflections arrive. `None` leaves the engine default. See
+    /// [`piano_audio::AudioSession::set_room_size`].
+    pub room_size: Option<f32>,
+    /// How long the room rings in the bass, in seconds. `None` leaves the engine default. See
+    /// [`piano_audio::AudioSession::set_room_reverb_seconds`].
+    pub room_reverb_seconds: Option<f32>,
+    /// How long the room rings in the treble, in seconds: lower is a darker room. `None` leaves the engine default. See
+    /// [`piano_audio::AudioSession::set_room_treble_reverb_seconds`].
+    pub room_treble_reverb_seconds: Option<f32>,
+    /// Silence before the room answers, in milliseconds: longer sounds like a farther wall. `None` leaves the engine default. See
+    /// [`piano_audio::AudioSession::set_room_predelay`].
+    pub room_predelay_milliseconds: Option<f32>,
     /// See [`BridgeOverrides`].
     #[serde(default)]
     pub bridge: BridgeOverrides,

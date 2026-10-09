@@ -392,6 +392,10 @@ const MODE_PARAMETERS = [
 
 const INSTRUMENT_PARAMETERS = [
   { key: "room_mix", label: "room mix" },
+  { key: "room_size", label: "room size" },
+  { key: "room_reverb_seconds", label: "room reverb (bass), s" },
+  { key: "room_treble_reverb_seconds", label: "room reverb (treble), s" },
+  { key: "room_predelay_milliseconds", label: "room predelay, ms" },
   { key: "soundboard_mix_gain", label: "soundboard mix" },
   { key: "action_noise_gain", label: "action noise" },
   { key: "phantom_gain", label: "phantom partials (bass)" },

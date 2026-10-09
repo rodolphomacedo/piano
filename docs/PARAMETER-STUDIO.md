@@ -108,6 +108,10 @@ a single bridge, not a string):
 | `bridge.local_coupling_gain` | No — `unison::LOCAL_COUPLING_GAIN`, a module constant |
 | `bridge.global_coupling_gain` | No — `unison::GLOBAL_COUPLING_GAIN`, a module constant |
 | `damper_strength` | Yes — `piano_core::string::DEFAULT_DAMPER_STRENGTH` (0.6), live and in the file since #82 |
+| `room_size` | Yes — `piano_core::room::DEFAULT_ROOM_SIZE` (1.0, range 0.5–2.0): scales the spacing of the room's reflections |
+| `room_reverb_seconds` | Yes — `piano_core::room::DEFAULT_ROOM_REVERB_SECONDS` (1.8 s, range 0.1–8): reverberation time in the bass |
+| `room_treble_reverb_seconds` | Yes — `piano_core::room::DEFAULT_ROOM_TREBLE_REVERB_SECONDS` (0.5 s, range 0.1–8): reverberation time at Nyquist |
+| `room_predelay_milliseconds` | Yes — `piano_core::room::DEFAULT_ROOM_PREDELAY_MILLISECONDS` (12 ms, range 0–100): silence before the room answers |
 
 **Groups**: a name plus a list of `{midi, string_index}` pairs plus a set of
 values. Applying a group resolves to N individual per-string writes — the
@@ -158,6 +162,10 @@ strings[]  (explicit, one entry per string)
     "master_gain": 1.0,
     "velocity_curve_exponent": 1.0,
     "damper_strength": 0.6,
+    "room_size": 1.0,
+    "room_reverb_seconds": 1.8,
+    "room_treble_reverb_seconds": 0.5,
+    "room_predelay_milliseconds": 12.0,
     "bridge": { "local_coupling_gain": 0.75, "global_coupling_gain": 0.08 }
   }
 }

@@ -360,6 +360,7 @@ changes the timbre:
 | `BASS/MID/TREBLE_DECAY_SECONDS` | `voicing.rs` | register decay anchors |
 | `BASS/TREBLE_DAMPING`, `..._INHARMONICITY` | `voicing.rs` | register anchors |
 | `OUTPUT_LIMITER_THRESHOLD` = 0.9 | `limiter.rs` | output ceiling |
+| ~~room size, reverberation times, predelay~~ | `room.rs` | **now `room_size`, `room_reverb_seconds`, `room_treble_reverb_seconds`, `room_predelay_milliseconds`, exposed live + file (#82)** |
 | **master gain** | — | **does not exist** |
 | **velocity curve** | — | **does not exist**; raw MIDI velocity feeds `pluck` linearly |
 

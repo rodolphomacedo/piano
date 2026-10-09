@@ -95,6 +95,26 @@ pub(crate) enum Command {
         /// New wet level, clamped into `[0, MAX_ROOM_MIX]`.
         mix: f32,
     },
+    /// Scales the room: how far apart its first reflections are. See [`piano_core::room::Room::set_size`] (issue #82).
+    SetRoomSize {
+        /// Size factor, clamped into `[MIN_ROOM_SIZE, MAX_ROOM_SIZE]`.
+        size: f32,
+    },
+    /// Sets how long the room rings in the bass. See [`piano_core::room::Room::set_reverb_seconds`] (issue #82).
+    SetRoomReverbSeconds {
+        /// Low-frequency reverberation time, in seconds.
+        seconds: f32,
+    },
+    /// Sets how long the room rings at the top of the spectrum. See [`piano_core::room::Room::set_treble_reverb_seconds`] (issue #82).
+    SetRoomTrebleReverbSeconds {
+        /// Reverberation time at Nyquist, in seconds.
+        seconds: f32,
+    },
+    /// Sets the silence before the room answers. See [`piano_core::room::Room::set_predelay_milliseconds`] (issue #82).
+    SetRoomPredelay {
+        /// Predelay, in milliseconds.
+        milliseconds: f32,
+    },
     /// The soft pedal (CC67, issue #59): while down, every strike misses one
     /// string of each bichord and trichord. See
     /// [`piano_core::UnisonGroup::pluck_una_corda`].

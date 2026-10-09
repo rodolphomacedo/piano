@@ -14,10 +14,9 @@ use super::*;
 const DIAGNOSTIC_SAMPLE_RATE_HZ: f32 = 48_000.0;
 const DIAGNOSTIC_WINDOW: usize = 8192;
 
-/// Direct DFT magnitude at one frequency — same technique
-/// `tests/timbre_diagnostic.rs` uses, duplicated rather than shared because
-/// that file is a separate binary this crate's private `Engine` is not
-/// visible to.
+/// Direct DFT magnitude at one frequency — the same technique as
+/// `piano_analysis::spectrum::magnitude_at`, duplicated rather than shared
+/// because `piano-analysis` depends on this crate, not the other way round.
 fn magnitude_at(samples: &[f32], frequency_hz: f32) -> f32 {
     let omega = core::f32::consts::TAU * frequency_hz / DIAGNOSTIC_SAMPLE_RATE_HZ;
     let (mut real, mut imag) = (0.0f32, 0.0f32);

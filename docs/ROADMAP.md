@@ -595,7 +595,7 @@ milestone lives here.
 Raised out of order, ahead of M9–M15, after a listener reported the
 instrument as *"metallic, thin, nothing like a piano"* and the measurements
 in `docs/TIMBRE-PLAN.md` root-caused it. Everything here is gated on
-`crates/piano-audio/tests/timbre_diagnostic.rs`, written for that
+`crates/piano-analysis/tests/timbre_diagnostic.rs`, written for that
 investigation because no existing test could have caught the defect.
 
 The headline finding: the loop filter solved one equation with two free

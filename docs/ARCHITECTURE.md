@@ -23,6 +23,7 @@ piano-core     pure DSP. no_std + alloc. forbid(unsafe_code). No I/O, no threads
                  │        │        └── piano-cli   the `piano` binary
                  │        │
                  │        ├── piano-audio    realtime output via cpal (M2, done)
+                 │        │        └── piano-analysis  timbre measurements (std, offline)
                  │        └── piano-midi     MIDI input via midir (M2, done)
                  │
                  └── piano-wasm     browser bindings + AudioWorklet (M3, done)
@@ -54,6 +55,15 @@ a string vibrate" is how synthesisers become impossible to test.
 The slow, allocating, file-touching half: render a note to a buffer, write a WAV.
 Deliberately a different crate from `piano-core` so that nothing in it can ever be
 called from an audio callback by accident.
+
+### `piano-analysis`
+
+The timbre measurements: per-partial decay, the attack's harmonic profile and
+the spectral centroid over a note's life, on notes rendered by `piano-audio`'s
+offline engine or by one bare string. `piano analyze` and the diagnostic
+tests share it, so a number on the terminal is the same number a test
+asserts on. It allocates freely and owns the FFT dependency, which is why it
+is not part of `piano-audio`.
 
 ### `piano-cli`
 

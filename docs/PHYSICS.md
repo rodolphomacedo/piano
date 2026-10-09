@@ -94,7 +94,7 @@ what sets every upper partial's decay. Nobody had specified how fast the 8th
 partial should die, so nothing did.
 
 Measured, seconds for each partial to fall 20 dB from its own peak
-(`cargo test -p piano-audio --test timbre_diagnostic -- --nocapture`):
+(`cargo test -p piano-analysis --test timbre_diagnostic -- --nocapture`):
 
 | key | H1 | H8 | H1:H8 |
 |---|---|---|---|

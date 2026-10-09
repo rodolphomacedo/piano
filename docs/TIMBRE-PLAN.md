@@ -7,10 +7,10 @@ Everything in the "Diagnosis" section below is **measured**, not argued.
 Reproduce it with:
 
 ```sh
-cargo test --release -p piano-audio --test timbre_diagnostic -- --nocapture --test-threads=1
+cargo test --release -p piano-analysis --test timbre_diagnostic -- --nocapture --test-threads=1
 ```
 
-That harness (`crates/piano-audio/tests/timbre_diagnostic.rs`) was written
+That harness (`crates/piano-analysis/tests/timbre_diagnostic.rs`) was written
 for this investigation because no existing test could have caught the main
 defect: every prior spectral test measures the *attack* or the *total*
 amplitude decay, and the defect is in neither.
@@ -214,7 +214,7 @@ Found from a third listener report, after D8/D9 shipped: A5 specifically
 still sounded broken. Reproduce with:
 
 ```sh
-cargo test --release -p piano-audio --test timbre_diagnostic report_a5_unison_group -- --nocapture
+cargo test --release -p piano-analysis --test timbre_diagnostic report_a5_unison_group -- --nocapture
 cargo test -p piano-core --lib unison::tests::a_high_inharmonicity_trichord
 ```
 

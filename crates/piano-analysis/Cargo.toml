@@ -1,0 +1,24 @@
+[package]
+name = "piano-analysis"
+description = "Timbre measurements of rendered piano notes: per-partial decay, attack profile, spectral centroid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+piano-core = { workspace = true, features = ["std"] }
+piano-params = { workspace = true, features = ["std"] }
+piano-audio = { workspace = true }
+rustfft = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

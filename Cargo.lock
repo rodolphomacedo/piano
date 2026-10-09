@@ -1034,6 +1034,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "piano-analysis"
+version = "0.2.2"
+dependencies = [
+ "piano-audio",
+ "piano-core",
+ "piano-params",
+ "proptest",
+ "rustfft",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "piano-audio"
 version = "0.2.2"
 dependencies = [
@@ -1053,12 +1066,14 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "piano-analysis",
  "piano-audio",
  "piano-core",
  "piano-midi",
  "piano-params",
  "piano-render",
  "piano-studio",
+ "serde_json",
 ]
 
 [[package]]

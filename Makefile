@@ -83,7 +83,7 @@ test:
 
 test-audio:
 	@echo "$(BOLD)$(CYAN)Running audio timbre diagnostics...$(RESET)"
-	cargo test --release -p piano-audio --test timbre_diagnostic -- --nocapture
+	cargo test --release -p piano-analysis --test timbre_diagnostic -- --nocapture
 
 test-core-no-std:
 	@echo "$(BOLD)$(CYAN)Testing piano-core without std...$(RESET)"

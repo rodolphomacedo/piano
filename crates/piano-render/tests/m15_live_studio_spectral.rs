@@ -99,22 +99,29 @@ fn trichord() -> UnisonGroup {
     UnisonGroup::new(config, 3, sample_rate()).expect("A4 trichord is tunable")
 }
 
+/// Local coupling governs how slowly a note's differential modes decay
+/// (Weinreich's aftersound, issue #96) — invisible in the first few
+/// milliseconds by design, so this listens to the second half-second of the
+/// note rather than its attack.
 #[test]
-fn zeroing_local_coupling_gain_live_measurably_changes_the_spectral_centroid() {
-    let mut coupled = trichord();
+fn zeroing_local_coupling_gain_live_measurably_changes_the_aftersound() {
+    const LATE_START: usize = 48_000;
+    const LATE_LENGTH: usize = 24_000;
+    let late_rms = |group: &mut UnisonGroup| {
+        group.pluck(0.9);
+        let samples: Vec<f32> = (0..LATE_START + LATE_LENGTH)
+            .map(|_| group.process())
+            .collect();
+        let late = &samples[LATE_START..];
+        (late.iter().map(|s| s * s).sum::<f32>() / late.len() as f32).sqrt()
+    };
     let mut uncoupled = trichord();
     uncoupled.set_local_coupling_gain(0.0);
-
-    coupled.pluck(0.9);
-    uncoupled.pluck(0.9);
-    let coupled_samples: Vec<f32> = (0..4_096).map(|_| coupled.process()).collect();
-    let uncoupled_samples: Vec<f32> = (0..4_096).map(|_| uncoupled.process()).collect();
-
-    let coupled_centroid = spectral_centroid(&coupled_samples);
-    let uncoupled_centroid = spectral_centroid(&uncoupled_samples);
+    let coupled_rms = late_rms(&mut trichord());
+    let uncoupled_rms = late_rms(&mut uncoupled);
     assert!(
-        (coupled_centroid - uncoupled_centroid).abs() > 1.0,
-        "zeroing local_coupling_gain did not measurably shift the centroid: \
-         coupled {coupled_centroid} Hz, uncoupled {uncoupled_centroid} Hz"
+        (coupled_rms - uncoupled_rms).abs() > 0.05 * uncoupled_rms,
+        "zeroing local_coupling_gain did not measurably change the aftersound: \
+         coupled RMS {coupled_rms}, uncoupled {uncoupled_rms}"
     );
 }

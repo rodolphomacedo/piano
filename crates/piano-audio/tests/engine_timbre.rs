@@ -1,7 +1,7 @@
 //! Full-`Engine` timbre regression — issue #87 / `docs/MODEL-REVIEW.md` N1.
 //!
 //! Every other timbre measurement in this repository
-//! (`tests/timbre_diagnostic.rs`, `piano-render`'s `m*_spectral.rs`) renders
+//! (`piano-analysis/tests/timbre_diagnostic.rs`, `piano-render`'s `m*_spectral.rs`) renders
 //! a bare [`piano_core::PluckedString`] or a `PluckedString` + `Soundboard`
 //! pair. **None render the `Engine`** — the only path a player hears, and
 //! where unison coupling, the shared bridge bus, the soundboard mix and the
@@ -45,7 +45,7 @@ use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 const SAMPLE_RATE_HZ: f32 = 48_000.0;
 
 /// One analysis window for the windowed single-bin DFT, matching
-/// `tests/timbre_diagnostic.rs` — long enough to resolve a bass
+/// `piano-analysis/tests/timbre_diagnostic.rs` — long enough to resolve a bass
 /// fundamental, short enough to sample a treble note's decay several times.
 const WINDOW: usize = 8_192;
 
@@ -139,7 +139,7 @@ fn fundamental_hz(midi: u8) -> f32 {
 /// Magnitude of `samples` at exactly `frequency_hz` — a Hann-windowed DFT
 /// evaluated at one frequency, so a partial sitting sharp of an exact
 /// multiple is not snapped to the wrong bin. Same routine as
-/// `tests/timbre_diagnostic.rs`.
+/// `piano-analysis/tests/timbre_diagnostic.rs`.
 fn magnitude_at(samples: &[f32], frequency_hz: f32) -> f32 {
     let omega = std::f32::consts::TAU * frequency_hz / SAMPLE_RATE_HZ;
     let (mut real, mut imag) = (0.0f32, 0.0f32);
@@ -352,7 +352,7 @@ fn full_engine_timbre_holds_across_all_88_keys() {
 }
 
 /// Not a pass/fail: prints the full-engine measurement next to a bare-string
-/// one for a handful of keys, the way `tests/timbre_diagnostic.rs` is meant
+/// one for a handful of keys, the way `piano-analysis/tests/timbre_diagnostic.rs` is meant
 /// to be read. Run with `--nocapture`.
 #[test]
 fn report_full_engine_timbre() {

@@ -522,7 +522,7 @@ proptest! {
 
 /// Prints the solved table for every anchor key. Not a pass/fail — run it
 /// with `--nocapture` when re-tuning the anchors, the same way
-/// `tests/timbre_diagnostic.rs` is meant to be read.
+/// `piano-analysis/tests/timbre_diagnostic.rs` is meant to be read.
 #[test]
 fn report_the_solved_voicing_at_each_anchor() {
     let tuning = Tuning::default();

@@ -20,6 +20,7 @@ piano-audio = { path = "crates/piano-audio", version = "0.2.2" }
 piano-midi = { path = "crates/piano-midi", version = "0.2.2" }
 piano-wasm = { path = "crates/piano-wasm", version = "0.2.2" }
 piano-studio = { path = "crates/piano-studio", version = "0.2.2" }
+piano-analysis = { path = "crates/piano-analysis", version = "0.2.2" }
 libm = "0.2"
 hound = "3.5"
 anyhow = "1"

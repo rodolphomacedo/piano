@@ -175,6 +175,19 @@ from the 2–3 real physical strings each key is struck by (1 in the bass, 2
 in the tenor, 3 in the treble — the standard piano layout). Play several
 notes together for a chord. Esc or Ctrl+C in the terminal to quit.
 
+### Measure a note's timbre
+
+```sh
+cargo run --release -p piano-cli -- analyze --note A4            # a table to read
+cargo run --release -p piano-cli -- analyze --note C8 --json     # for a script
+```
+
+It reports how long each partial takes to fall 20 dB, the harmonic profile
+of the attack, and the spectral centroid and level once a second.
+`--source string` measures one bare string and `--source
+string-with-soundboard` adds the board; the default, `engine`, measures the
+whole instrument.
+
 ### Play in a browser tab
 
 No install beyond `rustup` and a one-time `wasm-bindgen-cli`:
@@ -247,6 +260,7 @@ it — see the "Ideas beyond M8" section of `docs/ROADMAP.md`.
 | `piano-audio` | Realtime output via `cpal`, the lock-free command queue, denormal control |
 | `piano-midi` | MIDI input via `midir`, decoded into the same command queue |
 | `piano-wasm` | Browser bindings via `wasm-bindgen`, driven from an `AudioWorklet` |
+| `piano-analysis` | Timbre measurements of rendered notes, shared by `piano analyze` and the diagnostic tests |
 | `piano-cli` | The `piano` binary |
 
 ## Documentation

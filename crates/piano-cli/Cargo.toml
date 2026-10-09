@@ -20,6 +20,8 @@ piano-render = { workspace = true }
 piano-audio = { workspace = true }
 piano-midi = { workspace = true }
 piano-studio = { workspace = true }
+piano-analysis = { workspace = true }
+serde_json = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }

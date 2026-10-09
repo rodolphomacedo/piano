@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod analyze;
 mod keyboard;
 mod midi;
 mod play;
@@ -20,6 +21,7 @@ use piano_core::SampleRate;
 use piano_params::{PianoKey, Tuning};
 use piano_render::{RenderRequest, render_note, write_wav};
 
+use analyze::AnalyzeArgs;
 use keyboard::KeyboardArgs;
 use midi::MidiArgs;
 use play::PlayArgs;
@@ -47,6 +49,9 @@ enum Command {
     /// Load a `.piano.json` parameter file and play it live, optionally
     /// from a MIDI controller.
     Studio(StudioArgs),
+    /// Measure one note's timbre: how fast each partial dies, the attack's
+    /// harmonic profile, and how its brightness falls as it rings.
+    Analyze(AnalyzeArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -84,6 +89,7 @@ fn main() -> Result<()> {
         Command::Keyboard(args) => keyboard::run(&args),
         Command::Midi(args) => midi::run(&args),
         Command::Studio(args) => studio::run(&args),
+        Command::Analyze(args) => analyze::run(&args),
     }
 }
 

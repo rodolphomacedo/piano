@@ -169,6 +169,32 @@ teclado do computador) e também conectar um teclado MIDI de verdade ao
 mesmo tempo, com `--midi`. Guia completo, com o erro mais comum explicado:
 [`docs/pt-BR/studio-como-usar.md`](studio-como-usar.md).
 
+### Medindo o timbre de uma nota
+
+Não é uma forma de tocar, mas ajuda a afinar o som: `piano analyze`
+renderiza uma nota e mostra, em números, o que o ouvido percebe. Cole no
+terminal, dentro da pasta do projeto:
+
+```sh
+cargo run --release -p piano-cli -- analyze --note A4
+```
+
+Ele imprime três blocos:
+
+- **quanto tempo cada parcial leva para cair 20 dB.** Num piano de verdade,
+  o H8 morre bem antes do H1;
+- **o perfil do ataque**, isto é, quanto cada parcial está abaixo da mais
+  forte no instante da martelada;
+- **o brilho ao longo do tempo** (centroide espectral). Num piano real ele
+  cai conforme a nota soa; se fica parado, o som parece metálico.
+
+Opções úteis:
+
+- `--note C8` mede outra nota;
+- `--seconds 12` renderiza por mais tempo;
+- `--source string` mede só a corda, sem caixa nem o resto;
+- `--json` imprime em formato de máquina.
+
 ## Por que o projeto é construído do jeito que é
 
 Três ideias guiam basicamente toda decisão técnica deste projeto:

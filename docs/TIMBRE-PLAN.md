@@ -533,9 +533,10 @@ keys carry a live tail depends on strike velocity: 56 of 88 at a soft
 strike (0.3 m/s) down to 50 of 88 at a hard one (0.9 m/s), the boundary
 falling between F3 and B3. The register-by-register calibration of lower
 `string_impedance` values
-is left open for a future pass; `hammer.rs`'s doc comments on
-`string_impedance`/`MIN_STRING_IMPEDANCE` explain why that range, as
-sanctioned today, is inert and would have nothing to calibrate against yet.
+is left open for a future pass. Since #95 the sanctioned range reaches down
+to `1e3`, where the contact is half as long again and the peak force halves,
+so there is now something to calibrate; `MIN_STRING_IMPEDANCE`'s doc comment
+carries the measured table.
 
 Cost, measured via Criterion (`crates/piano-core/benches/components.rs`):
 **239.01 ns/iteration** (95% CI 232.45–247.11 ns) for one

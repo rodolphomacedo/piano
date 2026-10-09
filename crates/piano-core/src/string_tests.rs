@@ -103,11 +103,9 @@ fn a_pending_contacts_tail_is_measurably_coupled_to_the_real_bridge_tap() {
     // full `process()` runs (`5.0e8` vs. the `MAX_STRING_IMPEDANCE`
     // default) and asserted `assert_ne!` on the raw `f32` output vectors.
     // That is not the comparison the design doc asked for, and it does not
-    // honestly test coupling: `hammer::MIN_STRING_IMPEDANCE`'s doc comment
-    // documents that `string_impedance`'s *entire* sanctioned range is
-    // nearly inert (the reactive `force / string_impedance` term contributes
-    // only ~7e-3 to ~7e-10 m/s against hammer velocities of 0.5-6 m/s,
-    // changing peak force ~0.13% end to end) — so `assert_ne!` on two such
+    // honestly test coupling: at the time, `string_impedance`'s whole
+    // sanctioned range sat above the band where it changes the contact
+    // (the floor was `1e6` until #95), so `assert_ne!` on two such
     // runs was only ever detecting float noise in low bits, and would keep
     // passing even if the actual coupling mechanism (`v_incoming`, unscaled
     // by impedance) were five-plus orders of magnitude weaker than intended

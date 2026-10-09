@@ -33,7 +33,8 @@ use std::path::Path;
 
 pub use command::StudioCommand;
 pub use edit::{
-    BridgeParameter, Edit, ModeParameter, ParameterRange, STRING_PARAMETERS, StringParameter,
+    BridgeParameter, Edit, ModeParameter, ParameterRange, STRING_PARAMETERS, SliderScale,
+    StringParameter,
 };
 pub use error::StudioError;
 pub use format::{

@@ -463,12 +463,13 @@ function buildSlider(label, range, value, onChange) {
   caption.textContent = label;
   wrapper.appendChild(caption);
 
+  const travel = sliderTravel(range);
   const input = document.createElement("input");
   input.type = "range";
-  input.min = String(range.low);
-  input.max = String(range.high);
-  input.step = String(range.step);
-  input.value = String(value);
+  input.min = String(travel.min);
+  input.max = String(travel.max);
+  input.step = String(travel.step);
+  input.value = String(travel.toSlider(value));
   wrapper.appendChild(input);
 
   const output = document.createElement("output");
@@ -476,13 +477,40 @@ function buildSlider(label, range, value, onChange) {
   wrapper.appendChild(output);
 
   input.addEventListener("input", () => {
-    output.textContent = formatValue(Number(input.value));
+    output.textContent = formatValue(travel.fromSlider(Number(input.value)));
   });
   input.addEventListener("change", () => {
-    onChange(Number(input.value));
+    onChange(travel.fromSlider(Number(input.value)));
   });
 
   return wrapper;
+}
+
+// How many positions a logarithmic slider has from one end to the other.
+const LOG_SLIDER_POSITIONS = 1000;
+
+// Maps a range onto the slider's own travel: the value itself for a linear
+// range, its base-10 logarithm for a logarithmic one, so each step is the
+// same ratio wherever it sits.
+function sliderTravel(range) {
+  if (range.scale !== "logarithmic") {
+    return {
+      min: range.low,
+      max: range.high,
+      step: range.step,
+      toSlider: (value) => value,
+      fromSlider: (position) => position,
+    };
+  }
+  const min = Math.log10(range.low);
+  const max = Math.log10(range.high);
+  return {
+    min,
+    max,
+    step: (max - min) / LOG_SLIDER_POSITIONS,
+    toSlider: (value) => Math.log10(Math.min(Math.max(value, range.low), range.high)),
+    fromSlider: (position) => Math.min(Math.max(10 ** position, range.low), range.high),
+  };
 }
 
 function formatValue(value) {

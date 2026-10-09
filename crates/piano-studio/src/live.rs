@@ -19,13 +19,12 @@ use piano_core::soundboard::{DEFAULT_MODES, MODE_COUNT, SoundboardMode};
 use piano_params::{PianoKey, Tuning};
 
 use crate::command::StudioCommand;
-use crate::edit::{
-    BridgeParameter, Edit, ModeParameter, ROOM_MIX_RANGE, StringParameter, clamped_velocity,
-};
+use crate::edit::{BridgeParameter, Edit, ModeParameter, StringParameter, clamped_velocity};
 use crate::format::{
     BridgeOverrides, Group, HammerOverrides, Instrument, ParameterOverrides, PianoFile, Registers,
     SoundboardModeOverride, StringOverride, StringRef,
 };
+use crate::instrument::{INSTRUMENT_PARAMETERS, InstrumentSettings};
 use crate::resolve::{ResolvedString, resolve};
 use crate::snapshot::{
     BridgeSnapshot, KeySnapshot, ModeSnapshot, PianoSnapshot, Ranges, StringSnapshot,
@@ -44,10 +43,7 @@ pub struct LiveState {
     modes: [SoundboardMode; MODE_COUNT],
     local_coupling_gain: f32,
     global_coupling_gain: f32,
-    soundboard_mix_gain: f32,
-    master_gain: f32,
-    velocity_curve_exponent: f32,
-    room_mix: f32,
+    instrument: InstrumentSettings,
     groups: Vec<Group>,
 }
 
@@ -65,6 +61,7 @@ impl LiveState {
         sample_rate: SampleRate,
     ) -> Self {
         let resolved = resolve(file, tuning, sample_rate);
+        let instrument = InstrumentSettings::from_resolved(&resolved);
         let mut modes = DEFAULT_MODES;
         for (slot, mode) in modes.iter_mut().zip(&resolved.soundboard_modes) {
             *slot = *mode;
@@ -76,10 +73,7 @@ impl LiveState {
             modes,
             local_coupling_gain: resolved.local_coupling_gain,
             global_coupling_gain: resolved.global_coupling_gain,
-            soundboard_mix_gain: resolved.soundboard_mix_gain,
-            master_gain: resolved.master_gain,
-            velocity_curve_exponent: resolved.velocity_curve_exponent,
-            room_mix: resolved.room_mix,
+            instrument,
             groups: file.groups.clone(),
         }
     }
@@ -105,23 +99,16 @@ impl LiveState {
     /// of them on the floor.
     #[must_use]
     pub fn commands(&self) -> Vec<StudioCommand> {
-        let mut commands = Vec::with_capacity(self.strings.len() * 6 + MODE_COUNT + 5);
+        let mut commands = Vec::with_capacity(
+            self.strings.len() * 6 + MODE_COUNT + INSTRUMENT_PARAMETERS.len() + 2,
+        );
         for string in &self.strings {
             commands.extend(commands_for_string(string));
         }
         for (index, mode) in self.modes.iter().enumerate() {
             commands.push(StudioCommand::SetSoundboardMode { index, mode: *mode });
         }
-        commands.push(StudioCommand::SetSoundboardMixGain {
-            gain: self.soundboard_mix_gain,
-        });
-        commands.push(StudioCommand::SetMasterGain {
-            gain: self.master_gain,
-        });
-        commands.push(StudioCommand::SetRoomMix { mix: self.room_mix });
-        commands.push(StudioCommand::SetVelocityCurve {
-            exponent: self.velocity_curve_exponent,
-        });
+        commands.extend(self.instrument.commands());
         commands.push(StudioCommand::SetLocalCouplingGain {
             gain: self.local_coupling_gain,
         });
@@ -167,9 +154,8 @@ impl LiveState {
                 value,
             } => self.set_mode(*index, *parameter, *value),
             Edit::SetBridge { parameter, value } => self.set_bridge(*parameter, *value),
-            Edit::SetRoomMix { value } => {
-                self.room_mix = ROOM_MIX_RANGE.clamp(*value) as f32;
-                vec![StudioCommand::SetRoomMix { mix: self.room_mix }]
+            Edit::SetInstrument { parameter, value } => {
+                vec![self.instrument.set(*parameter, *value)]
             }
         }
     }
@@ -255,7 +241,7 @@ impl LiveState {
                 local_coupling_gain: self.local_coupling_gain,
                 global_coupling_gain: self.global_coupling_gain,
             },
-            room_mix: self.room_mix,
+            instrument: self.instrument,
             groups: self.groups.clone(),
             ranges: Ranges::default(),
         }
@@ -297,23 +283,22 @@ impl LiveState {
     /// `strings[]` tier this writes is more specific than any of them.
     #[must_use]
     pub fn to_piano_file(&self) -> PianoFile {
+        let mut instrument = Instrument {
+            soundboard_modes: self.modes.iter().map(mode_override).collect(),
+            bridge: BridgeOverrides {
+                local_coupling_gain: Some(self.local_coupling_gain),
+                global_coupling_gain: Some(self.global_coupling_gain),
+            },
+            ..Instrument::default()
+        };
+        self.instrument.write_into(&mut instrument);
         PianoFile {
             name: self.name.clone(),
             defaults: ParameterOverrides::default(),
             registers: Registers::default(),
             groups: self.groups.clone(),
             strings: self.strings.iter().map(string_override).collect(),
-            instrument: Instrument {
-                soundboard_modes: self.modes.iter().map(mode_override).collect(),
-                soundboard_mix_gain: Some(self.soundboard_mix_gain),
-                master_gain: Some(self.master_gain),
-                velocity_curve_exponent: Some(self.velocity_curve_exponent),
-                room_mix: Some(self.room_mix),
-                bridge: BridgeOverrides {
-                    local_coupling_gain: Some(self.local_coupling_gain),
-                    global_coupling_gain: Some(self.global_coupling_gain),
-                },
-            },
+            instrument,
         }
     }
 }
@@ -474,6 +459,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
 
     use super::*;
+    use crate::instrument::InstrumentParameter;
 
     fn sample_rate() -> SampleRate {
         SampleRate::new(48_000.0).expect("48 kHz is valid")
@@ -656,12 +642,15 @@ mod tests {
     }
 
     #[test]
-    fn the_room_slider_is_remembered_clamped_and_sent_to_the_engine() {
+    fn an_instrument_slider_is_remembered_clamped_and_sent_to_the_engine() {
         let mut state = state();
-        let commands = state.apply(&Edit::SetRoomMix { value: 9.0 });
-        assert_eq!(commands, vec![StudioCommand::SetRoomMix { mix: 0.5 }]);
-        assert_eq!(state.snapshot().room_mix, 0.5);
-        assert_eq!(state.to_piano_file().instrument.room_mix, Some(0.5));
+        let commands = state.apply(&Edit::SetInstrument {
+            parameter: InstrumentParameter::RoomMix,
+            value: 9.0,
+        });
+        assert_eq!(commands, vec![StudioCommand::SetRoomMix { mix: 1.0 }]);
+        assert_eq!(state.snapshot().instrument.room_mix, 1.0);
+        assert_eq!(state.to_piano_file().instrument.room_mix, Some(1.0));
     }
 
     #[test]
@@ -688,7 +677,7 @@ mod tests {
         // six per string, one per soundboard mode, plus the soundboard mix
         // gain, the master gain, the room mix, the velocity-curve exponent
         // and the two coupling gains.
-        let expected = state.strings.len() * 6 + MODE_COUNT + 6;
+        let expected = state.strings.len() * 6 + MODE_COUNT + INSTRUMENT_PARAMETERS.len() + 2;
         assert_eq!(state.commands().len(), expected);
     }
 

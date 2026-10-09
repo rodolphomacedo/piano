@@ -22,6 +22,7 @@ mod command;
 mod edit;
 mod error;
 mod format;
+mod instrument;
 mod live;
 mod resolve;
 mod server;
@@ -38,6 +39,9 @@ pub use error::StudioError;
 pub use format::{
     BridgeOverrides, Group, HammerOverrides, Instrument, ParameterOverrides, PianoFile,
     RegisterAnchor, Registers, SoundboardModeOverride, StringOverride, StringRef,
+};
+pub use instrument::{
+    INSTRUMENT_PARAMETERS, InstrumentParameter, InstrumentRanges, InstrumentSettings,
 };
 pub use live::LiveState;
 pub use resolve::{ResolvedPiano, ResolvedString, resolve};

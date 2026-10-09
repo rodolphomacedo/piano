@@ -17,6 +17,8 @@
 use piano_core::hammer;
 use serde::{Deserialize, Serialize};
 
+use crate::instrument::InstrumentParameter;
+
 use crate::format::StringRef;
 
 /// The inclusive span a parameter's slider covers, and which a value
@@ -33,7 +35,7 @@ pub struct ParameterRange {
 }
 
 impl ParameterRange {
-    const fn new(low: f64, high: f64, step: f64) -> Self {
+    pub(crate) const fn new(low: f64, high: f64, step: f64) -> Self {
         Self { low, high, step }
     }
 
@@ -197,9 +199,6 @@ impl BridgeParameter {
     }
 }
 
-/// The span the page's room slider covers: dry to twice the default.
-pub(crate) const ROOM_MIX_RANGE: ParameterRange = ParameterRange::new(0.0, 0.5, 0.01);
-
 /// The velocity a strike from the page can ask for — the `0.0`-`1.0`
 /// contract of [`piano_audio::AudioSession::note_on`].
 const VELOCITY_RANGE: ParameterRange = ParameterRange::new(0.0, 1.0, 0.01);
@@ -278,9 +277,11 @@ pub enum Edit {
         /// Its new value, clamped into [`ModeParameter::range`].
         value: f64,
     },
-    /// Change how much of the room the instrument is heard in.
-    SetRoomMix {
-        /// The new wet level, clamped into [`ROOM_MIX_RANGE`].
+    /// Change one instrument-wide setting.
+    SetInstrument {
+        /// Which setting.
+        parameter: InstrumentParameter,
+        /// Its new value, clamped into [`InstrumentParameter::range`].
         value: f64,
     },
     /// Change one of the bridge's coupling gains.

@@ -7,6 +7,7 @@
 //! cannot fall out of step: adding a variant fails to compile until every
 //! `match` here knows its range, its command and its file field (#84).
 
+use piano_audio::limiter::{MAX_LIMITER_THRESHOLD, MIN_LIMITER_THRESHOLD};
 use piano_core::room::{
     MAX_ROOM_PREDELAY_MILLISECONDS, MAX_ROOM_REVERB_SECONDS, MAX_ROOM_SIZE,
     MIN_ROOM_REVERB_SECONDS, MIN_ROOM_SIZE,
@@ -49,10 +50,14 @@ pub enum InstrumentParameter {
     RoomTrebleReverbSeconds,
     /// Silence before the room answers, in milliseconds: longer sounds like a farther wall.
     RoomPredelay,
+    /// Where the output limiter starts compressing, as a fraction of full
+    /// scale: lower keeps loud chords further from clipping, at the cost of
+    /// squeezing them.
+    LimiterThreshold,
 }
 
 /// Every [`InstrumentParameter`], in the order the page lists them.
-pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 12] = [
+pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 13] = [
     InstrumentParameter::RoomMix,
     InstrumentParameter::RoomSize,
     InstrumentParameter::RoomReverbSeconds,
@@ -65,6 +70,7 @@ pub const INSTRUMENT_PARAMETERS: [InstrumentParameter; 12] = [
     InstrumentParameter::DamperStrength,
     InstrumentParameter::VelocityCurveExponent,
     InstrumentParameter::MasterGain,
+    InstrumentParameter::LimiterThreshold,
 ];
 
 impl InstrumentParameter {
@@ -93,6 +99,11 @@ impl InstrumentParameter {
                 f64::from(MAX_ROOM_REVERB_SECONDS),
                 0.05,
             ),
+            Self::LimiterThreshold => ParameterRange::new(
+                f64::from(MIN_LIMITER_THRESHOLD),
+                f64::from(MAX_LIMITER_THRESHOLD),
+                0.01,
+            ),
             Self::RoomPredelay => {
                 ParameterRange::new(0.0, f64::from(MAX_ROOM_PREDELAY_MILLISECONDS), 0.5)
             }
@@ -115,6 +126,7 @@ impl InstrumentParameter {
             Self::RoomTrebleReverbSeconds => {
                 StudioCommand::SetRoomTrebleReverbSeconds { seconds: value }
             }
+            Self::LimiterThreshold => StudioCommand::SetLimiterThreshold { threshold: value },
             Self::RoomPredelay => StudioCommand::SetRoomPredelay {
                 milliseconds: value,
             },
@@ -149,6 +161,8 @@ pub struct InstrumentSettings {
     pub room_treble_reverb_seconds: f32,
     /// See [`InstrumentParameter::RoomPredelay`].
     pub room_predelay_milliseconds: f32,
+    /// See [`InstrumentParameter::LimiterThreshold`].
+    pub limiter_threshold: f32,
 }
 
 impl InstrumentSettings {
@@ -168,6 +182,7 @@ impl InstrumentSettings {
             room_reverb_seconds: resolved.room_reverb_seconds,
             room_treble_reverb_seconds: resolved.room_treble_reverb_seconds,
             room_predelay_milliseconds: resolved.room_predelay_milliseconds,
+            limiter_threshold: resolved.limiter_threshold,
         }
     }
 
@@ -185,6 +200,7 @@ impl InstrumentSettings {
             InstrumentParameter::RoomReverbSeconds => &mut self.room_reverb_seconds,
             InstrumentParameter::RoomTrebleReverbSeconds => &mut self.room_treble_reverb_seconds,
             InstrumentParameter::RoomPredelay => &mut self.room_predelay_milliseconds,
+            InstrumentParameter::LimiterThreshold => &mut self.limiter_threshold,
         }
     }
 
@@ -219,6 +235,7 @@ impl InstrumentSettings {
         instrument.room_reverb_seconds = Some(self.room_reverb_seconds);
         instrument.room_treble_reverb_seconds = Some(self.room_treble_reverb_seconds);
         instrument.room_predelay_milliseconds = Some(self.room_predelay_milliseconds);
+        instrument.limiter_threshold = Some(self.limiter_threshold);
     }
 }
 
@@ -249,6 +266,8 @@ pub struct InstrumentRanges {
     pub room_treble_reverb_seconds: ParameterRange,
     /// See [`InstrumentParameter::RoomPredelay`].
     pub room_predelay_milliseconds: ParameterRange,
+    /// See [`InstrumentParameter::LimiterThreshold`].
+    pub limiter_threshold: ParameterRange,
 }
 
 impl Default for InstrumentRanges {
@@ -266,6 +285,7 @@ impl Default for InstrumentRanges {
             room_reverb_seconds: InstrumentParameter::RoomReverbSeconds.range(),
             room_treble_reverb_seconds: InstrumentParameter::RoomTrebleReverbSeconds.range(),
             room_predelay_milliseconds: InstrumentParameter::RoomPredelay.range(),
+            limiter_threshold: InstrumentParameter::LimiterThreshold.range(),
         }
     }
 }
@@ -290,6 +310,7 @@ mod tests {
             room_reverb_seconds: 1.8,
             room_treble_reverb_seconds: 0.5,
             room_predelay_milliseconds: 12.0,
+            limiter_threshold: 0.9,
         }
     }
 

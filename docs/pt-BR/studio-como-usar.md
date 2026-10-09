@@ -115,8 +115,13 @@ Os três pedais do teclado MIDI funcionam:
   inarmonicidade, desafinação em cents, semente de ruído da excitação, o
   "zero" do filtro de perdas (quanto da perda cai só nas parciais mais
   agudas), o ponto onde o martelo bate na corda, quanto ruído entra na
-  martelada, e os quatro parâmetros do martelo de feltro (expoente de
-  contato, rigidez, massa e impedância da corda). Os controles que cobrem
+  martelada, e os cinco parâmetros do martelo de feltro (expoente de
+  contato, rigidez, massa, impedância da corda e o brilho do feltro,
+  "felt brightness": mais alto é feltro duro, envernizado, com ataque
+  brilhante; mais baixo é feltro agulhado, macio, com ataque abafado). A
+  desafinação de cada corda já começa na desafinação natural do uníssono
+  (alguns centésimos de semitom entre as cordas da mesma tecla), que é o
+  que faz o som "respirar"; zerar tudo deixa o piano com som de órgão. Os controles que cobrem
   várias ordens de grandeza (rigidez, massa, impedância) andam em escala
   logarítmica: cada pedacinho do controle multiplica o valor pelo mesmo
   fator.
@@ -166,6 +171,9 @@ Os três pedais do teclado MIDI funcionam:
   - `master_gain` ("master gain"): o volume geral de saída, aplicado logo
     antes do limitador, então abaixá-lo reduz a limitação em vez de
     alimentar um limitador já saturado.
+  - `limiter_threshold` ("limiter threshold"): a partir de que volume o
+    limitador de saída começa a segurar o som. Mais baixo protege acordes
+    fortes de distorcer, mas achata a dinâmica; o padrão é `0.9`.
 - **Caixa e ponte**: os 28 modos da caixa de ressonância (frequência, tempo
   de decaimento, ganho) e os dois ganhos de acoplamento da ponte (entre as
   cordas da mesma tecla, e entre teclas diferentes, responsável pela

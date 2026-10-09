@@ -23,12 +23,6 @@ use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
 use crate::format::{HammerOverrides, ParameterOverrides, PianoFile, RegisterAnchor, Registers};
 
-/// Default detune a string resolves to when nothing overrides it — "no
-/// detune" in the *absolute* cents-from-base-frequency sense
-/// [`piano_core::UnisonGroup::set_string_detune`] uses, not `unison.rs`'s
-/// separate construction-time per-position offset.
-const DEFAULT_DETUNE_CENTS: f32 = 0.0;
-
 /// Default excitation seed a string resolves to when nothing overrides it.
 const DEFAULT_SEED: u32 = 0;
 
@@ -112,6 +106,8 @@ pub struct ResolvedPiano {
     pub room_treble_reverb_seconds: f32,
     /// See [`piano_audio::AudioSession::set_room_predelay`].
     pub room_predelay_milliseconds: f32,
+    /// See [`piano_audio::AudioSession::set_limiter_threshold`].
+    pub limiter_threshold: f32,
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
@@ -220,6 +216,10 @@ pub fn resolve(file: &PianoFile, tuning: Tuning, sample_rate: SampleRate) -> Res
             .instrument
             .room_predelay_milliseconds
             .unwrap_or(DEFAULT_ROOM_PREDELAY_MILLISECONDS),
+        limiter_threshold: file
+            .instrument
+            .limiter_threshold
+            .unwrap_or(piano_audio::limiter::DEFAULT_LIMITER_THRESHOLD),
     }
 }
 
@@ -263,7 +263,12 @@ fn resolve_string(
         damping: file.defaults.damping.unwrap_or(DEFAULT_DAMPING),
         sustain: file.defaults.sustain.unwrap_or(DEFAULT_SUSTAIN),
         inharmonicity: file.defaults.inharmonicity.unwrap_or(DEFAULT_INHARMONICITY),
-        detune_cents: file.defaults.detune_cents.unwrap_or(DEFAULT_DETUNE_CENTS),
+        // The engine builds every unison with its own spread; the studio
+        // retunes absolutely, so starting from zero would push a perfectly
+        // in-tune unison over it at load and silence its beating.
+        detune_cents: file.defaults.detune_cents.unwrap_or_else(|| {
+            piano_core::unison::detune_cents(unison_count_for_key(key), usize::from(string_index))
+        }),
         seed: file.defaults.seed.unwrap_or(DEFAULT_SEED),
         loop_zero_mix: DEFAULT_LOOP_ZERO_MIX,
         strike_position: DEFAULT_STRIKE_POSITION,
@@ -371,6 +376,7 @@ fn resolve_hammer(base: HammerConfig, overrides: &HammerOverrides) -> HammerConf
         stiffness: overrides.stiffness.unwrap_or(base.stiffness),
         mass: overrides.mass.unwrap_or(base.mass),
         string_impedance: overrides.string_impedance.unwrap_or(base.string_impedance),
+        felt_bandwidth: overrides.felt_bandwidth.unwrap_or(base.felt_bandwidth),
     }
 }
 
@@ -547,6 +553,24 @@ mod tests {
             bass.damping, 0.9,
             "the register tier's damping pin outranked an explicit string override"
         );
+    }
+
+    /// Loading a file that says nothing about detune must leave every
+    /// unison with the engine's own spread. Resolving to zero instead made
+    /// the studio retune every unison perfectly in tune at load, which
+    /// silenced its beating and Weinreich's two-stage decay with it.
+    #[test]
+    fn an_untouched_unison_keeps_the_engines_own_detune_spread() {
+        let piano = resolve(&PianoFile::default(), Tuning::default(), sample_rate());
+        let a4 = piano_params::CONCERT_A_KEY;
+        let spread: Vec<f32> = (0..3)
+            .map(|index| find(&piano, a4, index).detune_cents)
+            .collect();
+        let expected: Vec<f32> = (0..3)
+            .map(|index| piano_core::unison::detune_cents(3, index))
+            .collect();
+        assert_eq!(spread, expected);
+        assert!(spread.iter().any(|cents| *cents != 0.0), "{spread:?}");
     }
 
     /// An empty `registers` block (the default, absent from a hand-written

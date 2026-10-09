@@ -147,6 +147,13 @@ pub(crate) enum Command {
         /// measured at); values above deliberately drive the limiter.
         gain: f32,
     },
+    /// Sets where the output limiter starts compressing (issue #82),
+    /// clamped into `[MIN_LIMITER_THRESHOLD, MAX_LIMITER_THRESHOLD]`
+    /// engine-side; `NaN` lands on the minimum.
+    SetLimiterThreshold {
+        /// New threshold, as a fraction of full scale.
+        threshold: f32,
+    },
     /// Sets the velocity-curve exponent a strike velocity is warped through
     /// on its way into [`Command::NoteOn`]'s handling, live (issue #79).
     /// Clamped engine-side; `NaN` or a non-positive value falls back to the

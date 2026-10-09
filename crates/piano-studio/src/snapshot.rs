@@ -50,6 +50,8 @@ pub struct StringSnapshot {
     pub hammer_mass: f32,
     /// See [`StringParameter::HammerStringImpedance`].
     pub hammer_string_impedance: f32,
+    /// See [`StringParameter::HammerFeltBandwidth`].
+    pub hammer_felt_bandwidth: f32,
 }
 
 /// One key and the one to three strings under it.
@@ -115,6 +117,8 @@ pub struct StringRanges {
     pub hammer_mass: ParameterRange,
     /// See [`StringParameter::HammerStringImpedance`].
     pub hammer_string_impedance: ParameterRange,
+    /// See [`StringParameter::HammerFeltBandwidth`].
+    pub hammer_felt_bandwidth: ParameterRange,
 }
 
 /// Every soundboard-mode slider's ends. See [`ModeParameter`].
@@ -178,6 +182,7 @@ impl StringRanges {
             hammer_stiffness: StringParameter::HammerStiffness.range(),
             hammer_mass: StringParameter::HammerMass.range(),
             hammer_string_impedance: StringParameter::HammerStringImpedance.range(),
+            hammer_felt_bandwidth: StringParameter::HammerFeltBandwidth.range(),
         }
     }
 }
@@ -268,6 +273,7 @@ mod tests {
             hammer_stiffness: 1.7e9,
             hammer_mass: 1.0,
             hammer_string_impedance: piano_core::hammer::DEFAULT_HAMMER.string_impedance,
+            hammer_felt_bandwidth: piano_core::hammer::DEFAULT_HAMMER.felt_bandwidth,
         };
         let json = serde_json::to_value(snapshot).expect("serialises");
         for parameter in STRING_PARAMETERS {

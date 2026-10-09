@@ -116,11 +116,13 @@ pub enum StringParameter {
     HammerMass,
     /// See [`piano_core::hammer::HammerConfig::string_impedance`].
     HammerStringImpedance,
+    /// See [`piano_core::hammer::HammerConfig::felt_bandwidth`].
+    HammerFeltBandwidth,
 }
 
 /// Every [`StringParameter`], for callers that need to walk them all —
 /// the snapshot's range table and the tests that check none was forgotten.
-pub const STRING_PARAMETERS: [StringParameter; 12] = [
+pub const STRING_PARAMETERS: [StringParameter; 13] = [
     StringParameter::Damping,
     StringParameter::Sustain,
     StringParameter::Inharmonicity,
@@ -133,6 +135,7 @@ pub const STRING_PARAMETERS: [StringParameter; 12] = [
     StringParameter::HammerStiffness,
     StringParameter::HammerMass,
     StringParameter::HammerStringImpedance,
+    StringParameter::HammerFeltBandwidth,
 ];
 
 /// Highest excitation seed a slider offers. `u32::MAX` would make every
@@ -180,6 +183,11 @@ impl StringParameter {
             Self::HammerStiffness => STIFFNESS_RANGE,
             Self::HammerMass => MASS_RANGE,
             Self::HammerStringImpedance => STRING_IMPEDANCE_RANGE,
+            Self::HammerFeltBandwidth => ParameterRange::new(
+                f64::from(hammer::MIN_FELT_BANDWIDTH),
+                f64::from(hammer::MAX_FELT_BANDWIDTH),
+                0.1,
+            ),
         }
     }
 }

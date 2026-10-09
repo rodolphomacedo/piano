@@ -60,12 +60,14 @@ fn hammer_reach() -> Vec<Reach> {
         stiffness: _,
         mass: _,
         string_impedance: _,
+        felt_bandwidth: _,
     } = DEFAULT_HAMMER;
     vec![
         Reach::String(StringParameter::HammerContactExponent),
         Reach::String(StringParameter::HammerStiffness),
         Reach::String(StringParameter::HammerMass),
         Reach::String(StringParameter::HammerStringImpedance),
+        Reach::String(StringParameter::HammerFeltBandwidth),
     ]
 }
 

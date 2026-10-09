@@ -822,7 +822,11 @@ impl PluckedString {
         let (mut reference_curve, contact_samples, peak) =
             hammer::uncoupled_contact_curve(velocity, self.sample_rate, self.hammer);
         hammer::normalize_by_peak(&mut reference_curve, contact_samples, peak);
-        let cutoff_hz = hammer::excitation_cutoff_hz(contact_samples, self.sample_rate);
+        let cutoff_hz = hammer::excitation_cutoff_hz(
+            contact_samples,
+            self.sample_rate,
+            self.hammer.felt_bandwidth,
+        );
         let mut felt =
             ExcitationShaper::new(cutoff_hz, self.sample_rate / self.period, self.sample_rate);
         self.contact_force_diff_inv_peak = diff_inv_peak_of(&reference_curve, contact_samples);

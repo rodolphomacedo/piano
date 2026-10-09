@@ -83,6 +83,7 @@ fn setting_key(command: &Command) -> Option<SettingKey> {
         Command::SetRoomPredelay { .. } => global(29),
         Command::SetSoundboardMixGain { .. } => global(9),
         Command::SetMasterGain { .. } => global(10),
+        Command::SetLimiterThreshold { .. } => global(30),
         Command::SetVelocityCurve { .. } => global(11),
         Command::SetLocalCouplingGain { .. } => global(12),
         Command::SetGlobalCouplingGain { .. } => global(13),

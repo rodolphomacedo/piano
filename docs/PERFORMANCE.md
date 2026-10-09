@@ -404,7 +404,7 @@ exactly right — "a hard voice cap only becomes a real question if a
 future milestone allows more than one voice per key" is precisely what
 happened. Effective polyphony is now up to 222 strings (`docs/PHYSICS.md`),
 not 88, and sympathetic resonance (`PERF-008`) narrows the gate further:
-`Engine::process_chunk` can only skip a voice that is *both* silent and
+`Engine::process_stereo_chunk` can only skip a voice that is *both* silent and
 fully damped (`!UnisonGroup::is_receptive`) — a silent voice the pedal has
 left undamped must still be processed so it can wake up from the shared
 bridge. While the pedal is down, every voice becomes receptive, so the
@@ -571,7 +571,7 @@ every voice writes into and reads back once per sample, `O(N)`. Wired into
 longer than it was sized for. `PERF-006`'s energy gating had to change to
 match: a voice can now be silent yet still need processing, if the pedal
 (or a held key) has lifted its damper — see
-`UnisonGroup::is_receptive` and `Engine::process_chunk`'s skip condition.
+`UnisonGroup::is_receptive` and `Engine::process_stereo_chunk`'s skip condition.
 A real number exists, but only an aggregate one, the same honest caveat
 `PERF-003` already carries: `piano-audio`'s `callback_time_at_full_88_
 voice_polyphony_clears_the_deadline` (run manually, `--release`, on the
@@ -666,7 +666,7 @@ modes alone — explicitly the cheaper, more parametric trade this entry
 itself named as acceptable. Frequencies, decay times and gains are
 literature-informed order-of-magnitude values (K. Wogram 1980; N. Suzuki,
 JASA 80, 1986), not fit to any real instrument's measured response — see
-the module's own honesty note. Wired into `Engine::process_chunk` as a
+the module's own honesty note. Wired into `Engine::process_stereo_chunk` as a
 post-mix stage mixed additively into the direct signal (`SOUNDBOARD_MIX_
 GAIN`), not a replacement — `docs/PHYSICS.md` explains why. Same aggregate
 697.2 µs/block number `PERF-008` records applies here too (the soundboard

@@ -156,7 +156,7 @@ fn bench_unison_group_block(c: &mut Criterion) {
 }
 
 fn bench_full_polyphony_block(c: &mut Criterion) {
-    // The `piano-core`-level equivalent of `Engine::process_chunk`: every
+    // The `piano-core`-level equivalent of `Engine::process_stereo_chunk`: every
     // one of 88 keys' real unison-string count (222 total), the shared
     // bridge bus and the soundboard, all active for one block — so its
     // result can be compared against the sum of the isolated benchmarks

@@ -1,6 +1,6 @@
 //! The output mix bus's headroom safety net.
 //!
-//! [`Engine::process_chunk`](crate::engine::Engine) sums every ringing voice
+//! [`Engine::process_stereo_chunk`](crate::engine::Engine) sums every ringing voice
 //! plus the soundboard additively, with nothing before this module capping
 //! the result. See [`soft_limit`]'s own doc comment for why that is a real
 //! gap, not a hypothetical one.

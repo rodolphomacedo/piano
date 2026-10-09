@@ -97,7 +97,8 @@ struct AudioCallback {
     consumer: Consumer<Command>,
     timer: Arc<CallbackTimer>,
     channels: usize,
-    scratch: [f32; MAX_CHUNK_FRAMES],
+    left: [f32; MAX_CHUNK_FRAMES],
+    right: [f32; MAX_CHUNK_FRAMES],
     denormals_enabled: bool,
 }
 
@@ -113,7 +114,8 @@ impl AudioCallback {
             consumer,
             timer,
             channels,
-            scratch: [0.0; MAX_CHUNK_FRAMES],
+            left: [0.0; MAX_CHUNK_FRAMES],
+            right: [0.0; MAX_CHUNK_FRAMES],
             denormals_enabled: false,
         }
     }
@@ -132,35 +134,62 @@ impl AudioCallback {
         }
         let started = Instant::now();
         self.engine.drain_commands(&mut self.consumer);
-        write_frames(data, self.channels, &mut self.scratch, &mut self.engine);
+        let mut scratch = StereoScratch {
+            left: &mut self.left,
+            right: &mut self.right,
+        };
+        write_frames(data, self.channels, &mut scratch, &mut self.engine);
         self.timer.record(started.elapsed());
     }
 }
 
+/// The two per-channel buffers [`write_frames`] renders through.
+struct StereoScratch<'a> {
+    left: &'a mut [f32],
+    right: &'a mut [f32],
+}
+
 /// Fills `data` (interleaved, `channels` per frame) from `engine`, chunking
 /// through `scratch` so the block size is bounded regardless of `data`'s
-/// length.
-fn write_frames<T>(data: &mut [T], channels: usize, scratch: &mut [f32], engine: &mut Engine)
-where
+/// length. The first two channels get the stereo pair; a mono device, or
+/// any channel past the second, gets their mean.
+fn write_frames<T>(
+    data: &mut [T],
+    channels: usize,
+    scratch: &mut StereoScratch<'_>,
+    engine: &mut Engine,
+) where
     T: SizedSample + FromSample<f32>,
 {
-    for chunk in data.chunks_mut(channels * scratch.len()) {
+    for chunk in data.chunks_mut(channels * scratch.left.len()) {
         let frames = chunk.len() / channels;
-        let Some(block) = scratch.get_mut(..frames) else {
+        let (Some(left), Some(right)) = (
+            scratch.left.get_mut(..frames),
+            scratch.right.get_mut(..frames),
+        ) else {
             continue;
         };
-        engine.process_block(block);
-        mix_into(chunk, channels, block);
+        engine.process_block_stereo(left, right);
+        for (frame, (&left, &right)) in chunk
+            .chunks_mut(channels)
+            .zip(left.iter().zip(right.iter()))
+        {
+            write_frame(frame, left, right);
+        }
     }
 }
 
-fn mix_into<T>(chunk: &mut [T], channels: usize, block: &[f32])
+fn write_frame<T>(frame: &mut [T], left: f32, right: f32)
 where
     T: SizedSample + FromSample<f32>,
 {
-    for (frame, &sample) in chunk.chunks_mut(channels).zip(block.iter()) {
-        for slot in frame {
-            *slot = T::from_sample(sample);
+    let centre = T::from_sample(f32::midpoint(left, right));
+    match frame {
+        [left_slot, right_slot, rest @ ..] => {
+            *left_slot = T::from_sample(left);
+            *right_slot = T::from_sample(right);
+            rest.fill(centre);
         }
+        other => other.fill(centre),
     }
 }

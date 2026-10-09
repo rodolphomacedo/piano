@@ -837,6 +837,10 @@ fn interpolate_two_segments(
 mod inharmonicity;
 use inharmonicity::inharmonicity_for;
 
+#[path = "voicing_level.rs"]
+mod level;
+pub use level::{LEVEL_CORRECTION_DB, level_for_key, loudness_target_db};
+
 // Split into `voicing_tests.rs` to keep this file under the project's
 // 500-line limit (`CONTRIBUTING.md`) — still compiles as `voicing::tests`.
 #[cfg(test)]

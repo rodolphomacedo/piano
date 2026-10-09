@@ -39,6 +39,16 @@ pub enum StudioCommand {
         /// Whether the pedal is down.
         down: bool,
     },
+    /// See [`piano_audio::AudioSession::set_sostenuto_pedal`].
+    SostenutoPedal {
+        /// Whether the pedal is down.
+        down: bool,
+    },
+    /// See [`piano_audio::AudioSession::set_soft_pedal`].
+    SoftPedal {
+        /// Whether the pedal is down.
+        down: bool,
+    },
     /// See [`piano_audio::AudioSession::set_string_damping`].
     SetStringDamping {
         /// MIDI note number of the key the string belongs to.

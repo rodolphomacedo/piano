@@ -178,6 +178,12 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
         StudioCommand::SustainPedal { down } => {
             session.set_sustain_pedal(down);
         }
+        StudioCommand::SostenutoPedal { down } => {
+            session.set_sostenuto_pedal(down);
+        }
+        StudioCommand::SoftPedal { down } => {
+            session.set_soft_pedal(down);
+        }
         StudioCommand::SetStringDamping {
             midi,
             string_index,
@@ -408,9 +414,9 @@ mod tests {
                     midi: 60,
                     velocity: 100.0 / 127.0
                 },
-                Played::SustainPedal { down: true },
+                Played::SustainPedal { position: 1.0 },
                 Played::NoteOff { midi: 60 },
-                Played::SustainPedal { down: false },
+                Played::SustainPedal { position: 0.0 },
                 Played::Damping { damping: 1.0 },
                 Played::Sustain { sustain: 1.0 },
             ],

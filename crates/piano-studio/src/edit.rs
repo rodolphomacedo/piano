@@ -209,7 +209,7 @@ pub(crate) fn clamped_velocity(velocity: f64) -> f32 {
 
 /// One change arriving from a connected page.
 ///
-/// Playing — `NoteOn`, `NoteOff`, `SustainPedal`, `AllNotesOff` — travels
+/// Playing — `NoteOn`, `NoteOff`, the three pedals, `AllNotesOff` — travels
 /// the same route as editing, so a browser with no MIDI keyboard attached
 /// can still audition what a slider just did. The page *is* a controller.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -231,6 +231,16 @@ pub enum Edit {
     AllNotesOff,
     /// Hold or release the sustain pedal.
     SustainPedal {
+        /// Whether the pedal is down.
+        down: bool,
+    },
+    /// Hold or release the sostenuto (middle) pedal.
+    SostenutoPedal {
+        /// Whether the pedal is down.
+        down: bool,
+    },
+    /// Hold or release the soft (una corda) pedal.
+    SoftPedal {
         /// Whether the pedal is down.
         down: bool,
     },

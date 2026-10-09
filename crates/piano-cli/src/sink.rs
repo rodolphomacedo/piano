@@ -30,12 +30,16 @@ pub(crate) trait NoteSink {
     fn note_on(&mut self, midi: u8, velocity: f32);
     /// Releases `midi` — damped now, or when the sustain pedal comes up.
     fn note_off(&mut self, midi: u8);
-    /// Sets the CC64 hold-pedal state.
-    fn set_sustain_pedal(&mut self, down: bool);
+    /// Moves the CC64 sustain pedal, `0` up to `1` down.
+    fn set_sustain_pedal_position(&mut self, position: f32);
+    /// Presses or releases the CC66 sostenuto pedal.
+    fn set_sostenuto_pedal(&mut self, down: bool);
+    /// Presses or releases the CC67 soft (una corda) pedal.
+    fn set_soft_pedal(&mut self, down: bool);
     /// Sets the global high-frequency loss ("brightness") knob.
     fn set_damping(&mut self, damping: f32);
     /// Sets the global broadband decay-rate voicing knob. Not the pedal —
-    /// see [`NoteSink::set_sustain_pedal`].
+    /// see [`NoteSink::set_sustain_pedal_position`].
     fn set_sustain(&mut self, sustain: f32);
 }
 
@@ -48,8 +52,16 @@ impl NoteSink for AudioSession {
         AudioSession::note_off(self, midi);
     }
 
-    fn set_sustain_pedal(&mut self, down: bool) {
-        AudioSession::set_sustain_pedal(self, down);
+    fn set_sustain_pedal_position(&mut self, position: f32) {
+        AudioSession::set_sustain_pedal_position(self, position);
+    }
+
+    fn set_sostenuto_pedal(&mut self, down: bool) {
+        AudioSession::set_sostenuto_pedal(self, down);
+    }
+
+    fn set_soft_pedal(&mut self, down: bool) {
+        AudioSession::set_soft_pedal(self, down);
     }
 
     fn set_damping(&mut self, damping: f32) {
@@ -75,7 +87,9 @@ pub(crate) mod recorder {
     pub(crate) enum Played {
         NoteOn { midi: u8, velocity: f32 },
         NoteOff { midi: u8 },
-        SustainPedal { down: bool },
+        SustainPedal { position: f32 },
+        Sostenuto { down: bool },
+        SoftPedal { down: bool },
         Damping { damping: f32 },
         Sustain { sustain: f32 },
     }
@@ -95,8 +109,16 @@ pub(crate) mod recorder {
             self.played.push(Played::NoteOff { midi });
         }
 
-        fn set_sustain_pedal(&mut self, down: bool) {
-            self.played.push(Played::SustainPedal { down });
+        fn set_sustain_pedal_position(&mut self, position: f32) {
+            self.played.push(Played::SustainPedal { position });
+        }
+
+        fn set_sostenuto_pedal(&mut self, down: bool) {
+            self.played.push(Played::Sostenuto { down });
+        }
+
+        fn set_soft_pedal(&mut self, down: bool) {
+            self.played.push(Played::SoftPedal { down });
         }
 
         fn set_damping(&mut self, damping: f32) {

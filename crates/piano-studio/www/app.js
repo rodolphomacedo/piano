@@ -142,6 +142,14 @@ function wirePlayControls() {
     postEdit({ type: "sustain_pedal", down: event.target.checked });
   });
 
+  document.getElementById("sostenuto").addEventListener("change", (event) => {
+    postEdit({ type: "sostenuto_pedal", down: event.target.checked });
+  });
+
+  document.getElementById("soft-pedal").addEventListener("change", (event) => {
+    postEdit({ type: "soft_pedal", down: event.target.checked });
+  });
+
   document.getElementById("panic").addEventListener("click", () => {
     postEdit({ type: "all_notes_off" });
   });

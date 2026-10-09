@@ -20,6 +20,8 @@ mod commands;
 mod denormals;
 mod engine;
 mod error;
+#[doc(hidden)]
+pub mod fuzzing;
 mod limiter;
 pub mod offline;
 #[path = "session_recovery.rs"]

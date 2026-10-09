@@ -118,3 +118,49 @@ fn draining_commands_and_processing_blocks_never_allocates() {
         after - before
     );
 }
+
+/// Arbitrary command streams (issue #56): whatever order notes, pedals,
+/// live settings and sample rates arrive in — `NaN`s, infinities and
+/// out-of-range indices included — the engine never allocates while
+/// applying or rendering, and every sample it puts out is finite and
+/// inside the limiter's `[-1, 1]`. `fuzz/` runs the same harness under
+/// `cargo-fuzz` with coverage guidance.
+mod command_stream {
+    use proptest::prelude::*;
+
+    use super::{VIOLATIONS, guarded};
+    use crate::fuzzing::run_command_stream;
+    use std::sync::atomic::Ordering;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(24))]
+
+        #[test]
+        fn any_command_stream_stays_finite_bounded_and_allocation_free(
+            bytes in proptest::collection::vec(any::<u8>(), 0..1_024),
+        ) {
+            let before = VIOLATIONS.load(Ordering::SeqCst);
+            let outcome = run_command_stream(&bytes, |work| guarded(work));
+            let allocations = VIOLATIONS.load(Ordering::SeqCst) - before;
+            prop_assert_eq!(allocations, 0, "{:?}", outcome);
+            prop_assert!(outcome.is_sound(), "{:?}", outcome);
+        }
+    }
+
+    #[test]
+    fn a_stream_of_loud_chords_with_every_pedal_down_stays_bounded() {
+        let mut bytes = vec![3u8];
+        for midi in 21u8..=108 {
+            bytes.extend([0, midi]);
+            bytes.extend(1.0f32.to_le_bytes());
+        }
+        bytes.extend([3, 1, 5, 1, 15]);
+        bytes.extend(4.0f32.to_le_bytes());
+        for _ in 0..64 {
+            bytes.extend([28, 0, 2]);
+        }
+        let outcome = run_command_stream(&bytes, |work| work());
+        assert!(outcome.is_sound(), "{outcome:?}");
+        assert!(outcome.samples > 0 && outcome.loudest > 0.1, "{outcome:?}");
+    }
+}

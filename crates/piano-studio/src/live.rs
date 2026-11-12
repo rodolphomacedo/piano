@@ -304,7 +304,7 @@ impl LiveState {
 }
 
 /// How many commands put one string's whole state into the engine.
-const STRING_COMMANDS: usize = 9;
+const STRING_COMMANDS: usize = 7;
 
 /// The commands that put one string's whole state into the engine.
 fn commands_for_string(string: &ResolvedString) -> [StudioCommand; STRING_COMMANDS] {
@@ -330,11 +330,6 @@ fn commands_for_string(string: &ResolvedString) -> [StudioCommand; STRING_COMMAN
             string_index,
             cents: string.detune_cents,
         },
-        StudioCommand::SetStringSeed {
-            midi,
-            string_index,
-            seed: string.seed,
-        },
         StudioCommand::SetStringLoopZeroMix {
             midi,
             string_index,
@@ -344,11 +339,6 @@ fn commands_for_string(string: &ResolvedString) -> [StudioCommand; STRING_COMMAN
             midi,
             string_index,
             position: string.strike_position,
-        },
-        StudioCommand::SetStringExcitationNoiseMix {
-            midi,
-            string_index,
-            mix: string.excitation_noise_mix,
         },
         StudioCommand::SetStringHammer {
             midi,
@@ -366,15 +356,12 @@ fn write_string_field(string: &mut ResolvedString, parameter: StringParameter, v
         StringParameter::Sustain => string.sustain = value as f32,
         StringParameter::Inharmonicity => string.inharmonicity = value as f32,
         StringParameter::DetuneCents => string.detune_cents = value as f32,
-        StringParameter::Seed => string.seed = value as u32,
         StringParameter::LoopZeroMix => string.loop_zero_mix = value as f32,
         StringParameter::StrikePosition => string.strike_position = value as f32,
-        StringParameter::ExcitationNoiseMix => string.excitation_noise_mix = value as f32,
         StringParameter::HammerContactExponent => string.hammer.contact_exponent = value as f32,
         StringParameter::HammerStiffness => string.hammer.stiffness = value as f32,
         StringParameter::HammerMass => string.hammer.mass = value as f32,
         StringParameter::HammerStringImpedance => string.hammer.string_impedance = value as f32,
-        StringParameter::HammerFeltBandwidth => string.hammer.felt_bandwidth = value as f32,
     }
 }
 
@@ -404,11 +391,6 @@ fn command_for_field(string: &ResolvedString, parameter: StringParameter) -> Stu
             string_index,
             cents: string.detune_cents,
         },
-        StringParameter::Seed => StudioCommand::SetStringSeed {
-            midi,
-            string_index,
-            seed: string.seed,
-        },
         StringParameter::LoopZeroMix => StudioCommand::SetStringLoopZeroMix {
             midi,
             string_index,
@@ -419,16 +401,10 @@ fn command_for_field(string: &ResolvedString, parameter: StringParameter) -> Stu
             string_index,
             position: string.strike_position,
         },
-        StringParameter::ExcitationNoiseMix => StudioCommand::SetStringExcitationNoiseMix {
-            midi,
-            string_index,
-            mix: string.excitation_noise_mix,
-        },
         StringParameter::HammerContactExponent
         | StringParameter::HammerStiffness
         | StringParameter::HammerMass
-        | StringParameter::HammerStringImpedance
-        | StringParameter::HammerFeltBandwidth => StudioCommand::SetStringHammer {
+        | StringParameter::HammerStringImpedance => StudioCommand::SetStringHammer {
             midi,
             string_index,
             hammer: string.hammer,
@@ -455,15 +431,12 @@ fn string_snapshot(string: &ResolvedString) -> StringSnapshot {
         sustain: string.sustain,
         inharmonicity: string.inharmonicity,
         detune_cents: string.detune_cents,
-        seed: string.seed,
         loop_zero_mix: string.loop_zero_mix,
         strike_position: string.strike_position,
-        excitation_noise_mix: string.excitation_noise_mix,
         hammer_contact_exponent: string.hammer.contact_exponent,
         hammer_stiffness: string.hammer.stiffness,
         hammer_mass: string.hammer.mass,
         hammer_string_impedance: string.hammer.string_impedance,
-        hammer_felt_bandwidth: string.hammer.felt_bandwidth,
     }
 }
 
@@ -476,16 +449,13 @@ fn string_override(string: &ResolvedString) -> StringOverride {
             sustain: Some(string.sustain),
             inharmonicity: Some(string.inharmonicity),
             detune_cents: Some(string.detune_cents),
-            seed: Some(string.seed),
             loop_zero_mix: Some(string.loop_zero_mix),
             strike_position: Some(string.strike_position),
-            excitation_noise_mix: Some(string.excitation_noise_mix),
             hammer: HammerOverrides {
                 contact_exponent: Some(string.hammer.contact_exponent),
                 stiffness: Some(string.hammer.stiffness),
                 mass: Some(string.hammer.mass),
                 string_impedance: Some(string.hammer.string_impedance),
-                felt_bandwidth: Some(string.hammer.felt_bandwidth),
             },
         },
     }

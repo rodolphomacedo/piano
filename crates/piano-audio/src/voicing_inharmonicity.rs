@@ -11,13 +11,15 @@
 //! JASA 133(5), 2013, model `B` along the compass as exactly this sum of two
 //! exponentials, one per asymptote.
 //!
-//! The four numbers below are this project's reasoned anchors inside the
+//! The four numbers below are fitted to the `B` measured on the reference
+//! instrument, partial by partial, on every key it could be measured on
+//! (`docs/CALIBRATION.md`): `3.2·10⁻⁴` at A0, a minimum near `8·10⁻⁵` in
+//! the low tenor, `6.5·10⁻⁴` at A4 and `5.7·10⁻³` at A6. They sit inside the
 //! ranges Fletcher & Rossing (*The Physics of Musical Instruments*, 2nd ed.,
-//! §12.4) report for full-size pianos — about `3·10⁻⁴` at A0, a minimum
-//! near `10⁻⁴` in the low tenor, `4–5·10⁻⁴` at A4 and `1–2·10⁻²` at C8 — not
-//! values fitted to a particular instrument. The previous default, a
-//! straight line from `10⁻⁴` to `0.05`, gave A4 roughly forty times a real
-//! string's `B` (issue #96).
+//! §12.4) report for full-size pianos, and the two asymptotes follow the
+//! measurement to within about 15 % from A0 to A6; above that the
+//! reference's partials are too few to measure `B` and the curve is the
+//! treble asymptote carried on.
 //!
 //! # The wound-to-plain break
 //!
@@ -31,9 +33,10 @@
 //! on the smooth curve: `1` at A0, falling to [`WOUND_SIDE_OF_BREAK`] at the
 //! last wound key, jumping to [`PLAIN_SIDE_OF_BREAK`] on the first plain
 //! key and returning to `1` at A4, all in log space. The factor keeps the
-//! curve's sourced ends untouched and makes the step a step; its size, a
-//! ratio of about 1.35, is this project's reasoned choice, not a measured
-//! figure.
+//! curve's ends untouched and makes the step a step. The reference's last
+//! wound strings sit about a quarter under the smooth curve, which is the
+//! wound side's factor; its first plain strings sit about a fifth over it,
+//! close to the 1.15 the plain side already had.
 
 use piano_core::dispersion::MAX_INHARMONICITY;
 use piano_core::math;
@@ -43,16 +46,16 @@ use super::scale::{A0_ANCHOR, A4_ANCHOR, FIRST_PLAIN_ANCHOR, LAST_WOUND_ANCHOR};
 use super::{RegisterOverrides, anchor_hz, interpolate_log_frequency, interpolate_two_segments};
 
 /// The bass asymptote's value at A0.
-const BASS_ASYMPTOTE_AT_A0: f32 = 3.0e-4;
+const BASS_ASYMPTOTE_AT_A0: f32 = 3.2e-4;
 
 /// How fast the bass asymptote falls, per semitone above A0.
 const BASS_ASYMPTOTE_FALL_PER_SEMITONE: f32 = 0.08;
 
 /// The treble asymptote's value at A4.
-const TREBLE_ASYMPTOTE_AT_A4: f32 = 4.5e-4;
+const TREBLE_ASYMPTOTE_AT_A4: f32 = 6.5e-4;
 
 /// How fast the treble asymptote grows, per semitone above A4. Reaches
-/// `1.5·10⁻²` at C8.
+/// `2.2·10⁻²` at C8.
 const TREBLE_ASYMPTOTE_GROWTH_PER_SEMITONE: f32 = 0.09;
 
 /// Smallest override honoured, so a file asking for `B = 0` cannot send the
@@ -60,7 +63,7 @@ const TREBLE_ASYMPTOTE_GROWTH_PER_SEMITONE: f32 = 0.09;
 const MIN_OVERRIDE: f32 = 1.0e-7;
 
 /// The smooth curve's factor at the last wound string.
-pub(super) const WOUND_SIDE_OF_BREAK: f32 = 0.85;
+pub(super) const WOUND_SIDE_OF_BREAK: f32 = 0.75;
 
 /// The smooth curve's factor at the first plain string.
 pub(super) const PLAIN_SIDE_OF_BREAK: f32 = 1.15;

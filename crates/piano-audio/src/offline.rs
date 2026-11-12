@@ -143,6 +143,19 @@ impl OfflineEngine {
         self.engine.apply(Command::SetBoardLoadGain { gain });
     }
 
+    /// Sets how much of the soundboard's radiated signal is mixed in; `0`
+    /// leaves the strings' bridge force alone, for measuring the body.
+    pub fn set_soundboard_mix_gain(&mut self, gain: f32) {
+        self.engine.apply(Command::SetSoundboardMixGain { gain });
+    }
+
+    /// Sets the gain applied to the whole mix ahead of the limiter. A low
+    /// value keeps a loud render clear of the limiter, so a measurement
+    /// sees the instrument rather than the safety net.
+    pub fn set_master_gain(&mut self, gain: f32) {
+        self.engine.apply(Command::SetMasterGain { gain });
+    }
+
     /// Sets where the output limiter starts compressing.
     pub fn set_limiter_threshold(&mut self, threshold: f32) {
         self.engine

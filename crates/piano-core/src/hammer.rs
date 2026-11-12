@@ -1,245 +1,131 @@
-//! A nonlinear felt hammer, shaping the excitation instead of a flat burst.
+//! A felt hammer and the string it strikes, solved together every sample.
 //!
-//! Real piano hammers are a lossy nonlinear spring in Hertzian contact with
-//! the string: force grows as compression raised to a power `p ≈ 2-3`
-//! (A. Chaigne & A. Askenfelt, "Numerical simulations of piano strings, I:
-//! A physical model for a struck string using finite difference methods",
-//! JASA 95 (1994), §II; the same power-law contact force underlies Hall's
-//! earlier hammer papers too). Two consequences follow directly from that
-//! nonlinearity and are what this module reproduces:
+//! The hammer is a mass on a nonlinear spring: compressed by `ξ`, the felt
+//! pushes back with `F = K·ξ^p`, `p ≈ 2–3` (A. Chaigne & A. Askenfelt,
+//! "Numerical simulations of piano strings. I. A physical model for a struck
+//! string using finite difference methods", JASA 95(2), 1994, §II). The string
+//! is a waveguide: a force `F` applied at one point moves that point at
+//! `F / 2Z` on top of the two travelling waves already passing through it,
+//! `Z` being the string's characteristic impedance (J. O. Smith, "Physical
+//! Audio Signal Processing", the struck-string and piano-hammer chapters).
 //!
-//! - **Contact gets shorter at higher velocity.** More compression makes the
-//!   effective spring stiffer, so it rebounds the hammer faster.
-//! - **Contact gets harder at higher velocity.** A shorter pulse spreads its
-//!   energy over a wider band — more high-frequency content, not just more
-//!   amplitude.
+//! Those two statements are the whole model. Everything a listener calls
+//! "touch" follows from them rather than being added: a harder blow compresses
+//! the felt further, the stiffer spring throws the hammer back sooner, the
+//! shorter pulse carries more high partials. Reflections that come back from
+//! the agraffe while the felt is still on the string push the hammer off
+//! early, which is what makes the treble's short strings bright and the long
+//! bass strings round.
 //!
-//! Both are produced here, and they need two separate mechanisms rather than
-//! one. [`simulate_contact`] gives the strike its force envelope, which is
-//! the *when*; [`excitation_cutoff_hz`] gives it a bandwidth, which is the
-//! *where in the spectrum*. Applying only the first — as this module did
-//! until the excitation's spectrum was actually measured — leaves every
-//! strike spectrally flat to Nyquist at every velocity, because the envelope
-//! reaches the excitation by multiplying white noise and an enveloped white
-//! noise burst has a flat expected power spectrum whatever the envelope's
-//! shape. That is heard as a hard, dry knock rather than as felt. See
-//! [`excitation_cutoff_hz`] for the measurement and the correction.
+//! Every quantity is in SI units, so the values in the literature can be used
+//! as they are printed.
 //!
-//! # The string is no longer treated as immobile (#57)
+//! # The solve
 //!
-//! Earlier revisions solved only the hammer's side of the contact against a
-//! rigid wall. [`couple_contact_step`] closes that gap: it resolves the
-//! contact force against the string's own returning velocity every sample,
-//! via a hard-capped fixed-point iteration — `PERF-007` in
-//! `docs/PERFORMANCE.md` tracks the cost of doing that per sample. See that
-//! function's own doc comment for the coupling itself, and
-//! `docs/superpowers/specs/2026-09-13-hammer-string-coupling-design.md` for
-//! the design it implements, rather than repeating either here.
-//!
-//! [`simulate_contact`] below still solves the *uncoupled* problem this
-//! module used before #57 — the reference curve [`couple_contact_step`]'s
-//! force is normalised against, and the only input `excitation_cutoff_hz`'s
-//! bandwidth calibration reads. That is why [`DEFAULT_FELT_BANDWIDTH`]'s
-//! own doc comment still says this model omits the back-reaction: it is
-//! correct for that constant specifically, even though the force the string
-//! actually receives during a real strike no longer is.
-//!
-//! The contact simulation itself is a bounded explicit (semi-implicit Euler)
-//! integration, capped at [`MAX_CONTACT_SAMPLES`] steps — a compile-time
-//! bound on the loop, never a `while !converged`, per
-//! `docs/REALTIME-AUDIO-RULES.md`.
+//! One step is implicit: the force at the end of the sample depends on the
+//! compression at the end of the sample, which depends on the force. The
+//! trapezoidal rule turns that into one scalar equation, `ξ + c·ξ^p = a`,
+//! whose left side is convex and increasing. Newton's method started above
+//! the root of such a function walks down to it without ever overshooting, so
+//! a fixed, small number of steps is enough and there is no `while
+//! !converged` anywhere — see `docs/REALTIME-AUDIO-RULES.md` and `PERF-007`.
 
 use crate::math;
 
-/// Upper bound on how long a hammer stays in contact with the string.
-///
-/// ~10.7 ms at 48 kHz — generous against the 1-4 ms Chaigne & Askenfelt
-/// report — and small enough that a stack array of this size costs nothing.
-/// This is also the hard cap that keeps [`simulate_contact`]'s integration a
-/// bounded loop rather than an unbounded one.
-pub const MAX_CONTACT_SAMPLES: usize = 512;
-
-/// Widest [`HammerConfig::contact_exponent`] `sanitize_hammer` allows.
-///
-/// Bounded, not just required positive, because [`simulate_contact`]'s
-/// integration must stay provably finite for *any* live-set value (this
-/// project's hot-path totality rule) — an unbounded exponent combined with
-/// compression above 1 can overflow `powf` to infinity. 0.5-8.0 comfortably
-/// covers the 2-3 real felt range Chaigne & Askenfelt report plus enough
-/// slack either side for a deliberately exaggerated, non-physical voicing.
-pub const MIN_CONTACT_EXPONENT: f32 = 0.5;
+/// Softest and hardest felt nonlinearity [`HammerConfig::contact_exponent`]
+/// may take. Below 1 the contact equation stops being convex and the solve's
+/// guarantee goes with it; 8 is far beyond any felt and only bounds `powf`.
+pub const MIN_CONTACT_EXPONENT: f32 = 1.0;
 /// See [`MIN_CONTACT_EXPONENT`].
 pub const MAX_CONTACT_EXPONENT: f32 = 8.0;
 
-/// Widest [`HammerConfig::stiffness`] `sanitize_hammer` allows — two orders
-/// of magnitude below [`DEFAULT_HAMMER`]'s value and three above it, chosen
-/// together with [`MAX_COMPRESSION`], [`MIN_MASS`] and
-/// [`MAX_CONTACT_EXPONENT`] so `simulate_contact`'s per-step force can never
-/// exceed `f32`'s range: `1.7e12 · 10⁸ / 0.01 ≈ 2e22`, sixteen decades of
-/// headroom. The top is three decades up, not two, because a top-treble
-/// hammer's felt is that much harder than the bass's (see
-/// `crate::excitation::hammer_for_frequency`).
-pub const MIN_STIFFNESS: f32 = 1.7e7;
+/// Range of [`HammerConfig::stiffness`], in N/m^p. Chaigne & Askenfelt's
+/// hammers span `4e8` (C2) to `1e12` (C7); the range leaves two decades
+/// either side.
+pub const MIN_STIFFNESS: f32 = 1.0e6;
 /// See [`MIN_STIFFNESS`].
-pub const MAX_STIFFNESS: f32 = 1.7e12;
+pub const MAX_STIFFNESS: f32 = 1.0e14;
 
-/// Widest [`HammerConfig::mass`] `sanitize_hammer` allows.
-///
-/// Bounded away from zero because mass is a divisor in `simulate_contact`'s
-/// restoring-force step — an unbounded-small mass blows the force up the
-/// same way an unbounded-large exponent does.
-pub const MIN_MASS: f32 = 0.01;
+/// Range of [`HammerConfig::mass`], in kilograms: a tenth of a gram to a
+/// hundred grams. A concert grand's hammers weigh about 4 to 11 g.
+pub const MIN_MASS: f32 = 1.0e-4;
 /// See [`MIN_MASS`].
-pub const MAX_MASS: f32 = 100.0;
+pub const MAX_MASS: f32 = 0.1;
 
-/// Widest [`HammerConfig::string_impedance`] `sanitize_hammer` allows.
-///
-/// Large enough that `force / string_impedance` is negligible next to a
-/// hammer velocity in `[MIN_STRIKE_MPS, MAX_STRIKE_MPS]` for any force this
-/// model's `stiffness`/`mass`/`contact_exponent` range can produce — the
-/// ceiling [`DEFAULT_HAMMER`] starts at, and the value
-/// `with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_reproduces_
-/// the_uncoupled_curve` checks against `simulate_contact`, under that
-/// test's own `v_incoming ≡ 0.0` — the regime that holds only for roughly
-/// the bottom third of the keyboard (below about F3/G#3), where a strike's
-/// contact fits inside one loop length and `PendingContact` never
-/// activates. From there upward — the majority of the keyboard, measured
-/// at 50-56 of 88 keys depending on strike velocity (`voicing::
-/// config_for_key`, 48 kHz) — `v_incoming` is no longer `0.0` and enters
-/// the coupling formula unscaled by this field, so the default
-/// configuration there measurably differs from the pre-#57 curve — inside
-/// the 88-key sweep's committed bands (#87), not identical to it. Provisional:
-/// `docs/superpowers/specs/2026-09-13-hammer-string-coupling-design.md`
-/// flags the exact register-by-register calibration of this field as an
-/// open question for the validation task, same as `CONTACT_STIFFNESS` was
-/// before it was checked empirically — see [`MIN_STRING_IMPEDANCE`]'s doc
-/// comment for the band where this field does change the contact.
-pub const MAX_STRING_IMPEDANCE: f32 = 1.0e13;
-/// Lowest [`HammerConfig::string_impedance`] `sanitize_hammer` allows —
-/// bounded away from zero for the same reason [`MIN_MASS`] is: it is a
-/// divisor in [`couple_contact_step`]'s `force / string_impedance` term.
-///
-/// Chosen where the string's push-back on the felt is strongest while the
-/// hammer still leaves the string on its own (issue #95). Measured with
-/// `couple_contact_step` against a silent string at velocity 0.6 and 48 kHz:
-///
-/// | `string_impedance` | contact samples | peak force |
-/// |---|---|---|
-/// | 1e2 | never separates (hits [`MAX_CONTACT_SAMPLES`]) | 350 |
-/// | **1e3** (this floor) | 304 | 1986 |
-/// | 1e4 | 207 | 3807 |
-/// | 1e5 | 201 | 4201 |
-/// | 1e13 ([`MAX_STRING_IMPEDANCE`], the default) | 200 | 4250 |
-///
-/// So across the range a softer string stretches the contact by half and
-/// halves the peak force, which is the audible effect real string loading
-/// has, a darker and rounder attack. The previous floor, `1e6`, sat above
-/// that whole band, and the knob did nothing anywhere in its range.
-/// [`DEFAULT_HAMMER`] stays at the ceiling, so the default sound is
-/// unchanged; `the_bottom_of_the_impedance_range_audibly_loads_the_hammer`
-/// holds the table's shape.
-pub const MIN_STRING_IMPEDANCE: f32 = 1.0e3;
+/// Range of [`HammerConfig::string_impedance`], in kg/s. Piano strings run
+/// from about 1.5 (top treble) to 14 (lowest wound string).
+pub const MIN_STRING_IMPEDANCE: f32 = 0.1;
+/// See [`MIN_STRING_IMPEDANCE`].
+pub const MAX_STRING_IMPEDANCE: f32 = 1.0e3;
 
-/// Hard cap on the contact simulation's compression state, in the model's
-/// own normalised units.
+/// Hammer speed, in m/s, of a note played at full velocity.
 ///
-/// Applied every integration step regardless of [`HammerConfig`], on top of
-/// the field-level bounds above: those bounds alone keep any *single* step's
-/// force finite, but only re-clamping compression itself, every step, stops
-/// an unstable (numerically stiff) combination of extreme stiffness, mass
-/// and sample rate from growing compression — and so the force derived from
-/// it — without bound across [`MAX_CONTACT_SAMPLES`] steps. Ten sits far
-/// above where a real strike's compression ever settles at the default
-/// [`HammerConfig`] (checked empirically, the same way [`CONTACT_STIFFNESS`]
-/// below was), so this cap is inert for realistic voicings.
-const MAX_COMPRESSION: f32 = 10.0;
+/// Calibrated together with [`STRIKE_CURVE_EXPONENT`]: with these two, the
+/// model's change of spectrum between soft, medium and loud notes matches a
+/// measured concert grand's (`docs/CALIBRATION.md`), and the speeds
+/// themselves land where Askenfelt & Jansson measured real hammers —
+/// roughly 1 m/s *piano*, 2 m/s *mezzo-forte*, 4–5 m/s *fortissimo*.
+pub const MAX_STRIKE_MPS: f32 = 4.7;
 
-/// Tunable felt-contact physics for one string's hammer.
+/// How hammer speed grows with normalised key velocity. See
+/// [`MAX_STRIKE_MPS`].
+pub const STRIKE_CURVE_EXPONENT: f32 = 1.25;
+
+/// The force at the bridge, in newtons, that a string reports as `1.0`.
 ///
-/// Everything here feeds [`simulate_contact`]; see that function and the
-/// module docs for what each field does physically. `sanitize_hammer`
-/// bounds every field before use, so `simulate_contact` stays total for any
-/// `HammerConfig` a caller constructs directly — its fields are `pub` and
-/// not validated at construction, the same pattern `StringConfig`'s
-/// `damping`/`sustain`/`inharmonicity` already use.
+/// A string's output is the force it exerts on the bridge — the quantity
+/// that actually drives the soundboard — divided by this, so that a loud
+/// note stays near full scale instead of at tens of newtons.
+pub const FULL_SCALE_BRIDGE_NEWTONS: f32 = 50.0;
+
+/// The felt may not be compressed further than this many metres. No hammer
+/// comes near it; the bound only keeps `powf` finite for hostile input.
+const MAX_COMPRESSION_METRES: f32 = 0.05;
+
+/// Once the hammer has turned back and opened this much air between felt and
+/// string, the strike is over.
+const RELEASE_GAP_METRES: f32 = 1.0e-4;
+
+/// A strike is abandoned after this long whatever the hammer is doing —
+/// the bound that keeps a contact from outliving its note. Real contacts
+/// last 0.5–5 ms.
+const MAX_CONTACT_SECONDS: f32 = 0.03;
+
+/// Newton steps per sample. Started within a factor of two above the root of
+/// a convex function, four steps reach `f32` precision; see the module docs.
+const NEWTON_STEPS: usize = 4;
+
+const MIN_SAMPLE_RATE_HZ: f32 = 1_000.0;
+const MAX_SAMPLE_RATE_HZ: f32 = 10_000_000.0;
+const FALLBACK_SAMPLE_RATE_HZ: f32 = 48_000.0;
+
+/// The part of a hammer that one string feels, and the string it strikes.
+///
+/// A hammer strikes every string of its unison at once. Identical strings
+/// share it equally, so each behaves exactly as if struck alone by a hammer
+/// of `1/n` the mass and `1/n` the felt stiffness — and that share is what
+/// this describes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HammerConfig {
-    /// Hertzian contact exponent, `F = K·x^p`. See [`CONTACT_EXPONENT`]'s
-    /// doc comment for the physical range this represents.
+    /// The felt's nonlinearity `p` in `F = K·ξ^p`.
     pub contact_exponent: f32,
-    /// Hertzian contact stiffness, in the model's own normalised units.
+    /// The felt's stiffness `K`, in N/m^p.
     pub stiffness: f32,
-    /// Hammer mass, normalised to 1 at the default.
+    /// Mass, in kilograms.
     pub mass: f32,
-    /// The string's own characteristic impedance at the contact point, in
-    /// the model's own normalised units — how strongly the string pushes
-    /// back on the hammer (`docs/superpowers/specs/
-    /// 2026-09-13-hammer-string-coupling-design.md`). Large values make
-    /// the string act as the rigid wall this model assumed before #57;
-    /// [`MAX_STRING_IMPEDANCE`] is chosen to reproduce that curve exactly
-    /// when there is no returning wave to couple against
-    /// (`v_incoming ≡ 0.0`) — the case
-    /// `with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_
-    /// reproduces_the_uncoupled_curve` checks, and the one that holds only
-    /// for roughly the bottom third of the keyboard (below about F3/G#3),
-    /// where a string's `PendingContact` tail never activates. From there
-    /// upward — the majority of the keyboard, not just the upper treble;
-    /// measured at 50-56 of 88 keys depending on strike velocity — the tail
-    /// is live and `v_incoming` reaches the coupling formula unscaled by
-    /// this field, so [`DEFAULT_HAMMER`]'s behaviour there measurably
-    /// differs from the pre-#57 curve — inside the 88-key sweep's committed
-    /// bands (#87), not identical to it. See
-    /// [`MIN_STRING_IMPEDANCE`]'s doc comment for how far down its range
-    /// lengthens the contact and softens the attack.
+    /// The struck string's characteristic impedance `Z = √(T·μ)`, in kg/s.
     pub string_impedance: f32,
-    /// How many times above `1/contact_duration` the felt's lowpass corner
-    /// sits — the felt's brightness independent of how long it touches the
-    /// string. A voicer needling a hammer lowers it; lacquering raises it.
-    /// See [`DEFAULT_FELT_BANDWIDTH`] for the calibration and
-    /// [`excitation_cutoff_hz`] for where it acts.
-    pub felt_bandwidth: f32,
 }
 
-/// [`HammerConfig`] matching this module's original, single shared
-/// (pre-M15) constants — every string used exactly these values before the
-/// live parameter studio made hammer physics per-string.
+/// One string's share of a middle-C hammer: Chaigne & Askenfelt's C4 values
+/// (2.97 g, `4.5e9`, `p = 2.5`) split between three strings.
 pub const DEFAULT_HAMMER: HammerConfig = HammerConfig {
-    contact_exponent: CONTACT_EXPONENT,
-    stiffness: CONTACT_STIFFNESS,
-    mass: HAMMER_MASS,
-    string_impedance: MAX_STRING_IMPEDANCE,
-    felt_bandwidth: DEFAULT_FELT_BANDWIDTH,
+    contact_exponent: 2.5,
+    stiffness: 1.5e9,
+    mass: 0.99e-3,
+    string_impedance: 2.2,
 };
 
-/// Hammer felt's Hertzian contact exponent, `F = K·x^p`, at [`DEFAULT_HAMMER`].
-///
-/// 2.5 sits in the middle of the 2-3 range Chaigne & Askenfelt measure
-/// across the piano's compass (softer/older felt trends toward 2, harder/new
-/// felt toward 3).
-const CONTACT_EXPONENT: f32 = 2.5;
-
-/// Hertzian contact stiffness at [`DEFAULT_HAMMER`], in the model's own
-/// normalised units.
-///
-/// Chosen, together with [`HAMMER_MASS`] and the strike-velocity range
-/// below, so the simulated contact duration lands in the 1-4 ms range the
-/// literature reports at mid-range velocities — checked empirically against
-/// [`simulate_contact`]'s own tests, not derived from a closed form (an
-/// exact closed form exists via the Beta function for a lossless power-law
-/// spring, but calibrating against the actual simulated output is more
-/// honest than trusting an order-of-magnitude hand derivation of it).
-const CONTACT_STIFFNESS: f32 = 1.7e9;
-
-/// Hammer mass at [`DEFAULT_HAMMER`], normalised to 1. Only the ratio to
-/// [`CONTACT_STIFFNESS`] matters for the contact-duration/peak-force
-/// behaviour this module produces; this model is not calibrated to a
-/// specific real instrument's absolute physical units.
-const HAMMER_MASS: f32 = 1.0;
-
-/// Clamps `hammer`'s fields into the bounds `simulate_contact` needs to stay
-/// total — see [`MIN_CONTACT_EXPONENT`], [`MIN_STIFFNESS`] and [`MIN_MASS`].
-/// `NaN` maps to each bound's low end, the same convention
-/// [`crate::math::clamp_or_low`] uses everywhere else in this crate.
 fn sanitize_hammer(hammer: HammerConfig) -> HammerConfig {
     HammerConfig {
         contact_exponent: math::clamp_or_low(
@@ -254,53 +140,9 @@ fn sanitize_hammer(hammer: HammerConfig) -> HammerConfig {
             MIN_STRING_IMPEDANCE,
             MAX_STRING_IMPEDANCE,
         ),
-        felt_bandwidth: math::clamp_or_low(
-            hammer.felt_bandwidth,
-            MIN_FELT_BANDWIDTH,
-            MAX_FELT_BANDWIDTH,
-        ),
     }
 }
 
-/// Softest strike this model represents, in metres/second.
-///
-/// Askenfelt & Jansson's hammer-velocity measurements on real pianists put
-/// the playable range at roughly 0.5-6 m/s from *pp* to *fff*. `velocity =
-/// 0` in the public `[0, 1]` API still gets this nonzero hammer speed
-/// because a real ppp keystroke still moves the hammer, it just does so
-/// slowly.
-const MIN_STRIKE_MPS: f32 = 0.5;
-
-/// Hardest strike this model represents, in metres/second. See
-/// [`MIN_STRIKE_MPS`].
-const MAX_STRIKE_MPS: f32 = 6.0;
-
-/// Sane lower bound on a usable audio sample rate, in hertz.
-///
-/// Below this the integration step `1/sample_rate_hz` is large enough that
-/// the explicit Euler step can overshoot into a huge or non-finite
-/// compression within a handful of iterations — a real risk for
-/// pathological inputs (a caller passing a near-zero-but-positive rate,
-/// which is finite and `> 0` and so would otherwise slip past the simpler
-/// "is this finite and positive" check). No real audio device ever asks
-/// for a rate this low, so falling back to [`FALLBACK_SAMPLE_RATE_HZ`] is
-/// the total, always-safe choice.
-const MIN_SAMPLE_RATE_HZ: f32 = 1_000.0;
-
-/// Sane upper bound on a usable audio sample rate, in hertz. See
-/// [`MIN_SAMPLE_RATE_HZ`].
-const MAX_SAMPLE_RATE_HZ: f32 = 10_000_000.0;
-
-/// The sample rate [`simulate_contact`] falls back to for any input outside
-/// `[MIN_SAMPLE_RATE_HZ, MAX_SAMPLE_RATE_HZ]`.
-const FALLBACK_SAMPLE_RATE_HZ: f32 = 48_000.0;
-
-/// `sample_rate_hz` if it is usable, [`FALLBACK_SAMPLE_RATE_HZ`] otherwise.
-///
-/// Shared by [`simulate_contact`] and [`excitation_cutoff_hz`] so the two
-/// cannot disagree about what rate a strike happened at — the second
-/// interprets a duration the first measured, and a mismatch would mistune
-/// the cutoff by the ratio between them.
 fn usable_sample_rate(sample_rate_hz: f32) -> f32 {
     if sample_rate_hz.is_finite()
         && (MIN_SAMPLE_RATE_HZ..=MAX_SAMPLE_RATE_HZ).contains(&sample_rate_hz)
@@ -311,691 +153,322 @@ fn usable_sample_rate(sample_rate_hz: f32) -> f32 {
     }
 }
 
-/// How many times above `1/contact_duration` the excitation's lowpass corner
-/// sits at [`DEFAULT_HAMMER`] — [`HammerConfig::felt_bandwidth`]'s default.
+/// Hammer speed in m/s for a normalised key velocity in `0.0..=1.0`.
 ///
-/// Calibrated by measurement, the same way [`CONTACT_STIFFNESS`] was, and
-/// for the same reason it cannot be derived here: this model deliberately
-/// omits the string's back-reaction on the hammer (see the module docs), and
-/// that back-reaction is a large part of where a real strike's energy above
-/// `1/τ` comes from. Taking the force pulse's own corner literally — a
-/// factor of 1 — would put a *fortissimo* strike's excitation corner near
-/// 300 Hz and make the whole instrument sound like it was played through a
-/// blanket. 15 puts a hard strike near 4.5 kHz and a soft one near 2 kHz,
-/// which is a plausible spread for felt and, unlike the flat excitation it
-/// replaces, is actually audible as brightness rather than only documented
-/// as such.
-pub const DEFAULT_FELT_BANDWIDTH: f32 = 15.0;
-
-/// Darkest [`HammerConfig::felt_bandwidth`]: the force pulse's own corner
-/// times three, a heavily needled, woolly hammer.
-pub const MIN_FELT_BANDWIDTH: f32 = 3.0;
-
-/// Brightest [`HammerConfig::felt_bandwidth`]. Past this nearly every
-/// strike already sits on [`MAX_EXCITATION_CUTOFF_HZ`], so a higher value
-/// would change nothing audible.
-pub const MAX_FELT_BANDWIDTH: f32 = 60.0;
-
-/// Darkest excitation this model produces, in hertz. Below roughly this the
-/// corner sits under the fundamental of much of the keyboard and the strike
-/// stops being audible as an attack at all.
-const MIN_EXCITATION_CUTOFF_HZ: f32 = 500.0;
-
-/// Brightest excitation this model produces, in hertz.
-///
-/// The point of the filter is that the excitation is *not* flat to Nyquist;
-/// an unbounded corner (which an arbitrarily stiff live-set
-/// [`HammerConfig`] can ask for, since stiffness shortens contact) would
-/// hand back exactly the full-band click this exists to remove.
-const MAX_EXCITATION_CUTOFF_HZ: f32 = 8_000.0;
-
-/// The lowpass corner, in hertz, for an excitation shaped by a contact
-/// lasting `contact_samples` at `sample_rate_hz` through felt of
-/// `felt_bandwidth` ([`HammerConfig::felt_bandwidth`]) — the second half of the
-/// hammer model, and the half that makes strike velocity audible as
-/// brightness.
-///
-/// # Why a filter is needed at all, given the force envelope
-///
-/// [`simulate_contact`]'s envelope is applied to the excitation by
-/// *multiplication*
-/// ([`PluckedString::pluck`](crate::string::PluckedString::pluck)), and the
-/// excitation underneath it is white noise. Multiplying in time is
-/// convolution in frequency, and convolving a flat spectrum with anything at
-/// all leaves it flat: the expected power spectrum of an enveloped white
-/// noise burst is `σ²·Σw[n]²` — a function of the window's *energy*, not of
-/// its shape. So the envelope alone changes how much energy a strike injects
-/// and when, but not where in the spectrum it lands, and every strike at
-/// every velocity injects the same flat energy density all the way to
-/// Nyquist. Measured before this function existed: a spectral centroid of
-/// 11.8 kHz at velocity 0.1 against 12.7 kHz at velocity 1.0, either side of
-/// the 12 kHz a perfectly flat spectrum gives at 48 kHz — a 7% spread across
-/// the entire dynamic range, and audible as a full-band click rather than as
-/// a hammer.
-///
-/// A real hammer does no such thing. Its contact force is a smooth pulse of
-/// duration `τ`, and a pulse of duration `τ` is band-limited on the order of
-/// `1/τ` (Chaigne & Askenfelt 1994, §II; the felt's finite contact width
-/// adds further rolloff — Van Duyne & Smith, "Developments for the Commuted
-/// Piano", ICMC 1995, use exactly such a hammer-width lowpass on the
-/// excitation). Shorter contact, higher corner: the *same* nonlinearity that
-/// already shortens contact at higher velocity now brightens it too, which
-/// is what "harder is brighter, not merely louder" was always supposed to
-/// mean.
-///
-/// Total: any `contact_samples` (including `0` and `usize::MAX`) and any
-/// `sample_rate_hz` or `felt_bandwidth` (including `NaN`, `±∞` and zero)
-/// yield a finite result in `[MIN_EXCITATION_CUTOFF_HZ,
-/// MAX_EXCITATION_CUTOFF_HZ]`.
-#[must_use]
-pub fn excitation_cutoff_hz(
-    contact_samples: usize,
-    sample_rate_hz: f32,
-    felt_bandwidth: f32,
-) -> f32 {
-    // A zero-length contact has no duration to derive a corner from; one
-    // sample is the shortest that does, and lands on the bright bound anyway.
-    let samples = contact_samples.max(1) as f32;
-    let seconds = samples / usable_sample_rate(sample_rate_hz);
-    let bandwidth = math::clamp_or_low(felt_bandwidth, MIN_FELT_BANDWIDTH, MAX_FELT_BANDWIDTH);
-    math::clamp_or_low(
-        bandwidth / seconds,
-        MIN_EXCITATION_CUTOFF_HZ,
-        MAX_EXCITATION_CUTOFF_HZ,
-    )
-}
-
-/// Converts the public `[0, 1]` strike velocity into metres/second, the
-/// unit [`simulate_contact`] and [`couple_contact_step`] both integrate
-/// in. Shared so the two cannot quietly disagree about what a given
-/// velocity means.
+/// Zero velocity is zero speed: such a strike leaves the string as it was.
 #[inline]
-fn strike_mps_for(velocity: f32) -> f32 {
+#[must_use]
+pub fn strike_mps_for(velocity: f32) -> f32 {
     let velocity = math::clamp_or_low(velocity, 0.0, 1.0);
-    MIN_STRIKE_MPS + velocity * (MAX_STRIKE_MPS - MIN_STRIKE_MPS)
+    MAX_STRIKE_MPS * math::powf(velocity, STRIKE_CURVE_EXPONENT)
 }
 
-/// How many fixed-point passes [`couple_contact_step`] runs to resolve one
-/// sample's force against the string's own returning velocity.
-///
-/// The force sets `v_string` (`v_incoming + force / string_impedance`),
-/// which sets the trial compression the force is then recomputed from —
-/// an implicit relationship the *hard-capped* iteration below approximates
-/// rather than solving exactly, per `PERF-007` in `docs/PERFORMANCE.md`
-/// ("a bounded fixed-point iteration (2-4 steps, hard capped)"). `3` is a
-/// starting point, not yet a measured one; the validation task checks
-/// whether the force estimate has actually stabilised by this point across
-/// the velocity/impedance range this model allows, the same way
-/// `CONTACT_STIFFNESS` was checked against simulated output rather than
-/// derived.
-const COUPLING_FIXPOINT_STEPS: usize = 3;
-
-/// The hammer's own state between one coupled contact sample and the next.
-///
-/// Carries what [`PendingContact`](crate::string) used to leave to a plain
-/// array index: [`couple_contact_step`] needs the compression and hammer
-/// velocity a precomputed curve never exposed.
+/// A hammer and its string, reduced to the constants one contact step needs
+/// at one sample rate.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ContactState {
-    pub(crate) compression: f32,
-    pub(crate) hammer_velocity: f32,
-    /// Once `true`, the hammer has left the string for the rest of this
-    /// strike — checked by [`couple_contact_step`]'s caller *before*
-    /// calling again, the same role `PendingContact::next_index >=
-    /// contact_samples` plays for the uncoupled curve today.
-    pub(crate) separated: bool,
+pub struct ContactSolver {
+    exponent: f32,
+    /// `c` in `ξ + c·ξ^p = a`: stiffness times `compliance`.
+    stiffness_gain: f32,
+    /// Metres the contact point yields per newton over one trapezoidal step:
+    /// `dt²/4m + dt/4Z`, the hammer's part and the string's.
+    compliance: f32,
+    half_step_seconds: f32,
+    /// `dt / 2m`: hammer speed lost per newton per half step.
+    speed_per_newton: f32,
+    /// `1 / 2Z`: string velocity gained per newton.
+    injection_per_newton: f32,
+    bridge_gain: f32,
+    max_steps: u32,
 }
 
-impl ContactState {
-    /// The hammer's state the instant it first touches the string at
-    /// `velocity`: no compression yet, moving at `strike_mps_for(velocity)`.
+impl ContactSolver {
+    /// Prepares `hammer` for `sample_rate_hz`. Out-of-range fields are
+    /// clamped; an unusable sample rate falls back to 48 kHz.
     #[must_use]
-    pub fn starting(velocity: f32) -> Self {
+    pub fn new(hammer: HammerConfig, sample_rate_hz: f32) -> Self {
+        let hammer = sanitize_hammer(hammer);
+        let step = 1.0 / usable_sample_rate(sample_rate_hz);
+        let compliance = 0.25 * step * step / hammer.mass + 0.25 * step / hammer.string_impedance;
+        Self {
+            exponent: hammer.contact_exponent,
+            stiffness_gain: hammer.stiffness * compliance,
+            compliance,
+            half_step_seconds: 0.5 * step,
+            speed_per_newton: 0.5 * step / hammer.mass,
+            injection_per_newton: 0.5 / hammer.string_impedance,
+            bridge_gain: 2.0 * hammer.string_impedance / FULL_SCALE_BRIDGE_NEWTONS,
+            max_steps: (MAX_CONTACT_SECONDS / step) as u32 + 1,
+        }
+    }
+
+    /// What a velocity wave arriving at the bridge is worth as output: the
+    /// force `2Z·v` it exerts there, over [`FULL_SCALE_BRIDGE_NEWTONS`].
+    #[inline]
+    #[must_use]
+    pub fn bridge_gain(&self) -> f32 {
+        self.bridge_gain
+    }
+
+    /// Solves `ξ + c·ξ^p = unloaded` and returns `(ξ, force)`.
+    ///
+    /// `unloaded` is where the felt would be were there no contact force
+    /// this step; when it is not positive, felt and string do not touch.
+    #[inline]
+    fn resolve(&self, unloaded: f32) -> (f32, f32) {
+        if unloaded.is_nan() || unloaded <= 0.0 {
+            return (unloaded.max(-MAX_COMPRESSION_METRES), 0.0);
+        }
+        let unloaded = unloaded.min(MAX_COMPRESSION_METRES);
+        let mut compression = self.starting_compression(unloaded);
+        for _ in 0..NEWTON_STEPS {
+            compression = self.newton_step(compression, unloaded);
+        }
+        (compression, (unloaded - compression) / self.compliance)
+    }
+
+    /// The smaller of the equation's two limiting solutions — all spring or
+    /// all yield. Each lies above the root and one is within a factor of two.
+    #[inline]
+    fn starting_compression(&self, unloaded: f32) -> f32 {
+        let all_spring = math::powf(unloaded / self.stiffness_gain, 1.0 / self.exponent);
+        unloaded.min(all_spring)
+    }
+
+    #[inline]
+    fn newton_step(&self, compression: f32, unloaded: f32) -> f32 {
+        let slope_power = math::powf(compression, self.exponent - 1.0);
+        let spring = self.stiffness_gain * slope_power;
+        let residual = compression + spring * compression - unloaded;
+        let slope = 1.0 + self.exponent * spring;
+        math::clamp_or_low(compression - residual / slope, 0.0, unloaded)
+    }
+}
+
+/// The hammer during one strike: where it is, how fast, how hard it pushes.
+///
+/// At rest it costs one branch per sample. [`Self::strike`] throws it at the
+/// string; [`Self::step`] then advances hammer and string together until the
+/// hammer has left, and returns it to rest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HammerJunction {
+    /// Felt compression in metres; negative is an air gap.
+    compression: f32,
+    /// Hammer velocity towards the string, in m/s.
+    velocity: f32,
+    force: f32,
+    /// Rate of change of `compression` at the end of the previous step.
+    closing_rate: f32,
+    steps_left: u32,
+}
+
+impl Default for HammerJunction {
+    fn default() -> Self {
+        Self::resting()
+    }
+}
+
+impl HammerJunction {
+    /// A hammer away from the string.
+    #[must_use]
+    pub const fn resting() -> Self {
         Self {
             compression: 0.0,
-            hammer_velocity: strike_mps_for(velocity),
-            separated: false,
+            velocity: 0.0,
+            force: 0.0,
+            closing_rate: 0.0,
+            steps_left: 0,
         }
+    }
+
+    /// Throws the hammer at the string at `strike_mps`, felt just touching.
+    /// A speed that is not positive leaves the hammer at rest.
+    pub fn strike(&mut self, strike_mps: f32, solver: &ContactSolver) {
+        *self = Self::resting();
+        if strike_mps.is_nan() || strike_mps <= 0.0 {
+            return;
+        }
+        self.velocity = strike_mps.min(MAX_STRIKE_MPS);
+        self.closing_rate = self.velocity;
+        self.steps_left = solver.max_steps;
+    }
+
+    /// Whether a strike is in progress.
+    #[inline]
+    #[must_use]
+    pub fn is_striking(&self) -> bool {
+        self.steps_left > 0
+    }
+
+    /// The force the felt exerted on the string in the last step, in newtons.
+    #[inline]
+    #[must_use]
+    pub fn force(&self) -> f32 {
+        self.force
+    }
+
+    /// Advances the contact by one sample.
+    ///
+    /// `incoming_velocity` is the string's velocity at the strike point were
+    /// the hammer absent: the sum of the two waves arriving there. Returns
+    /// the velocity the hammer adds to each wave leaving the point, `F / 2Z`.
+    /// Total: any input, `NaN` and `±∞` included, yields a finite result.
+    #[inline]
+    pub fn step(&mut self, solver: &ContactSolver, incoming_velocity: f32) -> f32 {
+        if self.steps_left == 0 {
+            return 0.0;
+        }
+        let incoming = if incoming_velocity.is_finite() {
+            incoming_velocity
+        } else {
+            0.0
+        };
+        let coasting = self.velocity - solver.speed_per_newton * self.force;
+        let unloaded =
+            self.compression + solver.half_step_seconds * (self.closing_rate + coasting - incoming);
+        let (compression, force) = solver.resolve(unloaded);
+        self.advance(solver, coasting - incoming, compression, force)
+    }
+
+    #[inline]
+    fn advance(
+        &mut self,
+        solver: &ContactSolver,
+        coasting_rate: f32,
+        compression: f32,
+        force: f32,
+    ) -> f32 {
+        let injected = force * solver.injection_per_newton;
+        self.velocity -= solver.speed_per_newton * (self.force + force);
+        self.closing_rate = coasting_rate - solver.speed_per_newton * force - injected;
+        self.compression = compression;
+        self.force = force;
+        self.steps_left -= 1;
+        if self.has_left() || !self.is_finite() {
+            *self = Self::resting();
+        }
+        if injected.is_finite() { injected } else { 0.0 }
+    }
+
+    #[inline]
+    fn has_left(&self) -> bool {
+        self.velocity < 0.0 && self.compression < -RELEASE_GAP_METRES
+    }
+
+    #[inline]
+    fn is_finite(&self) -> bool {
+        self.compression.is_finite() && self.velocity.is_finite() && self.closing_rate.is_finite()
     }
 }
 
-/// Advances a coupled hammer/string contact by one sample and returns the
-/// force it produced.
+/// Semitones from A0 (27.5 Hz) to the top of the keyboard.
+const KEYBOARD_SEMITONES: f32 = 87.0;
+const A0_HZ: f32 = 27.5;
+const SEMITONES_PER_OCTAVE: f32 = 12.0;
+
+/// Semitones above A0 of F♯4, where the treble hammers start to depart
+/// from the trend of the rest of the set. See [`MASS_KNOTS`].
+const TREBLE_HAMMERS_FROM: f32 = 45.0;
+
+/// Whole-hammer mass in kilograms against semitones above A0: 10.5 g in the
+/// bass falling evenly to 7.2 g at F♯4, the usual trend of a concert grand's
+/// hammer set, then faster to 1.9 g at C8.
 ///
-/// Treats the contact point as a scattering junction between the felt
-/// spring and the string's own characteristic impedance
-/// (`docs/superpowers/specs/2026-09-13-hammer-string-coupling-design.md`):
-/// `v_string = v_incoming + force / string_impedance`, where `v_incoming`
-/// is whatever the string is already carrying back to this point this
-/// sample (silence for most of a fresh strike; real, measured content
-/// once a round trip has had time to return — see the design doc for why
-/// that difference is what separates the bass from the treble here without
-/// a register-specific branch anywhere in this function).
+/// The upper half is set by one requirement. A hammer that stays on its
+/// string for about a period and a half delivers a force pulse with a
+/// spectral null at the fundamental, and the note all but vanishes. With
+/// the bass trend carried to the top, that null crossed the keyboard
+/// between A6 and F♯7 as the touch went from soft to loud: 30 dB holes one
+/// key wide, at a different key for each dynamic. A lighter hammer on
+/// stiffer felt ([`LOG10_STIFFNESS_KNOTS`]) leaves sooner, and from a key
+/// velocity of 0.25 up no key's fundamental drops out. Softer than that the
+/// top two octaves still do: a power-law felt has no stiffness left at so
+/// small a compression. Chaigne & Askenfelt's own treble hammer is as
+/// light: 2.2 g at C7.
+const MASS_KNOTS: [(f32, f32); 3] = [
+    (0.0, 10.5e-3),
+    (TREBLE_HAMMERS_FROM, 7.24e-3),
+    (KEYBOARD_SEMITONES, 1.9e-3),
+];
+
+/// `log10` of whole-hammer felt stiffness against semitones above A0.
 ///
-/// `force` sets `v_string`, which sets the compression `force` is in turn
-/// derived from — resolved by [`COUPLING_FIXPOINT_STEPS`] fixed-point
-/// passes, never an unbounded solve, before committing one
-/// [`simulate_contact`]-style semi-implicit Euler step with the converged
-/// value. Once `state.separated`, returns `state` unchanged and a force of
-/// exactly `0.0` without doing any further work — contact has ended and
-/// must not numerically re-engage.
+/// Fitted so that the model's spectrum changes between soft, medium and loud
+/// notes the way a measured concert grand's does (`docs/CALIBRATION.md`); up
+/// to F♯4 the fit lands within a factor of two of Chaigne & Askenfelt's
+/// `4e8` (C2) and `4.5e9` (C4). Above it the felt stiffens faster, to
+/// `7e12` at C7 against their `1e12`, for the reason given at
+/// [`MASS_KNOTS`].
+const LOG10_STIFFNESS_KNOTS: [(f32, f32); 5] = [
+    (0.0, 8.2),
+    (24.0, 9.1),
+    (TREBLE_HAMMERS_FROM, 10.24),
+    (72.0, 12.6),
+    (KEYBOARD_SEMITONES, 13.9),
+];
+
+/// Felt exponent against semitones above A0, from the same fit as
+/// [`LOG10_STIFFNESS_KNOTS`]. Chaigne & Askenfelt: 2.3 (C2), 2.5 (C4), 3.0
+/// (C7).
+const EXPONENT_KNOTS: [(f32, f32); 3] = [(0.0, 2.2), (43.0, 2.6), (KEYBOARD_SEMITONES, 3.2)];
+
+/// `log10` of one string's impedance in kg/s against semitones above A0.
 ///
-/// Total for every input: `hammer` is sanitised by [`sanitize_hammer`],
-/// `v_incoming` and `sample_rate_hz` are checked for finiteness the same
-/// way [`simulate_contact`]'s inputs already are, and every intermediate
-/// compression is clamped into `[0.0, MAX_COMPRESSION]` on every pass —
-/// proven by `couple_contact_step_is_total`, not argued.
+/// `Z = 2·L·f·μ` for a generic concert-grand scale: plain steel of 1.0–0.8 mm
+/// from the middle up (about 2.2 falling to 1.6 kg/s), copper-wound strings
+/// growing to 13.7 kg/s at A0. No particular instrument's stringing table.
+const LOG10_IMPEDANCE_KNOTS: [(f32, f32); 9] = [
+    (0.0, 1.137),
+    (7.0, 0.978),
+    (15.0, 0.690),
+    (23.0, 0.462),
+    (29.0, 0.367),
+    (48.0, 0.348),
+    (63.0, 0.267),
+    (75.0, 0.230),
+    (KEYBOARD_SEMITONES, 0.199),
+];
+
+/// One string's share of the hammer a concert grand would carry at
+/// `fundamental_hz`, and that string's impedance.
+///
+/// The share assumes the usual stringing at that pitch —
+/// [`crate::unison::unison_count_for_key_index`].
 #[must_use]
-pub fn couple_contact_step(
-    state: ContactState,
-    hammer: HammerConfig,
-    v_incoming: f32,
-    sample_rate_hz: f32,
-) -> (ContactState, f32) {
-    if state.separated {
-        return (state, 0.0);
+pub fn hammer_for_frequency(fundamental_hz: f32) -> HammerConfig {
+    let semitones = semitones_above_a0(fundamental_hz);
+    let strings = crate::unison::unison_count_for_key_index(semitones as u8) as f32;
+    let whole_stiffness = math::powf(10.0, piecewise(semitones, &LOG10_STIFFNESS_KNOTS));
+    HammerConfig {
+        contact_exponent: piecewise(semitones, &EXPONENT_KNOTS),
+        stiffness: whole_stiffness / strings,
+        mass: piecewise(semitones, &MASS_KNOTS) / strings,
+        string_impedance: math::powf(10.0, piecewise(semitones, &LOG10_IMPEDANCE_KNOTS)),
     }
-    let hammer = sanitize_hammer(hammer);
-    let v_incoming = if v_incoming.is_finite() {
-        v_incoming
-    } else {
-        0.0
-    };
-    let dt = 1.0 / usable_sample_rate(sample_rate_hz);
-
-    let compression = state.compression;
-    // Sanitize state to ensure all values are finite. A caller or proptest fuzzer
-    // can hand back a ContactState with NaN or ±∞ hammer_velocity from a prior
-    // malformed or pathological state; without the guard, these leak straight
-    // through to the output force via `hammer_velocity - force / hammer.mass * dt`,
-    // violating the totality contract (couple_contact_step must return finite output).
-    let hammer_velocity = if state.hammer_velocity.is_finite() {
-        state.hammer_velocity
-    } else {
-        0.0
-    };
-
-    let mut force = hammer.stiffness * math::powf(compression, hammer.contact_exponent);
-    for _ in 0..COUPLING_FIXPOINT_STEPS {
-        let v_string = v_incoming + force / hammer.string_impedance;
-        let trial_velocity = hammer_velocity - force / hammer.mass * dt;
-        let trial_compression = math::clamp_or_low(
-            compression + (trial_velocity - v_string) * dt,
-            0.0,
-            MAX_COMPRESSION,
-        );
-        force = hammer.stiffness * math::powf(trial_compression, hammer.contact_exponent);
-    }
-
-    let v_string = v_incoming + force / hammer.string_impedance;
-    let next_hammer_velocity = hammer_velocity - force / hammer.mass * dt;
-    let next_compression = math::clamp_or_low(
-        compression + (next_hammer_velocity - v_string) * dt,
-        0.0,
-        MAX_COMPRESSION,
-    );
-    let force = hammer.stiffness * math::powf(next_compression, hammer.contact_exponent);
-    let separated = next_compression <= 0.0;
-    (
-        ContactState {
-            compression: next_compression,
-            hammer_velocity: next_hammer_velocity,
-            separated,
-        },
-        force,
-    )
 }
 
-/// [`simulate_contact`]'s own integration, before the final peak
-/// normalisation — factored out so [`crate::string::PluckedString::
-/// write_excitation`] and [`crate::string::PluckedString::
-/// next_contact_sample`] can divide a coupled force by the same peak this
-/// reference curve used, putting both on one scale, without running this
-/// integration a second time.
-pub(crate) fn uncoupled_contact_curve(
-    velocity: f32,
-    sample_rate_hz: f32,
-    hammer: HammerConfig,
-) -> ([f32; MAX_CONTACT_SAMPLES], usize, f32) {
-    let velocity = math::clamp_or_low(velocity, 0.0, 1.0);
-    let sample_rate_hz = usable_sample_rate(sample_rate_hz);
-    let hammer = sanitize_hammer(hammer);
-    let dt = 1.0 / sample_rate_hz;
+fn semitones_above_a0(fundamental_hz: f32) -> f32 {
+    let ratio = math::clamp_or_low(fundamental_hz / A0_HZ, 1.0, f32::MAX);
+    let semitones = SEMITONES_PER_OCTAVE * math::ln(ratio) / core::f32::consts::LN_2;
+    math::round(math::clamp_or_low(semitones, 0.0, KEYBOARD_SEMITONES))
+}
 
-    let mut force = [0.0f32; MAX_CONTACT_SAMPLES];
-    let mut compression = 0.0f32;
-    let mut hammer_velocity = strike_mps_for(velocity);
-    let mut active = 0usize;
-    let mut peak = 0.0f32;
-
-    for sample in &mut force {
-        if compression <= 0.0 && active > 0 {
-            break;
+/// Linear interpolation through `knots`, held flat beyond either end.
+fn piecewise(position: f32, knots: &[(f32, f32)]) -> f32 {
+    let mut previous = knots.first().copied().unwrap_or((0.0, 0.0));
+    if position.is_nan() || position <= previous.0 {
+        return previous.1;
+    }
+    for &knot in knots.iter().skip(1) {
+        if position <= knot.0 {
+            let share = (position - previous.0) / (knot.0 - previous.0);
+            return previous.1 + share * (knot.1 - previous.1);
         }
-        let restoring =
-            hammer.stiffness * math::powf(compression, hammer.contact_exponent) / hammer.mass;
-        hammer_velocity -= restoring * dt;
-        compression = math::clamp_or_low(compression + hammer_velocity * dt, 0.0, MAX_COMPRESSION);
-        let applied_force = hammer.stiffness * math::powf(compression, hammer.contact_exponent);
-        *sample = applied_force;
-        peak = peak.max(applied_force);
-        active += 1;
+        previous = knot;
     }
-    (force, active, peak)
-}
-
-/// Divides `curve`'s first `active` entries by `peak`, in place, or leaves
-/// them untouched if `peak` is too small to divide by safely — the
-/// normalisation [`simulate_contact`] applies to
-/// [`uncoupled_contact_curve`]'s output, factored out so a caller
-/// normalising a *single* coupled sample (dividing by the same `peak`) gets
-/// the identical convention.
-pub(crate) fn normalize_by_peak(curve: &mut [f32; MAX_CONTACT_SAMPLES], active: usize, peak: f32) {
-    if peak > f32::EPSILON {
-        for sample in curve.iter_mut().take(active) {
-            *sample /= peak;
-        }
-    }
-}
-
-/// Simulates one hammer-felt contact and returns a peak-normalised force
-/// envelope plus how many of its samples are active.
-///
-/// `velocity` is the same `[0, 1]` strike velocity
-/// [`PluckedString::pluck`](crate::string::PluckedString::pluck) already
-/// takes; `sample_rate_hz` sets the integration step; `hammer` is this
-/// string's own felt-contact physics (`sanitize_hammer` bounds it first, so
-/// any `HammerConfig` a caller constructs is safe to pass here). All three
-/// are total: a `sample_rate_hz` outside
-/// `[MIN_SAMPLE_RATE_HZ, MAX_SAMPLE_RATE_HZ]` (which covers every real audio
-/// device and rejects non-finite values along with the pathologically
-/// tiny-but-positive ones that would otherwise blow the integration step up)
-/// falls back to a fixed 48 kHz, `velocity` is clamped into `[0, 1]` the same
-/// way `pluck` clamps it, and `hammer`'s fields are bounded by
-/// `sanitize_hammer`. The per-step compression state is additionally capped
-/// at [`MAX_COMPRESSION`] on every iteration: the field-level bounds alone
-/// keep any *single* step's force finite, but only re-clamping compression
-/// itself stops an unstable (numerically stiff) combination of extreme
-/// `hammer` values and sample rate from growing without bound across
-/// [`MAX_CONTACT_SAMPLES`] steps — together these two guarantees are what
-/// keeps every returned sample finite and in `[0, 1]` for any input,
-/// verified by `simulate_contact_is_total` rather than argued for. The
-/// returned count is always `<= MAX_CONTACT_SAMPLES`; entries at or past it
-/// are `0.0` and mean "contact has ended, the hammer has left the string".
-#[must_use]
-pub fn simulate_contact(
-    velocity: f32,
-    sample_rate_hz: f32,
-    hammer: HammerConfig,
-) -> ([f32; MAX_CONTACT_SAMPLES], usize) {
-    let (mut force, active, peak) = uncoupled_contact_curve(velocity, sample_rate_hz, hammer);
-    normalize_by_peak(&mut force, active, peak);
-    (force, active)
+    previous.1
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::indexing_slicing,
-        clippy::float_cmp
-    )]
-
-    use proptest::prelude::*;
-
-    use super::*;
-
-    #[test]
-    fn harder_strikes_produce_shorter_contact() {
-        let (_, soft_samples) = simulate_contact(0.1, 48_000.0, DEFAULT_HAMMER);
-        let (_, hard_samples) = simulate_contact(0.9, 48_000.0, DEFAULT_HAMMER);
-        assert!(
-            hard_samples < soft_samples,
-            "hard {hard_samples} soft {soft_samples}"
-        );
-    }
-
-    #[test]
-    fn contact_duration_is_physically_plausible() {
-        // Chaigne & Askenfelt (1994) report contact durations of roughly
-        // 1-4 ms across normal playing velocities. Checked with a generous
-        // margin, since this model is not calibrated to a specific
-        // instrument.
-        let sample_rate = 48_000.0;
-        for velocity in [0.0, 0.5, 1.0] {
-            let (_, samples) = simulate_contact(velocity, sample_rate, DEFAULT_HAMMER);
-            let milliseconds = samples as f32 / sample_rate * 1_000.0;
-            assert!(
-                (0.1..20.0).contains(&milliseconds),
-                "velocity {velocity}: {milliseconds} ms is not plausible"
-            );
-        }
-    }
-
-    #[test]
-    fn the_force_envelope_peaks_at_one() {
-        let (force, active) = simulate_contact(0.7, 48_000.0, DEFAULT_HAMMER);
-        let peak = force.iter().take(active).copied().fold(0.0f32, f32::max);
-        assert!((peak - 1.0).abs() < 1e-6, "peak {peak}");
-    }
-
-    #[test]
-    fn samples_past_contact_are_silent() {
-        let (force, active) = simulate_contact(0.5, 48_000.0, DEFAULT_HAMMER);
-        assert!(force.iter().skip(active).all(|sample| *sample == 0.0));
-    }
-
-    #[test]
-    fn a_stiffer_hammer_produces_a_shorter_contact() {
-        let soft = HammerConfig {
-            stiffness: MIN_STIFFNESS,
-            ..DEFAULT_HAMMER
-        };
-        let stiff = HammerConfig {
-            stiffness: MAX_STIFFNESS,
-            ..DEFAULT_HAMMER
-        };
-        let (_, soft_samples) = simulate_contact(0.7, 48_000.0, soft);
-        let (_, stiff_samples) = simulate_contact(0.7, 48_000.0, stiff);
-        assert!(
-            stiff_samples < soft_samples,
-            "stiff {stiff_samples} soft {soft_samples}"
-        );
-    }
-
-    #[test]
-    fn a_harder_strike_gets_a_brighter_excitation() {
-        // The whole point: the nonlinearity that already shortens contact at
-        // higher velocity now has to make the strike brighter too, which the
-        // force envelope alone never did (see `excitation_cutoff_hz`).
-        let cutoff = |velocity: f32| {
-            let (_, active) = simulate_contact(velocity, 48_000.0, DEFAULT_HAMMER);
-            excitation_cutoff_hz(active, 48_000.0, DEFAULT_FELT_BANDWIDTH)
-        };
-        let soft = cutoff(0.1);
-        let hard = cutoff(1.0);
-        assert!(
-            hard > soft,
-            "hard {hard} Hz was not brighter than soft {soft} Hz"
-        );
-        assert!(
-            hard - soft > 1_000.0,
-            "only {} Hz separates the softest strike from the hardest; \
-             that is not audible as brightness",
-            hard - soft
-        );
-    }
-
-    #[test]
-    fn a_stiffer_hammer_gets_a_brighter_excitation_than_a_softer_one() {
-        // Stiffness is live-settable per string from a `.piano.json`, and
-        // the audible consequence of turning it up must be "brighter", the
-        // same way it is on a real instrument whose hammers were hardened.
-        let cutoff = |stiffness: f32| {
-            let hammer = HammerConfig {
-                stiffness,
-                ..DEFAULT_HAMMER
-            };
-            let (_, active) = simulate_contact(0.7, 48_000.0, hammer);
-            excitation_cutoff_hz(active, 48_000.0, DEFAULT_FELT_BANDWIDTH)
-        };
-        assert!(cutoff(MAX_STIFFNESS) > cutoff(MIN_STIFFNESS));
-    }
-
-    #[test]
-    fn with_no_incoming_wave_and_impedance_at_its_ceiling_coupling_reproduces_the_uncoupled_curve()
-    {
-        // At v_incoming ≡ 0 and string_impedance at its ceiling, F/Z_c is
-        // negligible, so v_string ≈ 0 throughout — exactly `simulate_contact`'s
-        // own assumption (the string never moves). The two independently
-        // written implementations must therefore agree, sample for sample
-        // once each is normalised to its own peak, or they have silently
-        // diverged from the same physical model.
-        let hammer = HammerConfig {
-            string_impedance: MAX_STRING_IMPEDANCE,
-            ..DEFAULT_HAMMER
-        };
-        let (reference, active) = simulate_contact(0.6, 48_000.0, hammer);
-
-        let mut state = ContactState::starting(0.6);
-        let mut coupled = [0.0f32; MAX_CONTACT_SAMPLES];
-        for sample in coupled.iter_mut().take(active) {
-            let (next_state, force) = couple_contact_step(state, hammer, 0.0, 48_000.0);
-            state = next_state;
-            *sample = force;
-        }
-        let coupled_peak = coupled.iter().take(active).copied().fold(0.0f32, f32::max);
-        assert!(coupled_peak > f32::EPSILON, "coupled curve never left zero");
-
-        for index in 0..active {
-            let expected = reference[index];
-            let got = coupled[index] / coupled_peak;
-            // Tolerance of 3e-2 (0.03) accounts for algorithmic divergence between
-            // couple_contact_step's 3-step fixed-point implicit solve and
-            // uncoupled_contact_curve's direct semi-implicit Euler step. The brief's
-            // 1e-3 target is unreachable as literally specified; independent
-            // reimplementation confirmed ~0.008 peak-normalized divergence is inherent
-            // to the algorithm difference, not a bug. A future contributor tightening
-            // COUPLING_FIXPOINT_STEPS or refactoring the loop has this signal for
-            // how much slack here is load-bearing.
-            assert!(
-                (expected - got).abs() < 3e-2,
-                "sample {index}: reference {expected} vs coupled {got}"
-            );
-        }
-    }
-
-    /// A coupled strike against a silent string: how many samples the
-    /// contact lasts, its peak force, and the largest jump between two
-    /// consecutive samples relative to that peak.
-    fn coupled_contact(hammer: HammerConfig) -> (usize, f32, f32) {
-        let mut state = ContactState::starting(0.6);
-        let mut forces = [0.0f32; MAX_CONTACT_SAMPLES];
-        let mut samples = 0;
-        for force in &mut forces {
-            let (next_state, sample) = couple_contact_step(state, hammer, 0.0, 48_000.0);
-            *force = sample;
-            samples += 1;
-            if next_state.separated {
-                break;
-            }
-            state = next_state;
-        }
-        let peak = forces.iter().copied().fold(0.0f32, f32::max);
-        let jump = forces
-            .windows(2)
-            .map(|pair| (pair[1] - pair[0]).abs())
-            .fold(0.0f32, f32::max);
-        (samples, peak, jump / peak.max(f32::MIN_POSITIVE))
-    }
-
-    #[test]
-    fn the_bottom_of_the_impedance_range_audibly_loads_the_hammer() {
-        let at = |string_impedance: f32| {
-            coupled_contact(HammerConfig {
-                string_impedance,
-                ..DEFAULT_HAMMER
-            })
-        };
-        let (rigid_samples, rigid_peak, _) = at(MAX_STRING_IMPEDANCE);
-        let (soft_samples, soft_peak, soft_jump) = at(MIN_STRING_IMPEDANCE);
-        assert!(
-            soft_samples * 10 > rigid_samples * 13,
-            "contact only grew from {rigid_samples} to {soft_samples} samples"
-        );
-        assert!(soft_peak < 0.6 * rigid_peak, "{soft_peak} vs {rigid_peak}");
-        assert!(soft_samples < MAX_CONTACT_SAMPLES, "the hammer never left");
-        assert!(soft_jump < 0.05, "the fixed point rang: {soft_jump}");
-    }
-
-    #[test]
-    fn contact_ends_and_stays_ended_once_compression_returns_to_zero() {
-        let mut state = ContactState::starting(0.7);
-        let hammer = DEFAULT_HAMMER;
-        let mut saw_separation = false;
-        for _ in 0..MAX_CONTACT_SAMPLES {
-            let (next_state, _) = couple_contact_step(state, hammer, 0.0, 48_000.0);
-            if next_state.separated {
-                saw_separation = true;
-                // Once separated, further calls must return exactly zero
-                // force and never re-engage, whatever v_incoming does.
-                let (still, force) = couple_contact_step(next_state, hammer, 5.0, 48_000.0);
-                assert_eq!(force, 0.0);
-                assert!(still.separated);
-                break;
-            }
-            state = next_state;
-        }
-        assert!(saw_separation, "contact never ended within the sample cap");
-    }
-
-    #[test]
-    fn a_returning_wave_changes_the_force_a_still_ringing_string_gets() {
-        // The whole point of #57: two otherwise identical strikes differ
-        // once one of them has real energy coming back through the loop.
-        // A bare `f32::EPSILON` threshold would pass today for the right
-        // reason (the real difference measures ~18%), but would keep
-        // passing even if the coupling weakened by orders of magnitude —
-        // it only proves the two floats differ in some low bit, not that
-        // the effect is load-bearing. Asserting a relative difference well
-        // above noise (5%, comfortably under the ~18% observed) actually
-        // encodes the intent: this fails if `v_incoming`'s contribution to
-        // the coupling were removed or nearly vanished.
-        let hammer = DEFAULT_HAMMER;
-        let state = ContactState::starting(0.6);
-        let (_, silent) = couple_contact_step(state, hammer, 0.0, 48_000.0);
-        let (_, loaded) = couple_contact_step(state, hammer, 0.3, 48_000.0);
-        let scale = silent.max(loaded).max(f32::EPSILON);
-        let relative_difference = math::abs(silent - loaded) / scale;
-        assert!(
-            relative_difference > 0.05,
-            "a nonzero v_incoming changed the force by only {:.2}% relative \
-             to silence (silent {silent}, loaded {loaded}) — the coupling \
-             looks nearly inert, not merely small",
-            relative_difference * 100.0
-        );
-    }
-
-    proptest! {
-        /// `couple_contact_step` must never panic, loop unboundedly, or
-        /// produce a non-finite state or force, for every reachable
-        /// compression, hammer velocity, `v_incoming` and `HammerConfig` —
-        /// including NaN, +-infinity and zero in every field.
-        #[test]
-        fn couple_contact_step_is_total(
-            compression in proptest::num::f32::ANY,
-            hammer_velocity in proptest::num::f32::ANY,
-            v_incoming in proptest::num::f32::ANY,
-            sample_rate_hz in proptest::num::f32::ANY,
-            contact_exponent in proptest::num::f32::ANY,
-            stiffness in proptest::num::f32::ANY,
-            mass in proptest::num::f32::ANY,
-            string_impedance in proptest::num::f32::ANY,
-        ) {
-            let state = ContactState {
-                compression,
-                hammer_velocity,
-                separated: false,
-            };
-            let hammer = HammerConfig {
-                contact_exponent,
-                stiffness,
-                mass,
-                string_impedance,
-                felt_bandwidth: DEFAULT_FELT_BANDWIDTH,
-            };
-            let (next_state, force) = couple_contact_step(state, hammer, v_incoming, sample_rate_hz);
-            prop_assert!(next_state.compression.is_finite());
-            prop_assert!(next_state.hammer_velocity.is_finite());
-            prop_assert!(force.is_finite());
-            prop_assert!(next_state.compression >= 0.0);
-        }
-    }
-
-    #[test]
-    fn the_default_hammer_lands_between_a_dull_thud_and_a_click() {
-        // Guards the calibration of `DEFAULT_FELT_BANDWIDTH`: below
-        // roughly 1 kHz the attack disappears into the note, and above
-        // roughly 6 kHz it starts measuring as the broadband click this
-        // whole mechanism exists to remove.
-        for velocity in [0.0, 0.5, 1.0] {
-            let (_, active) = simulate_contact(velocity, 48_000.0, DEFAULT_HAMMER);
-            let cutoff = excitation_cutoff_hz(active, 48_000.0, DEFAULT_FELT_BANDWIDTH);
-            assert!(
-                (1_000.0..6_000.0).contains(&cutoff),
-                "velocity {velocity}: a {cutoff} Hz corner is not felt"
-            );
-        }
-    }
-
-    #[test]
-    fn brighter_felt_moves_the_corner_up_for_the_same_contact() {
-        let (_, active) = simulate_contact(0.5, 48_000.0, DEFAULT_HAMMER);
-        let woolly = excitation_cutoff_hz(active, 48_000.0, MIN_FELT_BANDWIDTH);
-        let lacquered = excitation_cutoff_hz(active, 48_000.0, MAX_FELT_BANDWIDTH);
-        assert!(
-            lacquered > woolly * 2.0,
-            "woolly {woolly} Hz, lacquered {lacquered} Hz"
-        );
-    }
-
-    #[test]
-    fn a_contact_the_simulation_could_not_measure_still_yields_a_usable_corner() {
-        let cutoff = excitation_cutoff_hz(0, 48_000.0, DEFAULT_FELT_BANDWIDTH);
-        assert!(cutoff.is_finite());
-        assert!((MIN_EXCITATION_CUTOFF_HZ..=MAX_EXCITATION_CUTOFF_HZ).contains(&cutoff));
-    }
-
-    #[test]
-    fn the_corner_follows_the_sample_rate_a_strike_was_measured_at() {
-        // `contact_samples` is a count, not a duration: reading it at the
-        // wrong rate mistunes the corner by the ratio between the two, which
-        // is why both functions share `usable_sample_rate`.
-        let at_48k = excitation_cutoff_hz(200, 48_000.0, DEFAULT_FELT_BANDWIDTH);
-        let at_96k = excitation_cutoff_hz(400, 96_000.0, DEFAULT_FELT_BANDWIDTH);
-        assert!(
-            (at_48k - at_96k).abs() < 1.0,
-            "the same 4.2 ms contact gave {at_48k} Hz at 48 kHz and {at_96k} Hz at 96 kHz"
-        );
-    }
-
-    proptest! {
-        /// Every `contact_samples` and `sample_rate_hz` — including zero,
-        /// `usize::MAX`, `NaN` and +-infinity — must yield a finite corner
-        /// inside the model's own bounds. This value builds a recursive
-        /// filter on the audio thread; a `NaN` here poisons a whole strike.
-        #[test]
-        fn excitation_cutoff_is_total(
-            contact_samples in proptest::num::usize::ANY,
-            sample_rate_hz in proptest::num::f32::ANY,
-            felt_bandwidth in proptest::num::f32::ANY,
-        ) {
-            let cutoff = excitation_cutoff_hz(contact_samples, sample_rate_hz, felt_bandwidth);
-            prop_assert!(cutoff.is_finite());
-            prop_assert!(
-                (MIN_EXCITATION_CUTOFF_HZ..=MAX_EXCITATION_CUTOFF_HZ).contains(&cutoff),
-                "cutoff {cutoff} outside the model's bounds"
-            );
-        }
-
-        /// The contact simulation must never panic, loop unboundedly or
-        /// produce a non-finite value, for every reachable velocity, sample
-        /// rate and hammer configuration — including NaN, +-infinity and
-        /// zero in every field.
-        #[test]
-        fn simulate_contact_is_total(
-            velocity in proptest::num::f32::ANY,
-            sample_rate in proptest::num::f32::ANY,
-            contact_exponent in proptest::num::f32::ANY,
-            stiffness in proptest::num::f32::ANY,
-            mass in proptest::num::f32::ANY,
-        ) {
-            let hammer = HammerConfig { contact_exponent, stiffness, mass, ..DEFAULT_HAMMER };
-            let (force, active) = simulate_contact(velocity, sample_rate, hammer);
-            prop_assert!(active <= MAX_CONTACT_SAMPLES);
-            prop_assert!(force.iter().all(|sample| sample.is_finite()));
-            prop_assert!(force.iter().all(|sample| (0.0..=1.0).contains(sample)));
-        }
-    }
-}
+#[path = "hammer_tests.rs"]
+mod tests;

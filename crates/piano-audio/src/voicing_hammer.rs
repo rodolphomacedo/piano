@@ -25,12 +25,11 @@
 //! render is reproducible and a player learns the instrument's character
 //! instead of hearing it reshuffle every session.
 
-use piano_core::excitation::hammer_for_frequency;
-use piano_core::hammer::HammerConfig;
+use piano_core::hammer::{HammerConfig, hammer_for_frequency};
 use piano_core::math;
 
 /// How far a hammer's felt strays from its register's curve by default:
-/// stiffness and felt brightness each land up to 25% either side.
+/// its stiffness lands up to 25% either side.
 ///
 /// Set by measurement, not by literature. Rendering C4–C5 and comparing
 /// each key's attack spectral centroid with its smooth-curve twin
@@ -48,11 +47,12 @@ pub const DEFAULT_HAMMER_UNEVENNESS: f32 = 0.25;
 /// factor of `1 − u` would approach zero stiffness.
 pub const MAX_HAMMER_UNEVENNESS: f32 = 0.5;
 
-/// Key `key_index`'s hammer: its register's curve, with stiffness and felt
-/// brightness both nudged by the same per-key offset scaled by
-/// `unevenness`. Harder felt is both stiffer and brighter, so the two move
-/// together. Total: `NaN` or out-of-range `unevenness` clamps into
-/// `[0, MAX_HAMMER_UNEVENNESS]`; `0` reproduces the smooth curve exactly.
+/// One string's share of key `key_index`'s hammer: its register's curve,
+/// with the felt's stiffness nudged by a per-key offset scaled by
+/// `unevenness`. Stiffer felt is what makes a hammer brighter, so nothing
+/// else needs to move with it. Total: `NaN` or out-of-range `unevenness`
+/// clamps into `[0, MAX_HAMMER_UNEVENNESS]`; `0` reproduces the smooth
+/// curve exactly.
 #[must_use]
 pub fn hammer_for_key(key_index: usize, frequency_hz: f32, unevenness: f32) -> HammerConfig {
     let smooth = hammer_for_frequency(frequency_hz);
@@ -60,7 +60,6 @@ pub fn hammer_for_key(key_index: usize, frequency_hz: f32, unevenness: f32) -> H
     let factor = 1.0 + spread * felt_offset(key_index);
     HammerConfig {
         stiffness: smooth.stiffness * factor,
-        felt_bandwidth: smooth.felt_bandwidth * factor,
         ..smooth
     }
 }
@@ -133,7 +132,6 @@ mod tests {
         ) {
             let hammer = hammer_for_key(key_index, frequency_hz, unevenness);
             prop_assert!(hammer.stiffness.is_finite() && hammer.stiffness > 0.0);
-            prop_assert!(hammer.felt_bandwidth.is_finite() && hammer.felt_bandwidth > 0.0);
         }
     }
 }

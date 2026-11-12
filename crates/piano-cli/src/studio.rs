@@ -194,11 +194,6 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
             string_index,
             cents,
         } => session.set_string_detune(midi, string_index, cents),
-        StudioCommand::SetStringSeed {
-            midi,
-            string_index,
-            seed,
-        } => session.set_string_seed(midi, string_index, seed),
         StudioCommand::SetStringHammer {
             midi,
             string_index,
@@ -214,11 +209,6 @@ fn apply_command(session: &mut AudioSession, command: StudioCommand) {
             string_index,
             position,
         } => session.set_string_strike_position(midi, string_index, position),
-        StudioCommand::SetStringExcitationNoiseMix {
-            midi,
-            string_index,
-            mix,
-        } => session.set_string_excitation_noise_mix(midi, string_index, mix),
         StudioCommand::SetSoundboardMode { index, mode } => {
             session.set_soundboard_mode(index, mode)
         }

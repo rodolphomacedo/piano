@@ -34,14 +34,10 @@ pub struct StringSnapshot {
     pub inharmonicity: f32,
     /// See [`StringParameter::DetuneCents`].
     pub detune_cents: f32,
-    /// See [`StringParameter::Seed`].
-    pub seed: u32,
     /// See [`StringParameter::LoopZeroMix`].
     pub loop_zero_mix: f32,
     /// See [`StringParameter::StrikePosition`].
     pub strike_position: f32,
-    /// See [`StringParameter::ExcitationNoiseMix`].
-    pub excitation_noise_mix: f32,
     /// See [`StringParameter::HammerContactExponent`].
     pub hammer_contact_exponent: f32,
     /// See [`StringParameter::HammerStiffness`].
@@ -50,8 +46,6 @@ pub struct StringSnapshot {
     pub hammer_mass: f32,
     /// See [`StringParameter::HammerStringImpedance`].
     pub hammer_string_impedance: f32,
-    /// See [`StringParameter::HammerFeltBandwidth`].
-    pub hammer_felt_bandwidth: f32,
 }
 
 /// One key and the one to three strings under it.
@@ -101,14 +95,10 @@ pub struct StringRanges {
     pub inharmonicity: ParameterRange,
     /// See [`StringParameter::DetuneCents`].
     pub detune_cents: ParameterRange,
-    /// See [`StringParameter::Seed`].
-    pub seed: ParameterRange,
     /// See [`StringParameter::LoopZeroMix`].
     pub loop_zero_mix: ParameterRange,
     /// See [`StringParameter::StrikePosition`].
     pub strike_position: ParameterRange,
-    /// See [`StringParameter::ExcitationNoiseMix`].
-    pub excitation_noise_mix: ParameterRange,
     /// See [`StringParameter::HammerContactExponent`].
     pub hammer_contact_exponent: ParameterRange,
     /// See [`StringParameter::HammerStiffness`].
@@ -117,8 +107,6 @@ pub struct StringRanges {
     pub hammer_mass: ParameterRange,
     /// See [`StringParameter::HammerStringImpedance`].
     pub hammer_string_impedance: ParameterRange,
-    /// See [`StringParameter::HammerFeltBandwidth`].
-    pub hammer_felt_bandwidth: ParameterRange,
 }
 
 /// Every soundboard-mode slider's ends. See [`ModeParameter`].
@@ -174,15 +162,12 @@ impl StringRanges {
             sustain: StringParameter::Sustain.range(),
             inharmonicity: StringParameter::Inharmonicity.range(),
             detune_cents: StringParameter::DetuneCents.range(),
-            seed: StringParameter::Seed.range(),
             loop_zero_mix: StringParameter::LoopZeroMix.range(),
             strike_position: StringParameter::StrikePosition.range(),
-            excitation_noise_mix: StringParameter::ExcitationNoiseMix.range(),
             hammer_contact_exponent: StringParameter::HammerContactExponent.range(),
             hammer_stiffness: StringParameter::HammerStiffness.range(),
             hammer_mass: StringParameter::HammerMass.range(),
             hammer_string_impedance: StringParameter::HammerStringImpedance.range(),
-            hammer_felt_bandwidth: StringParameter::HammerFeltBandwidth.range(),
         }
     }
 }
@@ -265,15 +250,12 @@ mod tests {
             sustain: 0.996,
             inharmonicity: 0.000_4,
             detune_cents: 0.0,
-            seed: 0,
             loop_zero_mix: 0.3,
             strike_position: 0.125,
-            excitation_noise_mix: 0.7,
             hammer_contact_exponent: 2.5,
             hammer_stiffness: 1.7e9,
             hammer_mass: 1.0,
             hammer_string_impedance: piano_core::hammer::DEFAULT_HAMMER.string_impedance,
-            hammer_felt_bandwidth: piano_core::hammer::DEFAULT_HAMMER.felt_bandwidth,
         };
         let json = serde_json::to_value(snapshot).expect("serialises");
         for parameter in STRING_PARAMETERS {

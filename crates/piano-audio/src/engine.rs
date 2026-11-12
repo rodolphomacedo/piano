@@ -39,8 +39,10 @@
 //! [`Engine::process_stereo_chunk`]'s skip condition.
 
 use piano_core::action::ActionNoise;
+use piano_core::body::BoardBody;
 use piano_core::duplex::{DuplexResonance, DuplexTuning};
 use piano_core::phantom::PhantomPartials;
+use piano_core::radiation::Radiation;
 use piano_core::room::Room;
 use piano_core::soundboard::SoundboardMode;
 use piano_core::{BridgeBus, SampleRate, Soundboard, UnisonGroup, hammer, math};
@@ -159,6 +161,12 @@ pub(crate) struct Engine {
     /// by [`Command::SetSoundboardMixGain`], clamped to
     /// `[0, MAX_SOUNDBOARD_MIX_GAIN]`.
     soundboard_mix_gain: f32,
+    /// The soundboard's diffuse field (`piano_core::body`): what smears the
+    /// bridge force into a piano's attack.
+    body: BoardBody,
+    /// What the board's motion sounds like in the air
+    /// (`piano_core::radiation`), over everything the board does.
+    radiation: Radiation,
     /// The room the instrument is heard in (`piano_core::room`), fed the
     /// mixed instrument and added back in stereo. Silent until
     /// [`Command::SetRoomMix`] raises its wet level.
@@ -214,6 +222,8 @@ impl Engine {
             bridge: BridgeBus::with_capacity(BRIDGE_BLOCK_SAMPLES),
             soundboard: Soundboard::new(sample_rate),
             soundboard_mix_gain: DEFAULT_SOUNDBOARD_MIX_GAIN,
+            body: BoardBody::new(sample_rate),
+            radiation: Radiation::new(sample_rate),
             room: Room::new(sample_rate.hertz()),
             master_gain: DEFAULT_MASTER_GAIN,
             limiter_threshold: DEFAULT_LIMITER_THRESHOLD,
@@ -297,11 +307,6 @@ impl Engine {
                 string_index,
                 cents,
             } => self.set_string_detune(midi, string_index, cents),
-            Command::SetStringSeed {
-                midi,
-                string_index,
-                seed,
-            } => self.set_string_seed(midi, string_index, seed),
             Command::SetStringHammer {
                 midi,
                 string_index,
@@ -320,13 +325,6 @@ impl Engine {
                 position,
             } => self.with_string(midi, string_index, |strings, index| {
                 strings.set_string_strike_position(index, position);
-            }),
-            Command::SetStringExcitationNoiseMix {
-                midi,
-                string_index,
-                mix,
-            } => self.with_string(midi, string_index, |strings, index| {
-                strings.set_string_excitation_noise_mix(index, mix);
             }),
         }
     }
@@ -409,7 +407,7 @@ impl Engine {
             voice.held = false;
             voice.sostenuto_latched = false;
             if let Some(strings) = voice.strings.as_mut() {
-                strings.pluck(0.0);
+                strings.silence();
                 strings.release();
             }
         }
@@ -549,14 +547,6 @@ impl Engine {
         }
     }
 
-    /// Reseeds one string's excitation noise for its next strike. See
-    /// [`Engine::set_string_damping`] for the out-of-range contract.
-    fn set_string_seed(&mut self, midi: u8, string_index: u8, seed: u32) {
-        if let Some(strings) = self.unison_for_midi(midi) {
-            strings.set_string_seed(usize::from(string_index), seed);
-        }
-    }
-
     /// Runs `change` on string `string_index` of `midi`'s unison. See
     /// [`Engine::set_string_damping`] for the out-of-range contract.
     fn with_string(
@@ -577,6 +567,21 @@ impl Engine {
             strings.set_string_hammer(usize::from(string_index), hammer);
         }
     }
+}
+
+/// `key`'s strings, their unison tuned as far apart as
+/// [`voicing::unison_spread_cents_for_key`] leaves it. `None` if the key
+/// cannot be represented at `sample_rate`.
+fn tuned_unison(
+    key: PianoKey,
+    tuning: Tuning,
+    config: piano_core::string::StringConfig,
+    unison_count: usize,
+    sample_rate: SampleRate,
+) -> Option<UnisonGroup> {
+    let mut strings = UnisonGroup::new(config, unison_count, sample_rate).ok()?;
+    strings.set_unison_spread(voicing::unison_spread_cents_for_key(key, tuning));
+    Some(strings)
 }
 
 /// Builds `key_index`'s permanent voice: a [`UnisonGroup`] whose string
@@ -605,7 +610,7 @@ fn voice_for_key(
     let config = voicing::config_for_key(key, tuning, sample_rate);
     let unison_count = unison_override.unwrap_or_else(|| voicing::unison_count_for_key(key));
     Voice {
-        strings: UnisonGroup::new(config, unison_count, sample_rate).ok(),
+        strings: tuned_unison(key, tuning, config, unison_count, sample_rate),
         level: voicing::level_for_key(key),
         phantom: PhantomPartials::new(voicing::phantom_gain_for_key(key), sample_rate.hertz()),
         duplex: DuplexResonance::new(

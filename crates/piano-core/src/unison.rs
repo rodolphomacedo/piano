@@ -57,62 +57,67 @@ use crate::{
 /// The most strings a real piano note is ever struck by.
 pub const MAX_UNISON_STRINGS: usize = 3;
 
-/// How much of a string's round-trip loss its note's *differential* modes —
-/// strings moving against each other — are spared. See [`spare_differential`].
+/// How much of a string's round-trip loss its note's slow modes are spared.
+/// See [`spare_slow_modes`].
 ///
-/// G. Weinreich, "Coupled piano strings", JASA 62(6), 1977: when a note's
-/// strings move together (the common mode) they push the bridge together,
-/// and that mode's energy drains into the soundboard fast — the loud,
-/// quickly-decaying *prompt sound*. Once a few cents of mistuning has
-/// rotated part of the energy into modes where the strings oppose each
-/// other, the bridge barely moves and that energy rings on far longer —
-/// the quiet, long *aftersound* that makes a piano note sing. Most of a
-/// struck string's loss is through the bridge, so the differential modes
-/// keep only the remainder: at `0.75` they lose a quarter of what the
-/// common mode does per round trip, four times longer-lived, inside the
-/// "several times slower" Weinreich reports. The figure itself is a
-/// reasoned choice, not a measurement of one instrument.
-///
-/// The previous coupling was a convex blend `(1-w)·own + w·mean(others)`,
-/// which does the opposite: it leaves the common mode alone and *damps*
-/// every differential mode by `1.5·w` per round trip. With detuning
-/// pumping energy into those modes continuously, treble trichords lost up
-/// to 96% of their level against three independent strings by 0.4 s
-/// (issue #96).
-pub const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.75;
+/// G. Weinreich, "Coupled piano strings", JASA 62(6), 1977: the motion in
+/// which a note's strings push the bridge together drains into the
+/// soundboard fast — the loud, quickly-decaying *prompt sound*. Every other
+/// motion of the group barely moves the bridge and rings on far longer — the
+/// quiet *aftersound* that makes a piano note sing. At `0.87` those slow
+/// modes lose about an eighth of what the prompt mode does: resolving a
+/// grand's partials into their decaying modes gives fundamentals falling
+/// 17-18 dB/s with a companion mode near 2-6 dB/s through the middle of the
+/// keyboard, and that ratio holds roughly from the tenor to the top octave
+/// (`docs/CALIBRATION.md`).
+pub const DEFAULT_LOCAL_COUPLING_GAIN: f32 = 0.87;
 
-/// Highest share accepted. At `1.0` a differential mode would lose nothing
-/// at DC (the loss filter passes DC unchanged), so a struck group could
-/// ring forever and never free its voice.
+/// Highest share accepted. At `1.0` a slow mode would lose nothing at DC
+/// (the loss filter passes DC unchanged), so a struck group could ring
+/// forever and never free its voice.
 const MAX_LOCAL_COUPLING_GAIN: f32 = 0.95;
 
-/// Detuning, in cents, for a 2-string (bichord) unison group, symmetric
-/// around the nominal pitch.
-///
-/// The *existence* of a small mistuning between unison strings, and that it
-/// is what produces beating, is Weinreich's (1977) central finding; the
-/// specific cents figure is this project's own reasoned choice within the
-/// "a few cents" order of magnitude that literature reports for real
-/// instruments, not a measurement of one.
-///
-/// Weinreich (1977) finds the aftersound fully developed with unisons
-/// mistuned by about a cent, which is also roughly where a careful tuner
-/// leaves them. Halved from `±2.5` once the coupling stopped locking the
-/// strings together ([`DEFAULT_LOCAL_COUPLING_GAIN`], issue #96): free
-/// strings 5 cents apart beat to a null every 2 s at F2, audibly a
-/// mistuned unison rather than a warm one.
-const DETUNE_CENTS_BICHORD: [f32; 2] = [-1.0, 1.0];
+/// Total mistuning, in cents, between the flattest and the sharpest string
+/// of a group nobody has tuned yet. `piano_audio::voicing` replaces it per
+/// key ([`UnisonGroup::set_unison_spread`]); this is the middle of what it
+/// chooses, for a group built on its own.
+pub const DEFAULT_UNISON_SPREAD_CENTS: f32 = 0.5;
 
-/// Detuning, in cents, for a 3-string (trichord) unison group — the middle
-/// string left at the nominal pitch, the outer two deliberately *not*
-/// symmetric. Three strings at `-φ, 0, +φ` sum to `1 + 2·cos φ`, which is
-/// exactly zero once φ reaches `2π/3`: a symmetric trichord beats to a
-/// periodic dead null no real unison, tuned by ear, ever lands on. Measured
-/// through the engine at A4 (issue #96), `±1.5` dropped the fundamental
-/// 22 dB at 0.7 s and back; this pair gives Weinreich's two-stage decay — a
-/// prompt fall, one shallow dip, then the aftersound plateau. See
-/// [`DETUNE_CENTS_BICHORD`] for the honesty note on the exact figures.
-const DETUNE_CENTS_TRICHORD: [f32; 3] = [-0.8, 0.0, 0.5];
+/// Largest spread [`UnisonGroup::set_unison_spread`] accepts: far past any
+/// tuned unison, well inside [`crate::string::MAX_LIVE_DETUNE_CENTS`].
+pub const MAX_UNISON_SPREAD_CENTS: f32 = 50.0;
+
+/// How a bichord's spread is divided between its two strings.
+const MISTUNING_SHARE_BICHORD: [f32; 2] = [-0.5, 0.5];
+
+/// How a trichord's spread is divided among its three strings: one flat,
+/// two sharp by different amounts. Three strings at `-φ, 0, +φ` sum to
+/// `1 + 2·cos φ`, which is exactly zero once `φ` reaches `2π/3`, so a
+/// symmetric trichord beats to a periodic dead null no unison tuned by ear
+/// ever lands on (issue #96).
+const MISTUNING_SHARE_TRICHORD: [f32; 3] = [-0.6, 0.25, 0.4];
+
+/// How unequally a bichord's two strings load the bridge. See
+/// [`BRIDGE_LOAD_TRICHORD`].
+const BRIDGE_LOAD_BICHORD: [f32; 2] = [1.2, 0.8];
+
+/// How unequally a trichord's three strings load the bridge.
+///
+/// With equal loads the prompt mode is the plain average of the strings, a
+/// hammer that strikes them alike excites nothing else, and the only way
+/// into the aftersound is mistuning — which reaches it through a phase
+/// reversal, a dead notch between the two stages, and only for partials
+/// whose mistuning is small against their decay rate. A real unison's
+/// aftersound is there in every partial at 10-30 dB under the prompt sound,
+/// with well under a cent between its strings: its strings also move along
+/// the bridge, where the board barely answers, and the bridge rocks. This
+/// model has one polarisation, so that second, weakly coupled family of
+/// motions is stood in for by letting the strings load the bridge
+/// unequally: the prompt mode is then a weighted average, and an even
+/// strike leaves the fraction `var(load)/mean(load)²` of its amplitude in
+/// the slow modes — about 24 dB down here, 28 dB for a bichord. A reasoned
+/// stand-in calibrated to that measurement, not a measured admittance.
+const BRIDGE_LOAD_TRICHORD: [f32; 3] = [1.35, 0.9, 0.75];
 
 /// A group of 1-3 [`PluckedString`]s struck together by one hammer,
 /// coupled to each other through a local bridge contact.
@@ -136,23 +141,15 @@ pub struct UnisonGroup {
     board: BridgeLoad,
     /// See [`UnisonGroup::set_board_load_gain`].
     board_load_gain: f32,
+    /// How hard each string loads the bridge ([`BRIDGE_LOAD_TRICHORD`]).
+    bridge_loads: [f32; MAX_UNISON_STRINGS],
 }
 
 impl UnisonGroup {
     /// Builds a group of `unison_count` strings (clamped into
-    /// `[1, MAX_UNISON_STRINGS]`) around `base_config`'s frequency, each
-    /// detuned by a small fixed offset from [`DETUNE_CENTS_BICHORD`] or
-    /// [`DETUNE_CENTS_TRICHORD`] (a single string gets no detuning — a real
-    /// monochord bass note has nothing to beat against) and reseeded per
-    /// string ([`reseed_for_string`]) — a real hammer strike does not
-    /// deliver bit-for-bit identical excitation to each unison string
-    /// (each has its own contact point and felt compliance), and leaving
-    /// every string at `base_config`'s one seed made the strings' initial
-    /// bursts near-identical, masking the beating this whole module exists
-    /// to produce: caught by `crates/piano-render/tests/m6_spectral.rs`
-    /// measuring almost no early/late decay-rate difference between a
-    /// trichord and a monochord control before this fix, not by
-    /// inspection.
+    /// `[1, MAX_UNISON_STRINGS]`) around `base_config`'s frequency, spread
+    /// [`DEFAULT_UNISON_SPREAD_CENTS`] apart ([`detune_cents`]; a single
+    /// string gets no mistuning — a monochord has nothing to beat against).
     ///
     /// # Errors
     ///
@@ -167,11 +164,14 @@ impl UnisonGroup {
     ) -> Result<Self, ParamError> {
         let count = unison_count.clamp(1, MAX_UNISON_STRINGS);
         let mut strings: [Option<PluckedString>; MAX_UNISON_STRINGS] = [None, None, None];
-        for (index, slot) in strings.iter_mut().take(count).enumerate() {
+        let mut bridge_loads = [1.0; MAX_UNISON_STRINGS];
+        let slots = strings.iter_mut().zip(bridge_loads.iter_mut());
+        for (index, (slot, load)) in slots.take(count).enumerate() {
+            let cents = detune_cents(count, index, DEFAULT_UNISON_SPREAD_CENTS);
             let mut config = base_config;
-            config.frequency = detune(base_config.frequency, detune_cents(count, index));
-            config.seed = reseed_for_string(base_config.seed, index);
+            config.frequency = detune(base_config.frequency, cents);
             *slot = Some(PluckedString::new(config, sample_rate)?);
+            *load = bridge_load_for(count, index);
         }
         Ok(Self {
             strings,
@@ -181,7 +181,17 @@ impl UnisonGroup {
             base_frequency: base_config.frequency,
             board: BridgeLoad::new(sample_rate, base_config.frequency.hertz()),
             board_load_gain: DEFAULT_BOARD_LOAD_GAIN,
+            bridge_loads,
         })
+    }
+
+    /// Retunes the whole group so its flattest and sharpest strings sit
+    /// `spread_cents` apart, divided as [`detune_cents`] divides it. Clamped
+    /// into `[0, MAX_UNISON_SPREAD_CENTS]`; a single string is unaffected.
+    pub fn set_unison_spread(&mut self, spread_cents: f32) {
+        for index in 0..self.count {
+            self.set_string_detune(index, detune_cents(self.count, index, spread_cents));
+        }
     }
 
     /// Strikes every string in the group at the same `velocity` — a real
@@ -189,6 +199,13 @@ impl UnisonGroup {
     pub fn pluck(&mut self, velocity: f32) {
         for string in self.strings.iter_mut().flatten() {
             string.pluck(velocity);
+        }
+    }
+
+    /// Stops every string dead ([`PluckedString::silence`]).
+    pub fn silence(&mut self) {
+        for string in self.strings.iter_mut().flatten() {
+            string.silence();
         }
     }
 
@@ -200,13 +217,20 @@ impl UnisonGroup {
     /// heavy colour the pedal is played for, not merely a quieter note
     /// (G. Weinreich, "Coupled piano strings", JASA 62(6), 1977, §V). A
     /// single-string key has nothing to miss and is struck as usual.
+    ///
+    /// The string missed is the group's first, the one that loads the
+    /// bridge hardest ([`BRIDGE_LOAD_TRICHORD`]). What the struck strings
+    /// then leave in the slow modes reaches the listener in phase with the
+    /// prompt sound and 11 dB under it, against 24 dB for a full strike.
+    /// Missing the lightest string instead leaves it in antiphase: less
+    /// aftersound than a full strike, behind a notch.
     pub fn pluck_una_corda(&mut self, velocity: f32) {
-        let struck = self.count.saturating_sub(1).max(1);
+        let missed = usize::from(self.count > 1);
         for (index, string) in self.strings.iter_mut().flatten().enumerate() {
-            if index < struck {
-                string.pluck(velocity);
-            } else {
+            if index < missed {
                 string.lift_damper();
+            } else {
+                string.pluck(velocity);
             }
         }
     }
@@ -336,25 +360,6 @@ impl UnisonGroup {
         string.set_strike_position(position);
     }
 
-    /// Sets how noisy one string's *next* strike is. See
-    /// [`PluckedString::set_excitation_noise_mix`] and
-    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
-    pub fn set_string_excitation_noise_mix(&mut self, string_index: usize, mix: f32) {
-        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
-            return;
-        };
-        string.set_excitation_noise_mix(mix);
-    }
-
-    /// Reseeds one string's excitation noise, for its *next* strike. See
-    /// [`UnisonGroup::set_string_damping`] for the out-of-range contract.
-    pub fn set_string_seed(&mut self, string_index: usize, seed: u32) {
-        let Some(string) = self.strings.get_mut(string_index).and_then(Option::as_mut) else {
-            return;
-        };
-        string.set_seed(seed);
-    }
-
     /// Changes one string's felt-contact physics, for its *next* strike.
     /// See [`UnisonGroup::set_string_damping`] for the out-of-range
     /// contract.
@@ -424,54 +429,20 @@ impl UnisonGroup {
     /// The shared implementation behind [`UnisonGroup::process`] and
     /// [`UnisonGroup::process_with_bridge`].
     ///
-    /// Three passes, each doing one thing:
-    /// 1. Read every active string's bridge tap and its own dispersed
-    ///    signal ([`PluckedString::disperse`]), tracking which strings are
-    ///    currently receptive (`!damper_engaged`) — only a receptive
-    ///    string both contributes to and receives coupling, per
-    ///    [`PluckedString::write_mixed_feedback`]'s own damper invariant.
-    /// 2. Fold this group's receptive strings into one shared bridge
-    ///    contribution ([`local_group_mean`]) and exchange it with the
-    ///    global bus, if there is one.
-    /// 3. Blend each receptive string's own dispersed signal with the
-    ///    other local strings' mean and the global bus's readback — both
-    ///    blends are convex combinations, chained — and write it back.
+    /// 1. [`UnisonGroup::read_strings`] reads every string's bridge tap and
+    ///    adds the receptive ones up at the bridge.
+    /// 2. The group's mean drives the board's modes and is exchanged with
+    ///    the cross-key bus, if there is one.
+    /// 3. [`UnisonGroup::write_strings`] spares each receptive string's slow
+    ///    modes, adds what the bridge drives back, and writes it.
+    ///
+    /// An absent bus drives nothing, which is the same arithmetic as a bus
+    /// nobody has contributed to: the coupling is additive
+    /// ([`PluckedString::write_mixed_feedback`]), so adding `0.0` is a true
+    /// no-op and a missing bus cannot bend the decay.
     fn process_impl(&mut self, bridge: Option<(&mut BridgeBus, usize)>) -> f32 {
-        let mut samples = [StringSample::default(); MAX_UNISON_STRINGS];
-        let mut local_sum = 0.0f32;
-        let mut receptive_count = 0usize;
-        for (string, sample) in self
-            .strings
-            .iter_mut()
-            .zip(samples.iter_mut())
-            .take(self.count)
-        {
-            let Some(string) = string.as_mut() else {
-                continue;
-            };
-            let tap = string.read_bridge_tap();
-            let dispersed = string.disperse(tap);
-            let receptive = !string.damper_engaged();
-            *sample = StringSample {
-                tap,
-                dispersed,
-                receptive,
-            };
-            if receptive {
-                receptive_count += 1;
-                local_sum += dispersed;
-            }
-        }
-
-        // An absent bridge drives nothing, which is now the same arithmetic
-        // as a present bridge nobody has contributed to: adding `0.0` on
-        // top of the string's own signal is a true no-op. It was not always
-        // — while the global path was a convex *blend*, "read back 0.0"
-        // meant drifting towards silence every sample, so a missing bridge
-        // had to be threaded down as `None` to avoid a decay-curve bug a
-        // render check caught. Additive coupling removes that trap at the
-        // source; see [`PluckedString::write_mixed_feedback`].
-        let group_mean = local_group_mean(local_sum, receptive_count);
+        let (samples, at_bridge) = self.read_strings();
+        let group_mean = at_bridge.mean();
         // Gain zero skips the bank entirely, so turning the load off also
         // gives back its cost (`PERF-015`).
         let board_velocity = if self.board_load_gain > 0.0 {
@@ -484,22 +455,56 @@ impl UnisonGroup {
             bridge_drive_for(total, contributors, self.global_coupling_gain)
         });
         let bridge_drive = bus_drive - self.board_load_gain * board_velocity;
+        self.write_strings(&samples, at_bridge.prompt_motion(), bridge_drive)
+    }
 
+    /// Reads every string's bridge tap and its dispersed signal
+    /// ([`PluckedString::disperse`]), and sums the receptive ones — only a
+    /// string whose damper is up both drives the bridge and hears it, per
+    /// [`PluckedString::write_mixed_feedback`]'s own damper invariant.
+    fn read_strings(&mut self) -> ([StringSample; MAX_UNISON_STRINGS], BridgeSum) {
+        let mut samples = [StringSample::default(); MAX_UNISON_STRINGS];
+        let mut at_bridge = BridgeSum::default();
+        let strings = self.strings.iter_mut().zip(self.bridge_loads.iter());
+        for ((string, &load), sample) in strings.zip(samples.iter_mut()).take(self.count) {
+            let Some(string) = string.as_mut() else {
+                continue;
+            };
+            let tap = string.read_bridge_tap();
+            let dispersed = string.disperse(tap);
+            let receptive = !string.damper_engaged();
+            *sample = StringSample {
+                tap,
+                dispersed,
+                receptive,
+                load,
+            };
+            if receptive {
+                at_bridge.add(dispersed, load);
+            }
+        }
+        (samples, at_bridge)
+    }
+
+    /// Writes every string's next sample back and returns their summed
+    /// output. A damped string neither drives the bridge nor takes anything
+    /// back from it, so it writes only its own signal.
+    fn write_strings(
+        &mut self,
+        samples: &[StringSample; MAX_UNISON_STRINGS],
+        prompt_motion: f32,
+        bridge_drive: f32,
+    ) -> f32 {
+        let share = self.local_coupling_gain;
         let mut output = 0.0f32;
         for (string, sample) in self.strings.iter_mut().zip(samples.iter()).take(self.count) {
             let Some(string) = string.as_mut() else {
                 continue;
             };
-            // A damped string neither radiates into the bridge nor takes
-            // anything back from it, so it writes only its own signal —
-            // `PluckedString::write_mixed_feedback`'s damper invariant.
             let (mixed, coupling) = if sample.receptive {
-                let spared = spare_differential(
-                    sample.dispersed,
-                    group_mean,
-                    string.sustain(),
-                    self.local_coupling_gain,
-                );
+                let prompt_part = sample.load * prompt_motion;
+                let spared =
+                    spare_slow_modes(sample.dispersed, prompt_part, string.sustain(), share);
                 (spared, bridge_drive)
             } else {
                 (sample.dispersed, 0.0)
@@ -510,8 +515,8 @@ impl UnisonGroup {
     }
 }
 
-/// One string's per-sample scratch, read in [`UnisonGroup::process_impl`]'s
-/// first pass and consumed in its second — bundled into one struct instead
+/// One string's per-sample scratch, filled by [`UnisonGroup::read_strings`]
+/// and consumed by [`UnisonGroup::write_strings`] — bundled into one struct instead
 /// of three parallel arrays so every access goes through
 /// [`core::iter::Iterator::zip`] rather than an indexing expression
 /// clippy's `indexing_slicing` lint (denied workspace-wide, per
@@ -521,19 +526,61 @@ struct StringSample {
     tap: f32,
     dispersed: f32,
     receptive: bool,
+    load: f32,
+}
+
+/// What a group's receptive strings add up to at the bridge in one sample.
+#[derive(Debug, Clone, Copy, Default)]
+struct BridgeSum {
+    plain: f32,
+    loaded: f32,
+    load_energy: f32,
+    receptive_count: usize,
+}
+
+impl BridgeSum {
+    #[inline]
+    fn add(&mut self, dispersed: f32, load: f32) {
+        self.plain += dispersed;
+        self.loaded += load * dispersed;
+        self.load_energy += load * load;
+        self.receptive_count += 1;
+    }
+
+    /// The receptive strings' mean signal — `0.0` when none are receptive,
+    /// rather than a division by zero.
+    #[inline]
+    fn mean(self) -> f32 {
+        if self.receptive_count == 0 {
+            0.0
+        } else {
+            self.plain / self.receptive_count as f32
+        }
+    }
+
+    /// The prompt mode's amplitude: the strings projected onto their own
+    /// bridge loads, so string `i`'s part in it is `loadᵢ` times this.
+    #[inline]
+    fn prompt_motion(self) -> f32 {
+        if self.load_energy > 0.0 {
+            self.loaded / self.load_energy
+        } else {
+            0.0
+        }
+    }
 }
 
 /// How hard the shared, cross-key bridge bus's previous-block readback
-/// *drives* a receptive string — an additive term, unlike
-/// [`DEFAULT_LOCAL_COUPLING_GAIN`]'s convex [`blend`]. See
+/// *drives* a receptive string, as an additive term. See
 /// [`crate::string::PluckedString::write_mixed_feedback`]'s doc comment for
 /// why the two paths need opposite mixing laws, and why scaling this by the
 /// string's own round-trip loss keeps any value in `[0, 1]` safe regardless
 /// of `sustain`.
 ///
 /// Set by measurement (`piano-audio/tests/sympathetic.rs`): a C5 held
-/// silently rings about 38 dB under a struck C4, an audible but discreet
-/// answer, and the sustain pedal's bloom stays about 17 dB under the note.
+/// silently rings about 37 dB under a struck C4, an audible but discreet
+/// answer, and the sustain pedal's bloom sits about 9 dB under what is left
+/// of the note one to three seconds after the strike.
 /// A reasoned choice, not a measured bridge admittance (#90).
 pub const DEFAULT_GLOBAL_COUPLING_GAIN: f32 = 0.2;
 
@@ -563,80 +610,74 @@ fn bridge_drive_for(total: f32, contributors: u32, gain: f32) -> f32 {
 /// energy rather than sitting on the edge of stability.
 const BRIDGE_PASSIVITY_MARGIN: f32 = 0.9;
 
-/// The mean dispersed signal across this group's `receptive_count`
-/// receptive strings — `0.0` when none are (nothing to contribute; also
-/// keeps this total rather than dividing by zero).
-#[inline]
-fn local_group_mean(local_sum: f32, receptive_count: usize) -> f32 {
-    if receptive_count == 0 {
-        0.0
-    } else {
-        local_sum / receptive_count as f32
-    }
-}
-
-/// Spares `own`'s differential part — what differs from the group's mean —
-/// `share` of the string's round-trip loss `1 - sustain`, leaving the
-/// common part (the mean) to lose exactly `sustain` once
-/// `write_mixed_feedback` applies it.
+/// Spares everything in `own` except its part in the prompt mode `share`
+/// of the string's round-trip loss `1 - sustain`, leaving `prompt_part` to
+/// lose exactly `sustain` once `write_mixed_feedback` applies it.
 ///
-/// Per round trip the group's scattering is `(1 + k)·I − k·J/N` with
-/// `k = share·(1 − sustain)/sustain`: eigenvalue `1` on the common mode,
-/// `1 + k` on every differential mode. After `sustain` that is `sustain`
-/// and `sustain + share·(1 − sustain) < 1` — the matrix is symmetric, so
-/// its norm is its largest eigenvalue and the group stays passive for any
-/// `share < 1`. A single string *is* its own mean, so it is untouched and
-/// still decays exactly as `piano_audio::voicing` solved it.
+/// With `ŵ` the group's bridge loads as a unit vector, one round trip
+/// scatters the strings by `(1 + k)·I − k·ŵŵᵀ`, `k = share·(1 − sustain)/
+/// sustain`: eigenvalue `1` on the prompt mode `ŵ`, `1 + k` on every motion
+/// orthogonal to it. After `sustain` those are `sustain` and
+/// `sustain + share·(1 − sustain) < 1` — the matrix is symmetric, so its
+/// norm is its largest eigenvalue and the group stays passive for any
+/// `share < 1`. A single string *is* its own prompt mode, so it is
+/// untouched and decays exactly as `piano_audio::voicing` solved it.
 #[inline]
-fn spare_differential(own: f32, group_mean: f32, sustain: f32, share: f32) -> f32 {
+fn spare_slow_modes(own: f32, prompt_part: f32, sustain: f32, share: f32) -> f32 {
     let share = math::clamp_or_low(share, 0.0, MAX_LOCAL_COUPLING_GAIN);
     if sustain.is_nan() || sustain <= 0.0 {
         return own;
     }
-    let differential_boost = share * (1.0 - sustain) / sustain;
-    own + differential_boost * (own - group_mean)
+    let slow_mode_boost = share * (1.0 - sustain) / sustain;
+    own + slow_mode_boost * (own - prompt_part)
 }
 
-/// How many cents string `string_index` of a `count`-string unison is
-/// detuned by when the group is built. `_ => 0.0` covers the single-string
-/// case (nothing to detune against) and any out-of-table index, total
-/// rather than requiring the caller to pre-validate. Public so a caller
-/// that retunes strings absolutely ([`UnisonGroup::set_string_detune`])
-/// can start from the same spread instead of collapsing it to zero.
+/// How many cents string `string_index` of a `count`-string unison sits
+/// from the group's pitch when its strings are `spread_cents` apart in all.
+/// `_ => 0.0` covers the single string (nothing to mistune against) and any
+/// out-of-table index, total rather than requiring the caller to
+/// pre-validate. Public so a caller that retunes strings absolutely
+/// ([`UnisonGroup::set_string_detune`]) can start from the same division.
 #[must_use]
-pub fn detune_cents(count: usize, string_index: usize) -> f32 {
-    match count {
-        2 => DETUNE_CENTS_BICHORD
-            .get(string_index)
-            .copied()
-            .unwrap_or(0.0),
-        3 => DETUNE_CENTS_TRICHORD
-            .get(string_index)
-            .copied()
-            .unwrap_or(0.0),
-        _ => 0.0,
-    }
+pub fn detune_cents(count: usize, string_index: usize, spread_cents: f32) -> f32 {
+    let spread = math::clamp_or_low(spread_cents, 0.0, MAX_UNISON_SPREAD_CENTS);
+    spread
+        * table_entry(
+            count,
+            string_index,
+            MISTUNING_SHARE_BICHORD,
+            &MISTUNING_SHARE_TRICHORD,
+            0.0,
+        )
 }
 
-/// A distinct odd constant per string index, `XOR`ed into the group's base
-/// seed so each unison string draws an independent excitation noise
-/// sequence rather than replaying the same one — see [`UnisonGroup::new`]'s
-/// doc comment for why identical seeds across strings was a real bug, not
-/// a harmless shortcut. Odd, large and unrelated to each other by
-/// construction (arbitrary odd 32-bit constants), so XOR-ing one in does
-/// not collapse back onto another string's seed for any base seed.
-const RESEED_CONSTANTS: [u32; MAX_UNISON_STRINGS] = [0x0000_0000, 0x9E37_79B1, 0x85EB_CA77];
+/// How hard string `string_index` of a `count`-string unison loads the
+/// bridge, relative to the group's average. See [`BRIDGE_LOAD_TRICHORD`].
+fn bridge_load_for(count: usize, string_index: usize) -> f32 {
+    table_entry(
+        count,
+        string_index,
+        BRIDGE_LOAD_BICHORD,
+        &BRIDGE_LOAD_TRICHORD,
+        1.0,
+    )
+}
 
-/// Deterministically derives string `string_index`'s own seed from the
-/// group's shared `base_seed`, keeping renders reproducible (same base
-/// seed, same detuning, same result every time — this project's existing
-/// determinism guarantee, `docs/ARCHITECTURE.md`'s testing strategy)
-/// while giving each string an independent-looking noise sequence.
-/// Total: `string_index` beyond the table falls back to the base seed
-/// unchanged rather than panicking, which in practice is unreachable since
-/// every caller clamps to [`MAX_UNISON_STRINGS`] first.
-fn reseed_for_string(base_seed: u32, string_index: usize) -> u32 {
-    base_seed ^ RESEED_CONSTANTS.get(string_index).copied().unwrap_or(0)
+/// `string_index`'s entry in the table for a `count`-string group, or
+/// `single` for a monochord and for any index outside the table.
+fn table_entry(
+    count: usize,
+    string_index: usize,
+    bichord: [f32; 2],
+    trichord: &[f32; 3],
+    single: f32,
+) -> f32 {
+    let table: &[f32] = match count {
+        2 => &bichord,
+        3 => trichord,
+        _ => &[],
+    };
+    table.get(string_index).copied().unwrap_or(single)
 }
 
 /// Shifts `frequency` by `cents`, falling back to the original frequency in
@@ -652,8 +693,8 @@ fn detune(frequency: Hz, cents: f32) -> Hz {
 /// module docs' register boundaries. `pub(crate)`-visible so
 /// `piano_audio::voicing` can reuse the same table rather than duplicating
 /// it — the boundaries are a physical-model fact, not per-key policy, so
-/// they belong here alongside [`DETUNE_CENTS_BICHORD`]/
-/// [`DETUNE_CENTS_TRICHORD`], even though *which key gets which count* is
+/// they belong here alongside [`MISTUNING_SHARE_BICHORD`]/
+/// [`MISTUNING_SHARE_TRICHORD`], even though *which key gets which count* is
 /// looked up by the voicing layer.
 #[must_use]
 pub fn unison_count_for_key_index(key_index: u8) -> usize {
@@ -668,562 +709,12 @@ pub fn unison_count_for_key_index(key_index: u8) -> usize {
     }
 }
 
+// Split out to keep this file near the project's size limit; both still
+// compile as children of this module.
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::float_cmp, clippy::unwrap_used, clippy::expect_used)]
+#[path = "unison_tests.rs"]
+mod tests;
 
-    use proptest::prelude::*;
-
-    use super::*;
-
-    fn group_at(frequency: f32, count: usize) -> UnisonGroup {
-        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
-        let config = StringConfig::new(Hz::new(frequency).expect("frequency is valid"));
-        UnisonGroup::new(config, count, rate).expect("frequency is representable at 48 kHz")
-    }
-
-    /// Renders `len` samples straight from one constituent string, bypassing
-    /// [`UnisonGroup`]'s own mixing and coupling entirely — the per-string
-    /// setter tests below use this to observe exactly one string's output
-    /// in isolation, which is the only way to prove a sibling string's
-    /// output is bit-for-bit unaffected.
-    fn string_output(group: &mut UnisonGroup, string_index: usize, len: usize) -> Vec<f32> {
-        let string = group
-            .strings
-            .get_mut(string_index)
-            .and_then(Option::as_mut)
-            .expect("string_index is within this test's group");
-        let mut buffer = vec![0.0f32; len];
-        string.process_block_add(&mut buffer);
-        buffer
-    }
-
-    /// Asserts that calling `apply` (a per-string setter) on string `1` of a
-    /// freshly-plucked trichord changes string `1`'s own future output but
-    /// leaves strings `0` and `2`'s bit-for-bit identical to an unmutated
-    /// clone — the "done when" criterion every `set_string_*` setter test
-    /// below shares.
-    fn assert_targets_only_string_one(apply: impl FnOnce(&mut UnisonGroup)) {
-        let mut group = group_at(220.0, 3);
-        group.pluck(1.0);
-        let mut reference = group.clone();
-
-        apply(&mut group);
-
-        for index in 0..3 {
-            let changed = string_output(&mut group, index, 512);
-            let unchanged = string_output(&mut reference, index, 512);
-            if index == 1 {
-                assert_ne!(changed, unchanged, "string 1's own output did not change");
-            } else {
-                assert_eq!(
-                    changed, unchanged,
-                    "sibling string {index}'s output changed"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_single_string_group_needs_no_detuning() {
-        assert_eq!(detune_cents(1, 0), 0.0);
-    }
-
-    #[test]
-    fn bichord_strings_are_detuned_symmetrically() {
-        assert_eq!(detune_cents(2, 0) + detune_cents(2, 1), 0.0);
-        assert_ne!(detune_cents(2, 0), detune_cents(2, 1));
-    }
-
-    #[test]
-    fn trichord_middle_string_is_not_detuned() {
-        assert_eq!(detune_cents(3, 1), 0.0);
-    }
-
-    #[test]
-    fn unison_count_matches_the_documented_register_boundaries() {
-        assert_eq!(unison_count_for_key_index(0), 1);
-        assert_eq!(unison_count_for_key_index(11), 1);
-        assert_eq!(unison_count_for_key_index(12), 2);
-        assert_eq!(unison_count_for_key_index(29), 2);
-        assert_eq!(unison_count_for_key_index(30), 3);
-        assert_eq!(unison_count_for_key_index(87), 3);
-    }
-
-    #[test]
-    fn is_silent_before_being_plucked() {
-        let mut group = group_at(220.0, 3);
-        for _ in 0..1_000 {
-            assert_eq!(group.process(), 0.0);
-        }
-        assert!(group.is_silent());
-        assert!(!group.is_receptive());
-    }
-
-    #[test]
-    fn plucking_lifts_the_damper_and_produces_signal() {
-        let mut group = group_at(220.0, 3);
-        group.pluck(1.0);
-        assert!(group.is_receptive());
-        let peak = (0..4_800)
-            .map(|_| math::abs(group.process()))
-            .fold(0.0f32, f32::max);
-        assert!(peak > 0.05, "peak {peak} is inaudible");
-    }
-
-    #[test]
-    fn lift_damper_makes_an_idle_group_receptive_without_a_strike() {
-        let mut group = group_at(220.0, 2);
-        assert!(!group.is_receptive());
-        group.lift_damper();
-        assert!(group.is_receptive());
-        // Still silent: lifting the damper is not a strike.
-        assert!(group.is_silent());
-    }
-
-    #[test]
-    fn releasing_re_engages_the_damper_and_blocks_receptiveness() {
-        let mut group = group_at(220.0, 3);
-        group.pluck(1.0);
-        group.release();
-        assert!(!group.is_receptive());
-    }
-
-    // A lone string is bounded below 4.0 (`string_tests::output_stays_
-    // bounded_for_a_full_second`); summing up to `MAX_UNISON_STRINGS = 3`
-    // of them, plus a small local-coupling contribution, raises that
-    // ceiling proportionally rather than staying at the single-string
-    // bound — 16.0 leaves comfortable margin over the worst case without
-    // being so loose it would miss real divergence.
-    const UNISON_BOUND: f32 = 16.0;
-
-    #[test]
-    fn output_stays_bounded_for_a_full_second_with_local_coupling() {
-        let mut group = group_at(220.0, 3);
-        group.pluck(1.0);
-        for index in 0..48_000 {
-            let sample = group.process();
-            assert!(sample.is_finite(), "sample {index} was not finite");
-            assert!(
-                sample.abs() < UNISON_BOUND,
-                "sample {index} = {sample} escaped"
-            );
-        }
-    }
-
-    /// The regression test for the report: "A5 sounds terrible, like
-    /// hitting a tin can with a muffled iron". `dispersion::section_count`
-    /// computes exactly one active dispersion section across roughly
-    /// C#5-B5, and a high enough inharmonicity there used to clamp that
-    /// one section's coefficient close enough to the unit circle
-    /// (`dispersion::MAX_COEFFICIENT`, before it was lowered) that its
-    /// steep phase response spun three unison strings a few cents apart out
-    /// of phase with each other within a handful of round trips — see that
-    /// constant's own doc comment for the full mechanism. This group's RMS
-    /// used to collapse from `0.14` to numerically silent within about
-    /// 120 ms; a monochord at the same pitch, with nothing to diverge
-    /// against, was fine throughout, which is what proves this was never
-    /// about `sustain` or the loop filter.
-    ///
-    /// A5 (880 Hz) sits at the top of that single-section band and gets the
-    /// highest inharmonicity within it — the worst point, not an arbitrary
-    /// one.
-    #[test]
-    fn a_high_inharmonicity_trichord_in_the_single_dispersion_section_band_does_not_collapse() {
-        const STEP: usize = 960; // 20 ms at 48 kHz.
-
-        let rate = SampleRate::new(48_000.0).expect("48 kHz is valid");
-        let mut config = StringConfig::new(Hz::new(880.0).expect("A5 is a valid frequency"));
-        config.inharmonicity = 0.0345; // piano_audio::voicing's own solved A5 value.
-        config.sustain = 0.998_808; // ditto — a near-lossless round trip.
-        config.damping = 0.000_57; // ditto — a loop filter that is nearly transparent.
-        let mut group = UnisonGroup::new(config, 3, rate).expect("A5 is representable at 48 kHz");
-        group.pluck(0.8);
-
-        let mut buffer = [0.0f32; STEP];
-        let rms_of = |group: &mut UnisonGroup, buffer: &mut [f32; STEP]| {
-            for sample in buffer.iter_mut() {
-                *sample = group.process();
-            }
-            (buffer.iter().map(|s| s * s).sum::<f32>() / STEP as f32).sqrt()
-        };
-
-        let first = rms_of(&mut group, &mut buffer);
-        for step in 1..25 {
-            let rms = rms_of(&mut group, &mut buffer);
-            assert!(
-                rms > first * 0.01,
-                "trichord collapsed by window {step} ({rms:.6} against an opening RMS of \
-                 {first:.6}) — see dispersion::MAX_COEFFICIENT's doc comment"
-            );
-        }
-    }
-
-    #[test]
-    fn output_stays_bounded_with_global_bridge_coupling() {
-        let mut group = group_at(220.0, 3);
-        let mut bridge = BridgeBus::with_capacity(128);
-        group.pluck(1.0);
-        for block_index in 0..400 {
-            bridge.begin_block();
-            for sample_index in 0..128 {
-                let sample = group.process_with_bridge(&mut bridge, sample_index);
-                assert!(
-                    sample.is_finite(),
-                    "block {block_index} sample {sample_index} was not finite"
-                );
-                assert!(
-                    sample.abs() < UNISON_BOUND,
-                    "block {block_index} sample {sample_index} = {sample} escaped"
-                );
-            }
-        }
-    }
-
-    /// One block's worth of samples, matching the block size every bridge
-    /// test here accumulates into.
-    const TEST_BLOCK: usize = 128;
-
-    /// Root-mean-square level of `samples` — what these decay tests compare,
-    /// since two runs that decay identically still differ sample-by-sample
-    /// once any coupling shifts their phase.
-    fn rms(samples: &[f32]) -> f32 {
-        if samples.is_empty() {
-            return 0.0;
-        }
-        let mean_square = samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32;
-        math::sqrt(mean_square)
-    }
-
-    /// Renders `blocks` blocks of `target` through a shared bridge, with
-    /// `others` sharing that same bridge, and returns `target`'s own output.
-    fn render_over_bridge(
-        target: &mut UnisonGroup,
-        others: &mut [&mut UnisonGroup],
-        blocks: usize,
-    ) -> Vec<f32> {
-        let mut bridge = BridgeBus::with_capacity(TEST_BLOCK);
-        let mut out = Vec::with_capacity(blocks * TEST_BLOCK);
-        for _ in 0..blocks {
-            bridge.begin_block();
-            for index in 0..TEST_BLOCK {
-                out.push(target.process_with_bridge(&mut bridge, index));
-                for other in others.iter_mut() {
-                    let _ = other.process_with_bridge(&mut bridge, index);
-                }
-            }
-        }
-        out
-    }
-
-    /// The tail these decay tests measure: the last quarter of a render, by
-    /// which point any per-round-trip loss has compounded enough to dominate
-    /// the initial transient.
-    fn tail_level(samples: &[f32]) -> f32 {
-        let start = samples.len() - samples.len() / 4;
-        rms(samples.get(start..).unwrap_or(&[]))
-    }
-
-    /// A note sounding *alone* must decay the same whether or not it is
-    /// attached to a shared bridge. Regression test for the mixing law
-    /// `PluckedString::write_mixed_feedback` documents: while the global
-    /// path was a convex blend towards the bus readback, the bus was a whole
-    /// block old, so a lone note was blending towards a decorrelated copy of
-    /// itself and shedding `global_coupling_gain` of its own amplitude every
-    /// round trip. Measured at the time: 11x quieter by 0.5 s than the same
-    /// note with the bus disabled.
-    #[test]
-    fn a_lone_note_on_the_bridge_decays_like_one_with_no_bridge() {
-        let mut on_bridge = group_at(261.63, 3);
-        let mut off_bridge = group_at(261.63, 3);
-        on_bridge.pluck(0.8);
-        off_bridge.pluck(0.8);
-
-        let coupled = render_over_bridge(&mut on_bridge, &mut [], 200);
-        let solo: Vec<f32> = (0..coupled.len()).map(|_| off_bridge.process()).collect();
-
-        let ratio = tail_level(&coupled) / tail_level(&solo);
-        assert!(
-            (0.9..=1.1).contains(&ratio),
-            "the bridge cost a lone note {ratio:.4}x its tail level; it must cost nothing"
-        );
-    }
-
-    /// A neighbouring key that is undamped but has already decayed to
-    /// inaudibility contributes ~0.0 into the bus every sample. Under the
-    /// old convex blend that halved the readback (`mean`, not sum), which
-    /// dragged a sounding note towards half its own amplitude every round
-    /// trip — measured at a further 40x loss. A silent string resting on a
-    /// bridge does not drain its neighbour.
-    #[test]
-    fn a_silent_receptive_neighbour_does_not_drain_a_sounding_note() {
-        let mut alone = group_at(261.63, 3);
-        let mut accompanied = group_at(261.63, 3);
-        let mut bystander = group_at(440.0, 3);
-        bystander.lift_damper(); // receptive, contributing, but never struck
-        alone.pluck(0.8);
-        accompanied.pluck(0.8);
-
-        let without = render_over_bridge(&mut alone, &mut [], 200);
-        let with = render_over_bridge(&mut accompanied, &mut [&mut bystander], 200);
-
-        let ratio = tail_level(&with) / tail_level(&without);
-        assert!(
-            (0.9..=1.1).contains(&ratio),
-            "a silent neighbour cost the note {ratio:.4}x its tail level"
-        );
-    }
-
-    /// The audible symptom that started this: hold one key, strike another,
-    /// and the second one sounds dry. Polyphony must not shorten a note.
-    #[test]
-    fn a_ringing_neighbour_does_not_drain_a_freshly_struck_note() {
-        let mut alone = group_at(261.63, 3);
-        let mut accompanied = group_at(261.63, 3);
-        let mut held = group_at(440.0, 3);
-        held.pluck(0.8);
-        let _ = render_over_bridge(&mut held, &mut [], 100); // let A4 ring first
-        alone.pluck(0.8);
-        accompanied.pluck(0.8);
-
-        let without = render_over_bridge(&mut alone, &mut [], 200);
-        let with = render_over_bridge(&mut accompanied, &mut [&mut held], 200);
-
-        let ratio = tail_level(&with) / tail_level(&without);
-        assert!(
-            (0.9..=1.1).contains(&ratio),
-            "a ringing neighbour cost the struck note {ratio:.4}x its tail level"
-        );
-    }
-
-    /// The other half of the contract: making the bridge cost nothing must
-    /// not have made it *do* nothing. An undamped, never-struck key has to
-    /// ring up from a neighbour through the bus — sympathetic resonance is
-    /// what `PERF-008` bought this bus for.
-    #[test]
-    fn an_undamped_key_rings_up_sympathetically_from_a_struck_neighbour() {
-        let mut struck = group_at(261.63, 3);
-        let mut listener = group_at(130.81, 3); // C3, an octave below C4
-        listener.lift_damper();
-        struck.pluck(0.9);
-
-        let mut bridge = BridgeBus::with_capacity(TEST_BLOCK);
-        let mut heard = Vec::new();
-        for _ in 0..200 {
-            bridge.begin_block();
-            for index in 0..TEST_BLOCK {
-                let _ = struck.process_with_bridge(&mut bridge, index);
-                heard.push(listener.process_with_bridge(&mut bridge, index));
-            }
-        }
-
-        let onset = rms(heard.get(..TEST_BLOCK * 20).unwrap_or(&[]));
-        let rung_up = rms(heard.get(TEST_BLOCK * 80..TEST_BLOCK * 100).unwrap_or(&[]));
-        assert!(rung_up > 0.0, "the listening key never received anything");
-        assert!(
-            rung_up > onset,
-            "the listening key did not ring up: onset {onset:e} -> {rung_up:e}"
-        );
-    }
-
-    /// Zeroing the gain must silence that resonance completely — proof the
-    /// energy above travelled through the coupling path under test and not
-    /// through some other route.
-    #[test]
-    fn zeroing_the_global_gain_removes_sympathetic_resonance_entirely() {
-        let mut struck = group_at(261.63, 3);
-        let mut listener = group_at(130.81, 3);
-        listener.set_global_coupling_gain(0.0);
-        listener.lift_damper();
-        struck.pluck(0.9);
-
-        let heard = render_over_bridge(&mut listener, &mut [&mut struck], 200);
-        assert_eq!(rms(&heard), 0.0, "an uncoupled key still heard something");
-    }
-
-    #[test]
-    fn set_local_coupling_gain_clamps_into_zero_one() {
-        let mut group = group_at(220.0, 3);
-        group.set_local_coupling_gain(-5.0);
-        assert_eq!(group.local_coupling_gain, 0.0);
-        group.set_local_coupling_gain(5.0);
-        assert_eq!(group.local_coupling_gain, MAX_LOCAL_COUPLING_GAIN);
-    }
-
-    #[test]
-    fn set_global_coupling_gain_clamps_into_zero_one() {
-        let mut group = group_at(220.0, 3);
-        group.set_global_coupling_gain(-5.0);
-        assert_eq!(group.global_coupling_gain, 0.0);
-        group.set_global_coupling_gain(5.0);
-        assert_eq!(group.global_coupling_gain, 1.0);
-    }
-
-    #[test]
-    fn changing_local_coupling_gain_measurably_changes_the_output() {
-        let mut coupled = group_at(220.0, 3);
-        let mut uncoupled = group_at(220.0, 3);
-        uncoupled.set_local_coupling_gain(0.0);
-        coupled.pluck(1.0);
-        uncoupled.pluck(1.0);
-        let difference: f32 = (0..2_000)
-            .map(|_| (coupled.process() - uncoupled.process()).abs())
-            .sum();
-        assert!(
-            difference > 1e-3,
-            "zeroing local_coupling_gain did not change the output: diff {difference}"
-        );
-    }
-
-    #[test]
-    fn set_string_damping_changes_only_the_targeted_string() {
-        assert_targets_only_string_one(|group| group.set_string_damping(1, 0.95));
-    }
-
-    #[test]
-    fn set_string_sustain_changes_only_the_targeted_string() {
-        assert_targets_only_string_one(|group| group.set_string_sustain(1, 0.02));
-    }
-
-    #[test]
-    fn set_string_inharmonicity_changes_only_the_targeted_string() {
-        assert_targets_only_string_one(|group| group.set_string_inharmonicity(1, 0.05));
-    }
-
-    #[test]
-    fn set_string_detune_changes_only_the_targeted_string() {
-        assert_targets_only_string_one(|group| group.set_string_detune(1, 35.0));
-    }
-
-    #[test]
-    fn set_string_loop_zero_mix_changes_only_the_targeted_string() {
-        assert_targets_only_string_one(|group| group.set_string_loop_zero_mix(1, 0.45));
-    }
-
-    #[test]
-    fn set_string_strike_position_changes_only_the_targeted_strings_next_pluck() {
-        assert_targets_only_string_one_on_next_pluck(|group| {
-            group.set_string_strike_position(1, 0.3);
-        });
-    }
-
-    #[test]
-    fn set_string_excitation_noise_mix_changes_only_the_targeted_strings_next_pluck() {
-        assert_targets_only_string_one_on_next_pluck(|group| {
-            group.set_string_excitation_noise_mix(1, 0.0);
-        });
-    }
-
-    /// [`UnisonGroup::set_string_seed`] and [`UnisonGroup::set_string_hammer`]
-    /// only take effect on a string's *next* strike (see their own doc
-    /// comments), so — unlike the other four per-string setters — this
-    /// re-plucks string 1 alone (not the whole group, which would also
-    /// disturb strings 0 and 2's RNG state) before comparing.
-    fn assert_targets_only_string_one_on_next_pluck(apply: impl FnOnce(&mut UnisonGroup)) {
-        let mut group = group_at(220.0, 3);
-        group.pluck(1.0);
-        let mut reference = group.clone();
-
-        apply(&mut group);
-        group
-            .strings
-            .get_mut(1)
-            .and_then(Option::as_mut)
-            .expect("index 1 exists in a trichord")
-            .pluck(1.0);
-
-        for index in 0..3 {
-            let changed = string_output(&mut group, index, 512);
-            let unchanged = string_output(&mut reference, index, 512);
-            if index == 1 {
-                assert_ne!(
-                    changed, unchanged,
-                    "string 1's output did not change on its next pluck"
-                );
-            } else {
-                assert_eq!(
-                    changed, unchanged,
-                    "sibling string {index}'s output changed"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn set_string_seed_changes_only_the_targeted_strings_next_pluck() {
-        assert_targets_only_string_one_on_next_pluck(|group| group.set_string_seed(1, 0xDEAD_BEEF));
-    }
-
-    #[test]
-    fn set_string_hammer_changes_only_the_targeted_strings_next_pluck() {
-        assert_targets_only_string_one_on_next_pluck(|group| {
-            group.set_string_hammer(
-                1,
-                hammer::HammerConfig {
-                    contact_exponent: 6.0,
-                    stiffness: 1.0e8,
-                    mass: 20.0,
-                    ..hammer::DEFAULT_HAMMER
-                },
-            );
-        });
-    }
-
-    #[test]
-    fn per_string_setters_on_an_out_of_range_index_are_a_silent_no_op() {
-        let mut group = group_at(220.0, 3);
-        group.pluck(1.0);
-        group.set_string_damping(9, 0.5);
-        group.set_string_sustain(9, 0.5);
-        group.set_string_inharmonicity(9, 0.01);
-        group.set_string_seed(9, 42);
-        group.set_string_hammer(9, hammer::DEFAULT_HAMMER);
-        group.set_string_detune(9, 10.0);
-        for _ in 0..512 {
-            assert!(group.process().is_finite());
-        }
-    }
-
-    proptest! {
-        /// Whatever unison count and velocity, plucking and processing a
-        /// group with local coupling active must stay finite and bounded —
-        /// the same totality guarantee `string_tests` proves for a lone
-        /// string.
-        #[test]
-        fn any_unison_count_and_velocity_stays_bounded(
-            count in 1usize..=MAX_UNISON_STRINGS,
-            velocity in proptest::num::f32::ANY,
-        ) {
-            let mut group = group_at(220.0, count);
-            group.pluck(velocity);
-            for _ in 0..2_000 {
-                let sample = group.process();
-                prop_assert!(sample.is_finite());
-                prop_assert!(sample.abs() < UNISON_BOUND, "sample {sample} escaped");
-            }
-        }
-
-        /// Whatever coupling gains a caller live-sets, including NaN and
-        /// +-infinity, the group must stay finite and within the same
-        /// bound as the default gains — `set_local_coupling_gain` and
-        /// `set_global_coupling_gain` clamp exactly like every other live
-        /// setter in this crate.
-        #[test]
-        fn any_coupling_gain_stays_bounded(
-            local_gain in proptest::num::f32::ANY,
-            global_gain in proptest::num::f32::ANY,
-        ) {
-            let mut group = group_at(220.0, 3);
-            group.set_local_coupling_gain(local_gain);
-            group.set_global_coupling_gain(global_gain);
-            let mut bridge = BridgeBus::with_capacity(128);
-            group.pluck(1.0);
-            bridge.begin_block();
-            for index in 0..128 {
-                let sample = group.process_with_bridge(&mut bridge, index);
-                prop_assert!(sample.is_finite());
-                prop_assert!(sample.abs() < UNISON_BOUND, "sample {sample} escaped");
-            }
-        }
-    }
-}
+#[cfg(test)]
+#[path = "unison_bridge_tests.rs"]
+mod bridge_tests;

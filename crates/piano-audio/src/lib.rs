@@ -356,18 +356,6 @@ impl AudioSession {
         })
     }
 
-    /// Queues reseeding one string's excitation noise for its *next*
-    /// strike. See [`piano_core::UnisonGroup::set_string_seed`]. Same
-    /// out-of-range and drop-not-block behaviour as
-    /// [`AudioSession::set_string_damping`].
-    pub fn set_string_seed(&mut self, midi: u8, string_index: u8, seed: u32) -> bool {
-        self.send(Command::SetStringSeed {
-            midi,
-            string_index,
-            seed,
-        })
-    }
-
     /// Queues moving one string's loss-filter zero, live. See
     /// [`piano_core::UnisonGroup::set_string_loop_zero_mix`]. Same
     /// out-of-range and drop-not-block behaviour as
@@ -394,23 +382,6 @@ impl AudioSession {
             midi,
             string_index,
             position,
-        })
-    }
-
-    /// Queues how noisy one string's *next* strike is. See
-    /// [`piano_core::UnisonGroup::set_string_excitation_noise_mix`]. Same
-    /// out-of-range and drop-not-block behaviour as
-    /// [`AudioSession::set_string_damping`].
-    pub fn set_string_excitation_noise_mix(
-        &mut self,
-        midi: u8,
-        string_index: u8,
-        mix: f32,
-    ) -> bool {
-        self.send(Command::SetStringExcitationNoiseMix {
-            midi,
-            string_index,
-            mix,
         })
     }
 

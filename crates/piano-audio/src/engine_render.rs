@@ -21,6 +21,13 @@ use crate::limiter::soft_limit;
 /// rather than hard-panned.
 const KEYBOARD_STEREO_WIDTH: f32 = 0.5;
 
+/// How much of the bridge force is heard undelayed, against the diffuse
+/// field at unity: the board next to the bridge radiates at once, before
+/// the bending waves have spread. Fitted together with the field's decay
+/// to the reference's attack (`docs/CALIBRATION.md`): more of it and the
+/// attack turns back into a plucked string's, less and it loses its edge.
+const DIRECT_RADIATION_GAIN: f32 = 0.3;
+
 /// Where `key` sits in the stereo pair: `+KEYBOARD_STEREO_WIDTH` (left) at
 /// A0 to `-KEYBOARD_STEREO_WIDTH` (right) at C8, linear in key number the
 /// way the strings fan out across the frame.
@@ -85,28 +92,41 @@ impl Engine {
             }
             let frames = left.iter_mut().zip(right.iter_mut()).enumerate();
             for (index, (left, right)) in frames {
-                let transverse = voice.level * strings.process_with_bridge(&mut self.bridge, index);
-                let radiated = voice.duplex.process(voice.phantom.process(transverse));
+                // The level comes last: phantoms grow with the square of the
+                // string's own motion, which regulation must not rescale.
+                let transverse = strings.process_with_bridge(&mut self.bridge, index);
+                let coloured = voice.duplex.process(voice.phantom.process(transverse));
+                let radiated = voice.level * coloured;
                 *left += radiated * (1.0 + voice.pan);
                 *right += radiated * (1.0 - voice.pan);
             }
         }
     }
 
-    /// Drives the soundboard with the strings' mono sum plus the action's
-    /// knocks, adds its two microphone signals, lets the room answer the
-    /// result, and limits each channel.
+    /// Lets the soundboard radiate each frame of bridge force, lets the
+    /// room answer the result, and limits each channel.
     fn radiate_and_limit(&mut self, left: &mut [f32], right: &mut [f32]) {
         for (left, right) in left.iter_mut().zip(right.iter_mut()) {
-            let board_drive = f32::midpoint(*left, *right) + self.action.next_sample();
-            let (board_left, board_right) = self.soundboard.process_stereo(board_drive);
-            let mixed_left = *left + self.soundboard_mix_gain * board_left;
-            let mixed_right = *right + self.soundboard_mix_gain * board_right;
-            let (room_left, room_right) = self.room.process(f32::midpoint(mixed_left, mixed_right));
-            let heard_left = mixed_left + room_left;
-            let heard_right = mixed_right + room_right;
-            *left = soft_limit(self.master_gain * heard_left, self.limiter_threshold);
-            *right = soft_limit(self.master_gain * heard_right, self.limiter_threshold);
+            let (heard_left, heard_right) = self.radiate(*left, *right);
+            let (room_left, room_right) = self.room.process(f32::midpoint(heard_left, heard_right));
+            let wet_left = self.master_gain * (heard_left + room_left);
+            let wet_right = self.master_gain * (heard_right + room_right);
+            *left = soft_limit(wet_left, self.limiter_threshold);
+            *right = soft_limit(wet_right, self.limiter_threshold);
         }
+    }
+
+    /// What the soundboard makes of one frame of bridge force: the part
+    /// heard at once, the diffuse field that follows it and the board's
+    /// separate low resonances, summed and radiated. The action's knock
+    /// reaches the resonances only, through the frame, as before.
+    fn radiate(&mut self, left: f32, right: f32) -> (f32, f32) {
+        let board_drive = f32::midpoint(left, right) + self.action.next_sample();
+        let (modes_left, modes_right) = self.soundboard.process_stereo(board_drive);
+        let (field_left, field_right) = self.body.process(left, right);
+        let mix = self.soundboard_mix_gain;
+        let moved_left = DIRECT_RADIATION_GAIN * left + field_left + mix * modes_left;
+        let moved_right = DIRECT_RADIATION_GAIN * right + field_right + mix * modes_right;
+        self.radiation.process(moved_left, moved_right)
     }
 }

@@ -1,5 +1,7 @@
 //! Measures every key's realised inharmonicity and fundamental tuning from
-//! its rendered sound, against what `voicing` asked for (issue #96).
+//! its rendered sound, against what `voicing` asked for (issue #96): the
+//! scale's `B`, and the stretched pitch `voicing::tuned_frequency` gives
+//! the key, not its equal-tempered one.
 //!
 //! Before #96 the dispersion cascade realised 1-13% of the requested `B`
 //! below C6 and none above it, and the mid/treble sat up to 22 cents sharp —
@@ -13,7 +15,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use piano_audio::voicing::config_for_key;
+use piano_audio::voicing::{config_for_key, tuned_frequency};
 use piano_core::SampleRate;
 use piano_core::string::PluckedString;
 use piano_params::{PianoKey, Tuning};
@@ -96,10 +98,8 @@ fn render(midi: u8) -> (Vec<f32>, f32) {
 }
 
 fn measure(midi: u8) -> KeyMeasurement {
-    let nominal = PianoKey::from_midi(midi)
-        .unwrap()
-        .frequency(Tuning::default())
-        .hertz();
+    let key = PianoKey::from_midi(midi).unwrap();
+    let nominal = tuned_frequency(key, Tuning::default()).hertz();
     let (samples, requested_b) = render(midi);
     let spectrum = magnitude_spectrum(&samples);
     let first = peak_near(&spectrum, nominal, 0.2 * nominal);

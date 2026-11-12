@@ -822,42 +822,6 @@ fn set_string_detune_reaches_an_already_ringing_voice() {
 }
 
 #[test]
-fn set_string_seed_changes_the_next_strike() {
-    let mut baseline = engine();
-    let mut reseeded = engine();
-    let (mut producer, mut consumer) = ring_buffer();
-
-    producer
-        .push(Command::SetStringSeed {
-            midi: 69,
-            string_index: 0,
-            seed: 0xDEAD_BEEF,
-        })
-        .expect("queue has room");
-    reseeded.drain_commands(&mut consumer);
-
-    for engine in [&mut baseline, &mut reseeded] {
-        producer
-            .push(Command::NoteOn {
-                midi: 69,
-                velocity: 1.0,
-            })
-            .expect("queue has room");
-        engine.drain_commands(&mut consumer);
-    }
-
-    let mut baseline_out = [0.0f32; 512];
-    let mut reseeded_out = [0.0f32; 512];
-    baseline.process_block(&mut baseline_out);
-    reseeded.process_block(&mut reseeded_out);
-    assert_ne!(
-        baseline_out.to_vec(),
-        reseeded_out.to_vec(),
-        "SetStringSeed had no effect on the next strike"
-    );
-}
-
-#[test]
 fn set_string_hammer_changes_the_next_strike() {
     let mut baseline = engine();
     let mut retuned = engine();
@@ -1190,21 +1154,30 @@ fn a_note_the_engine_cannot_tune_is_ignored_without_panicking() {
     engine.process_block(&mut buffer);
 }
 
-/// Tail RMS of C3 after its key comes up, with dampers at `strength`.
-fn released_tail_with_damper(strength: f32) -> f32 {
+/// How hard C3's strings still move shortly after its key comes up, with
+/// dampers at `strength`. Read off the strings, not the output: the
+/// soundboard goes on ringing for a while whatever the dampers do.
+fn released_strings_with_damper(strength: f32) -> f32 {
     let mut engine = engine();
     press(&mut engine, 48);
     let _ = tail_rms(&mut engine, 20);
     engine.apply(Command::SetDamperStrength { strength });
     engine.apply(Command::NoteOff { midi: 48 });
-    tail_rms(&mut engine, 8)
+    let _ = tail_rms(&mut engine, 8);
+    let ringing = engine
+        .voices
+        .iter()
+        .filter_map(|voice| voice.strings.as_ref());
+    ringing
+        .map(piano_core::UnisonGroup::envelope)
+        .fold(0.0, f32::max)
 }
 
 /// Set while the key is held, the strength still governs the release:
 /// the setter reaches a voice that is already ringing (issue #82).
 #[test]
 fn set_damper_strength_reaches_an_already_ringing_voice() {
-    let weak = released_tail_with_damper(piano_core::string::MIN_DAMPER_STRENGTH);
-    let strong = released_tail_with_damper(piano_core::string::MAX_DAMPER_STRENGTH);
+    let weak = released_strings_with_damper(piano_core::string::MIN_DAMPER_STRENGTH);
+    let strong = released_strings_with_damper(piano_core::string::MAX_DAMPER_STRENGTH);
     assert!(weak > strong * 10.0, "weak {weak:e}, strong {strong:e}");
 }

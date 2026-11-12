@@ -228,16 +228,6 @@ pub(crate) enum Command {
         /// Detune from the unison's base frequency, in cents.
         cents: f32,
     },
-    /// Reseeds one string's excitation noise for its *next* strike. See
-    /// [`piano_core::UnisonGroup::set_string_seed`].
-    SetStringSeed {
-        /// MIDI note number of the key whose unison this string belongs to.
-        midi: u8,
-        /// Which string within that key's unison, `0`-based.
-        string_index: u8,
-        /// New RNG seed.
-        seed: u32,
-    },
     /// Moves one string's loss-filter zero, live. See
     /// [`piano_core::UnisonGroup::set_string_loop_zero_mix`].
     SetStringLoopZeroMix {
@@ -257,16 +247,6 @@ pub(crate) enum Command {
         string_index: u8,
         /// The strike point, as a fraction of the loop length.
         position: f32,
-    },
-    /// Sets how noisy one string's *next* strike is. See
-    /// [`piano_core::UnisonGroup::set_string_excitation_noise_mix`].
-    SetStringExcitationNoiseMix {
-        /// MIDI note number of the key whose unison this string belongs to.
-        midi: u8,
-        /// Which string within that key's unison, `0`-based.
-        string_index: u8,
-        /// The noise share of the excitation, `0..=1`.
-        mix: f32,
     },
     /// Changes one string's felt-contact physics for its *next* strike.
     /// See [`piano_core::UnisonGroup::set_string_hammer`].

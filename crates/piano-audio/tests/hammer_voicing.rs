@@ -6,8 +6,7 @@
 
 use piano_audio::voicing::config_for_key;
 use piano_core::SampleRate;
-use piano_core::excitation::hammer_for_frequency;
-use piano_core::hammer::HammerConfig;
+use piano_core::hammer::{HammerConfig, hammer_for_frequency};
 use piano_core::string::PluckedString;
 use piano_params::{PianoKey, Tuning};
 use rustfft::FftPlanner;

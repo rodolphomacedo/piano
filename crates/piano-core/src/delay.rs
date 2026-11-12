@@ -174,48 +174,23 @@ impl DelayLine {
         whole as f32 + math::allpass_phase_delay(eta, omega)
     }
 
-    /// Applies a strike-position comb — `y[i] = x[i] − x[i − delay]` — in
-    /// place over the `length` most-recently-written samples.
+    /// Adds `value` to the sample written `delay_samples + 1` writes ago —
+    /// the one [`DelayLine::read`] returns for the same argument.
     ///
-    /// This is how a hammer's strike *position* reaches a single-delay-line
-    /// waveguide. A hammer landing a fraction `β` along the string launches a
-    /// travelling wave that reaches the near end and returns inverted after
-    /// `delay ≈ β · L` samples (`L` the loop length); summing the launched
-    /// excitation with that inverted reflection notches out every partial
-    /// with a node at the strike point — the `n = 1/β, 2/β, …` harmonics —
-    /// which is why striking at ~1/8 deepens the 8th partial, the notch real
-    /// piano scaling is built around (Fletcher & Rossing, *The Physics of
-    /// Musical Instruments*, 2nd ed., §12.3; Hall & Askenfelt, "Piano string
-    /// excitation V", JASA 83 (1988)). The mode-`n` amplitude comes out
-    /// scaled by `2·|sin(π · n · delay / L)|`, exactly the physical
-    /// strike-position weighting, rather than by a filter fitted after the
-    /// fact.
+    /// This is how a force acting part-way along a string enters its
+    /// waveguide: the wave passing that point is changed in place, and the
+    /// taps further on read the changed wave.
     ///
-    /// Processes newest-to-oldest so each `x[i]` reads its source
-    /// `x[i − delay]` while that source is still the *original* written
-    /// value, never one this same pass has already combed. Samples before the
-    /// burst read back as the silence [`DelayLine::clear`] left — a hammer
-    /// injects nothing before it strikes — which is why
-    /// [`crate::string::PluckedString::pluck`]'s `clear` is what makes this
-    /// correct. `delay == 0` is a no-op (no strike position, no comb). The
-    /// caller sizes the line so `length + delay` never exceeds capacity;
-    /// otherwise the `x[i − delay]` read would wrap onto the burst's own far
-    /// end instead of that leading silence.
-    ///
-    /// Total: `length` iterations, every index masked, only subtraction of
-    /// two finite stored samples — it cannot panic, loop unboundedly or leak
-    /// a `NaN` a finite burst did not already contain.
+    /// Total: the index is masked, and a `value` that is not finite is
+    /// ignored rather than stored.
     #[inline]
-    pub fn apply_strike_comb(&mut self, length: usize, delay: usize) {
-        if delay == 0 {
+    pub fn add_at(&mut self, delay_samples: usize, value: f32) {
+        if !value.is_finite() {
             return;
         }
-        for delta in 0..length {
-            let pos = self.write_index.wrapping_sub(delta) & self.mask;
-            let source = self.write_index.wrapping_sub(delta + delay) & self.mask;
-            let combed = self.load(pos) - self.load(source);
-            self.store(pos, combed);
-        }
+        let index = self.write_index.wrapping_sub(delay_samples) & self.mask;
+        let sum = self.load(index) + value;
+        self.store(index, sum);
     }
 
     /// Zeroes the whole buffer and rewinds the write head.
@@ -292,31 +267,26 @@ mod tests {
     }
 
     #[test]
-    fn strike_comb_subtracts_the_reflection_and_leaves_the_leading_edge() {
-        // Write 1,2,3,4 into a cleared line, then comb with delay 2:
-        // y[i] = x[i] - x[i-2], reading the cleared silence before the burst.
-        // Newest-to-oldest, over the four written samples:
-        //   4 - 2 = 2, 3 - 1 = 2, 2 - 0 = 2, 1 - 0 = 1.
+    fn add_at_changes_the_sample_that_read_returns_for_the_same_delay() {
         let mut line = DelayLine::with_capacity(8);
         for value in 1..=4u8 {
             line.write(f32::from(value));
         }
-        line.apply_strike_comb(4, 2);
-        assert_eq!(line.read(0), 2.0); // 4 - 2
-        assert_eq!(line.read(1), 2.0); // 3 - 1
-        assert_eq!(line.read(2), 2.0); // 2 - 0 (before the burst: silence)
-        assert_eq!(line.read(3), 1.0); // 1 - 0
+        line.add_at(1, 10.0);
+        assert_eq!(line.read(0), 4.0);
+        assert_eq!(line.read(1), 13.0);
+        assert_eq!(line.read(2), 2.0);
     }
 
     #[test]
-    fn strike_comb_with_zero_delay_is_a_no_op() {
+    fn add_at_ignores_a_value_that_is_not_finite() {
         let mut line = DelayLine::with_capacity(8);
-        for value in 1..=4u8 {
-            line.write(f32::from(value));
+        line.write(1.0);
+        for hostile in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            line.add_at(0, hostile);
+            line.add_at(usize::MAX, hostile);
         }
-        line.apply_strike_comb(4, 0);
-        assert_eq!(line.read(0), 4.0);
-        assert_eq!(line.read(3), 1.0);
+        assert_eq!(line.read(0), 1.0);
     }
 
     #[test]

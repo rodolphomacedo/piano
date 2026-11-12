@@ -85,15 +85,6 @@ pub enum StudioCommand {
         /// The new offset from the unison's base frequency, in cents.
         cents: f32,
     },
-    /// See [`piano_audio::AudioSession::set_string_seed`].
-    SetStringSeed {
-        /// MIDI note number of the key the string belongs to.
-        midi: u8,
-        /// Which string within that key's unison, `0`-based.
-        string_index: u8,
-        /// The new excitation seed, taking effect on the next strike.
-        seed: u32,
-    },
     /// See [`piano_audio::AudioSession::set_string_loop_zero_mix`].
     SetStringLoopZeroMix {
         /// MIDI note number of the key the string belongs to.
@@ -111,15 +102,6 @@ pub enum StudioCommand {
         string_index: u8,
         /// The strike point, as a fraction of the loop length.
         position: f32,
-    },
-    /// See [`piano_audio::AudioSession::set_string_excitation_noise_mix`].
-    SetStringExcitationNoiseMix {
-        /// MIDI note number of the key the string belongs to.
-        midi: u8,
-        /// Which string within that key's unison, `0`-based.
-        string_index: u8,
-        /// The noise share of the next strike, `0..=1`.
-        mix: f32,
     },
     /// See [`piano_audio::AudioSession::set_string_hammer`].
     SetStringHammer {

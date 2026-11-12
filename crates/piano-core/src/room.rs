@@ -20,11 +20,12 @@
 //! response: a synthetic room, like everything else here.
 
 use crate::delay::DelayLine;
+use crate::fdn::{self, AbsorbingLine};
 use crate::math;
 
 /// Delay lines in the network. Eight is the usual minimum for a tail
 /// dense enough not to flutter (Jot & Chaigne 1991).
-pub const ROOM_LINES: usize = 8;
+pub const ROOM_LINES: usize = fdn::LINES;
 
 /// Line lengths in milliseconds, chosen with no small common ratios so
 /// their echoes never line up into a pitched flutter. 30-75 ms is a
@@ -75,63 +76,13 @@ pub const DEFAULT_ROOM_MIX: f32 = 0.25;
 /// size them.
 const LONGEST_LINE_SECONDS: f32 = 0.16;
 
-/// `1/sqrt(ROOM_LINES)`: the normalisation that makes the Hadamard matrix
-/// orthonormal, hence lossless.
-const HADAMARD_SCALE: f32 = 0.353_553_4;
-
-/// Sign patterns the two outputs read the lines through. Orthogonal (their
-/// dot product is zero), so left and right are uncorrelated.
-const LEFT_TAPS: [f32; ROOM_LINES] = [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
-const RIGHT_TAPS: [f32; ROOM_LINES] = [1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0];
-
-/// One delay line and the absorption filter that follows it.
-#[derive(Debug, Clone)]
-struct RoomLine {
-    delay: DelayLine,
-    length: usize,
-    dc_gain: f32,
-    pole: f32,
-    state: f32,
-}
-
-impl RoomLine {
-    fn new(sample_rate: f32) -> Self {
-        Self {
-            delay: DelayLine::with_capacity((LONGEST_LINE_SECONDS * sample_rate) as usize),
-            length: 1,
-            dc_gain: 0.0,
-            pole: 0.0,
-            state: 0.0,
-        }
-    }
-
-    /// Sets the line to `milliseconds` long and its absorption to the
-    /// shape's two reverberation times. Never allocates.
-    fn retune(&mut self, milliseconds: f32, sample_rate: f32, shape: &RoomShape) {
-        let longest = (self.delay.max_delay() as f32).max(1.0);
-        let length =
-            math::clamp_or_low(math::round(milliseconds * 1e-3 * sample_rate), 1.0, longest);
-        let seconds = length / sample_rate;
-        self.dc_gain = decay_gain(seconds, shape.reverb_seconds);
-        let ratio = decay_gain(seconds, shape.treble_reverb_seconds) / self.dc_gain;
-        self.pole = (1.0 - ratio) / (1.0 + ratio);
-        self.length = length as usize;
-    }
-
-    /// The line's output this sample, after absorption.
-    #[inline]
-    fn read_absorbed(&mut self) -> f32 {
-        let raw = self.delay.read(self.length.saturating_sub(1));
-        let filtered = (1.0 - self.pole) * raw + self.pole * self.state;
-        self.state = math::flush_denormal(filtered);
-        self.dc_gain * self.state
-    }
-}
-
-/// The gain that, applied once every `seconds`, decays 60 dB in
-/// `reverb_seconds`.
-fn decay_gain(seconds: f32, reverb_seconds: f32) -> f32 {
-    math::powf(10.0, -3.0 * seconds / reverb_seconds)
+/// Sets `line` to `milliseconds` long and its absorption to the shape's two
+/// reverberation times, the second one taken at Nyquist. Never allocates.
+fn retune(line: &mut AbsorbingLine, milliseconds: f32, sample_rate: f32, shape: &RoomShape) {
+    let seconds = line.set_length(milliseconds * 1e-3 * sample_rate) / sample_rate;
+    let dc_gain = fdn::decay_gain(seconds, shape.reverb_seconds);
+    let ratio = fdn::decay_gain(seconds, shape.treble_reverb_seconds) / dc_gain;
+    line.set_absorption(dc_gain, (1.0 - ratio) / (1.0 + ratio));
 }
 
 /// The room's acoustic shape: everything about it except how loud it is.
@@ -145,7 +96,7 @@ struct RoomShape {
 /// The room — see the module docs.
 #[derive(Debug, Clone)]
 pub struct Room {
-    lines: [RoomLine; ROOM_LINES],
+    lines: [AbsorbingLine; ROOM_LINES],
     predelay: DelayLine,
     predelay_samples: usize,
     sample_rate: f32,
@@ -161,8 +112,9 @@ impl Room {
     pub fn new(sample_rate_hz: f32) -> Self {
         let rate = math::clamp_or_low(sample_rate_hz, 1_000.0, 1.0e6);
         let longest_predelay = MAX_ROOM_PREDELAY_MILLISECONDS * 1e-3 * rate;
+        let longest_line = (LONGEST_LINE_SECONDS * rate) as usize;
         let mut room = Self {
-            lines: core::array::from_fn(|_| RoomLine::new(rate)),
+            lines: core::array::from_fn(|_| AbsorbingLine::with_capacity(longest_line)),
             predelay: DelayLine::with_capacity(longest_predelay as usize + 1),
             predelay_samples: 0,
             sample_rate: rate,
@@ -216,7 +168,7 @@ impl Room {
     fn retune_lines(&mut self) {
         let shape = self.shape;
         for (line, milliseconds) in self.lines.iter_mut().zip(LINE_MILLISECONDS) {
-            line.retune(milliseconds * shape.size, self.sample_rate, &shape);
+            retune(line, milliseconds * shape.size, self.sample_rate, &shape);
         }
     }
 
@@ -227,51 +179,23 @@ impl Room {
         if self.mix <= 0.0 {
             return (0.0, 0.0);
         }
-        self.predelay
-            .write(math::clamp_or_low(input, -1.0e6, 1.0e6));
+        self.predelay.write(math::bounded_signal(input));
         let delayed = self.predelay.read(self.predelay_samples);
-        let outputs = self.lines.each_mut().map(RoomLine::read_absorbed);
-        let feedback = hadamard(outputs);
+        let outputs = self.lines.each_mut().map(AbsorbingLine::read_absorbed);
+        let feedback = fdn::hadamard(outputs);
         for (line, returned) in self.lines.iter_mut().zip(feedback) {
-            line.delay.write(returned + delayed);
+            line.write(returned + delayed);
         }
-        let tap = |taps: [f32; ROOM_LINES]| -> f32 {
-            outputs
-                .iter()
-                .zip(taps)
-                .map(|(output, sign)| output * sign)
-                .sum()
-        };
+        let level = self.mix * fdn::HADAMARD_SCALE;
         (
-            self.mix * HADAMARD_SCALE * tap(LEFT_TAPS),
-            self.mix * HADAMARD_SCALE * tap(RIGHT_TAPS),
+            level * fdn::tap(&outputs, fdn::LEFT_TAPS),
+            level * fdn::tap(&outputs, fdn::RIGHT_TAPS),
         )
     }
 }
 
 fn clamp_reverb_seconds(seconds: f32) -> f32 {
     math::clamp_or_low(seconds, MIN_ROOM_REVERB_SECONDS, MAX_ROOM_REVERB_SECONDS)
-}
-
-/// The orthonormal 8-point Hadamard transform, as three butterfly stages.
-#[inline]
-fn hadamard(values: [f32; ROOM_LINES]) -> [f32; ROOM_LINES] {
-    let transformed = butterfly(butterfly(butterfly(values, 1), 2), 4);
-    transformed.map(|value| HADAMARD_SCALE * value)
-}
-
-/// One radix-2 stage: every pair `stride` apart becomes `(sum, difference)`.
-#[inline]
-fn butterfly(values: [f32; ROOM_LINES], stride: usize) -> [f32; ROOM_LINES] {
-    core::array::from_fn(|index| {
-        let own = values.get(index).copied().unwrap_or(0.0);
-        let partner = values.get(index ^ stride).copied().unwrap_or(0.0);
-        if index & stride == 0 {
-            own + partner
-        } else {
-            partner - own
-        }
-    })
 }
 
 #[cfg(test)]
@@ -298,13 +222,6 @@ mod tests {
 
     fn energy(samples: &[f32]) -> f32 {
         samples.iter().map(|s| s * s).sum()
-    }
-
-    #[test]
-    fn the_hadamard_matrix_preserves_energy() {
-        let input = [0.3, -1.2, 0.5, 2.0, -0.7, 0.1, 0.9, -0.4];
-        let output = hadamard(input);
-        assert!((energy(&input) - energy(&output)).abs() < 1e-4);
     }
 
     #[test]

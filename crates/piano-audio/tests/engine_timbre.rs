@@ -16,7 +16,8 @@
 //! 1. **Fundamental decay** — seconds to −20 dB, inside a wide band around
 //!    the solved target.
 //! 2. **Per-partial decay ratio** — H1 vs the bright partial, guarding
-//!    against the "every partial decays together" organ signature (D1).
+//!    against a bright partial that outlasts the fundamental or is gone
+//!    before the note has spoken.
 //! 3. **Radiated energy** — an early window and a later one, so a key that
 //!    collapses to silence is caught rather than waited for.
 //! 4. **Monochord vs trichord** — a key whose trichord behaves very
@@ -76,19 +77,22 @@ const MEASURED_OVER_ANALYTIC: f32 = 0.20;
 /// (~0.07×) or a bar-like over-ring.
 const DECAY_BAND: f32 = 3.0;
 
-/// Band for H1 / H(bright) decay-time ratio. Below ~1.6 the partials are
-/// dying together (the "metallic" D1 defect, A0 measured 1.18 before F1);
-/// above ~25 the bright partial is gone before the note has spoken.
-const RATIO_BAND: std::ops::Range<f32> = 1.6..25.0;
+/// Band for H1 / H(bright) decay-time ratio. The measured concert grand
+/// the scale is calibrated against holds its low partials within a factor
+/// of two of the fundamental's rate (`voicing::scale`,
+/// `docs/CALIBRATION.md`), so a ratio near 1 is the target here and no
+/// longer the defect an earlier, uncalibrated band of `1.6..25` took it
+/// for. Well below 1 the bright partial outlasts the fundamental, which no
+/// string does; above ~25 it is gone before the note has spoken.
+const RATIO_BAND: std::ops::Range<f32> = 0.8..25.0;
 
 /// The H1 / H(bright) ratio is only asserted where the bright partial sits
 /// below this. Above roughly 2 kHz a piano's 8th partial is already 40–60 dB
 /// down and its *own* 20 dB decay time, measured off a full-engine render
 /// with soundboard and limiter in the path, is noise — `voicing`'s own
-/// `upper_partials_decay_several_times_faster` reads that ratio analytically
-/// for exactly this reason. The metallic D1 defect this guards against was
-/// measured at A0, where the bright partial is strong; that is the register
-/// this check belongs in.
+/// `the_bright_partial_decays_as_much_faster_as_the_scale_asks` reads that
+/// ratio analytically for exactly this reason. The bass, where the bright
+/// partial is strong, is the register this check belongs in.
 const RATIO_MAX_PARTIAL_HZ: f32 = 2_000.0;
 
 /// RMS floor for the first ~0.4 s of a note: below this the strike barely
@@ -290,7 +294,7 @@ fn check_partial_ratio(midi: u8, m: &KeyTimbre) {
     assert!(
         RATIO_BAND.contains(&ratio),
         "key {midi}: H1 {h1:.2}s / H{:.1} {bright:.2}s is a ratio of {ratio:.2}, outside \
-         {RATIO_BAND:?} — near 1 means every partial decays together (the metallic D1 defect)",
+         {RATIO_BAND:?} — below it the bright partial outlasts the fundamental",
         m.bright_partial
     );
 }

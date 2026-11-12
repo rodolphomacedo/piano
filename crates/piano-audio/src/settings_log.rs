@@ -104,9 +104,6 @@ fn setting_key(command: &Command) -> Option<SettingKey> {
         Command::SetStringDetune {
             midi, string_index, ..
         } => string(18, midi, string_index),
-        Command::SetStringSeed {
-            midi, string_index, ..
-        } => string(19, midi, string_index),
         Command::SetStringHammer {
             midi, string_index, ..
         } => string(20, midi, string_index),
@@ -116,9 +113,6 @@ fn setting_key(command: &Command) -> Option<SettingKey> {
         Command::SetStringStrikePosition {
             midi, string_index, ..
         } => string(23, midi, string_index),
-        Command::SetStringExcitationNoiseMix {
-            midi, string_index, ..
-        } => string(24, midi, string_index),
     }
 }
 
@@ -165,10 +159,10 @@ mod tests {
     fn different_strings_keep_their_own_values() {
         let mut log = SettingsLog::default();
         for string_index in 0..3 {
-            log.record(Command::SetStringSeed {
+            log.record(Command::SetStringDetune {
                 midi: 60,
                 string_index,
-                seed: u32::from(string_index),
+                cents: f32::from(string_index),
             });
         }
         assert_eq!(log.replay().len(), 3);

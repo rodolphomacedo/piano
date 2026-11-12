@@ -218,14 +218,26 @@ fn hitting_harder_makes_a_note_brighter_not_merely_louder() {
     );
 }
 
-/// How much of the start of a note counts as "the attack" here: 5 ms, a
-/// little longer than the ~3.4 ms the felt stays in contact at full
-/// velocity, so the window holds the whole strike and almost nothing else.
+/// How much of a note, from the moment it first sounds, counts as "the
+/// attack" here: 5 ms, a little longer than the felt stays in contact at
+/// full velocity, so the window holds the whole strike and little else.
 const ATTACK_SECONDS: f32 = 0.005;
 
+/// How far below its peak a note has to rise before it counts as sounding.
+const ONSET_FRACTION_OF_PEAK: f32 = 1.0e-3;
+
+/// The first [`ATTACK_SECONDS`] of sound. The render starts when the hammer
+/// touches the string, and nothing reaches the bridge until the wave has
+/// run the string's length — 5.3 ms at E2 — so the window is counted from
+/// the first sample that sounds, not from the first sample.
 fn attack(samples: &[f32]) -> &[f32] {
+    let threshold = ONSET_FRACTION_OF_PEAK * peak(samples);
+    let onset = samples
+        .iter()
+        .position(|sample| sample.abs() > threshold)
+        .unwrap_or(0);
     let length = (ATTACK_SECONDS * SAMPLE_RATE_HZ) as usize;
-    &samples[..length.min(samples.len())]
+    &samples[onset..(onset + length).min(samples.len())]
 }
 
 fn peak(samples: &[f32]) -> f32 {
@@ -262,24 +274,18 @@ fn a_harder_strike_is_brighter_in_the_attack_itself_not_only_over_the_note() {
     // strike alone, which is where the hammer either does or does not vary
     // with how hard the key was hit.
     //
-    // Measured at E2 rather than A4 on purpose, and the reason is a real
-    // limitation worth stating: `PluckedString::pluck` writes exactly one
-    // loop length of excitation, so a note whose loop period is shorter than
-    // the felt's contact gets its contact envelope truncated. E2's period is
-    // 12.1 ms and holds the whole 3.5-6.5 ms contact; A4's is 2.27 ms and
-    // holds a third of it, so at A4 both velocities receive roughly the same
-    // truncated prefix and the difference this asserts is not reliably
-    // measurable there. That truncation predates the excitation filter and
-    // is a separate defect (it is also why the top octave is markedly
-    // quieter than the rest); it is not what this test is about.
+    // Measured at E2, where the contact (a few milliseconds) ends well
+    // before the first reflection returns (12.1 ms), so the window holds the
+    // strike alone and not the string's answer to it.
     let soft = spectral_centroid(attack(&render(40, 0.15, 0.5)));
     let hard = spectral_centroid(attack(&render(40, 0.95, 0.5)));
     println!("attack centroid at E2: soft {soft:.1} Hz, hard {hard:.1} Hz");
+    // A ratio, not a difference in hertz: how bright the strike is overall
+    // is the felt's voicing, and what this asserts is that force moves it.
     assert!(
-        hard > soft + 500.0,
-        "only {} Hz separates a pianissimo attack ({soft} Hz) from a fortissimo one ({hard} Hz); \
-         the excitation is still essentially velocity-independent in frequency",
-        hard - soft
+        hard > 1.5 * soft,
+        "a fortissimo attack ({hard} Hz) is not half again as bright as a pianissimo one \
+         ({soft} Hz); the strike is still essentially velocity-independent in frequency"
     );
 }
 

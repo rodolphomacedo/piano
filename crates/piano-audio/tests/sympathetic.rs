@@ -46,8 +46,13 @@ fn a_silently_held_octave_rings_and_an_unrelated_key_barely_does() {
     assert!(semitone < -60.0, "{semitone:.1}");
 }
 
+/// Measured against what is left of the note itself one to three seconds
+/// on, which is why the bloom came up from 17 dB under to 9 dB under when
+/// the scale was calibrated: the bloom did not grow, the middle of the
+/// keyboard now falls as fast as a grand's does (`voicing::scale`) while
+/// the bass strings that answer it ring on.
 #[test]
-fn the_sustain_pedal_blooms_a_note_well_under_its_own_level() {
+fn the_sustain_pedal_blooms_a_note_under_its_own_level() {
     let render = |pedal: bool| {
         let mut engine = engine();
         engine.set_sustain_pedal(pedal);
@@ -60,7 +65,7 @@ fn the_sustain_pedal_blooms_a_note_well_under_its_own_level() {
     let tail = 48_000..;
     let level = mean_square_db(&bloom[tail.clone()]) - mean_square_db(&without[tail]);
     println!("pedal bloom {level:.1} dB relative to the note");
-    assert!((-25.0..-10.0).contains(&level), "{level:.1}");
+    assert!((-25.0..-5.0).contains(&level), "{level:.1}");
 }
 
 #[test]

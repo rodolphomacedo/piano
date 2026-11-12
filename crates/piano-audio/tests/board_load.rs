@@ -11,6 +11,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use piano_audio::offline::OfflineEngine;
+use piano_audio::voicing::config_for_key;
 use piano_core::SampleRate;
 use piano_core::bridge_load::{DEFAULT_BOARD_LOAD_GAIN, MAX_BOARD_LOAD_GAIN};
 use piano_params::{PianoKey, Tuning};
@@ -25,11 +26,13 @@ fn engine(load_gain: f32) -> OfflineEngine {
     engine
 }
 
-fn fundamental_hz(midi: u8) -> f32 {
-    PianoKey::from_midi(midi)
-        .unwrap()
-        .frequency(Tuning::default())
-        .hertz()
+/// Where `midi`'s `partial` really sounds: on a stiff, stretch-tuned
+/// string, not at a whole multiple of the equal-tempered pitch.
+fn partial_hz(midi: u8, partial: usize) -> f32 {
+    let key = PianoKey::from_midi(midi).unwrap();
+    let config = config_for_key(key, Tuning::default(), SampleRate::new(RATE).unwrap());
+    let (n, b) = (partial as f32, config.inharmonicity);
+    n * config.frequency.hertz() * ((1.0 + b * n * n) / (1.0 + b)).sqrt()
 }
 
 /// Hann-windowed single-frequency DFT magnitude.
@@ -81,9 +84,8 @@ fn monochord_partial_decays(midi: u8, load_gain: f32, partials: usize) -> Vec<f3
     engine.set_board_load_gain(load_gain);
     engine.note_on(midi, 0.8);
     let samples = engine.render(3.0);
-    let f0 = fundamental_hz(midi);
     (1..=partials)
-        .map(|partial| decay_db_per_second(&samples, f0 * partial as f32))
+        .map(|partial| decay_db_per_second(&samples, partial_hz(midi, partial)))
         .collect()
 }
 

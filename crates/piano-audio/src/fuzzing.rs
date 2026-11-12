@@ -145,10 +145,6 @@ impl ByteReader<'_> {
         self.take::<4>().map(f32::from_le_bytes)
     }
 
-    fn word(&mut self) -> Option<u32> {
-        self.take::<4>().map(u32::from_le_bytes)
-    }
-
     fn index(&mut self) -> Option<usize> {
         self.take::<8>()
             .map(|raw| usize::try_from(u64::from_le_bytes(raw)).unwrap_or(usize::MAX))
@@ -256,16 +252,6 @@ impl ByteReader<'_> {
                 string_index,
                 position: self.float()?,
             },
-            27 => Command::SetStringExcitationNoiseMix {
-                midi,
-                string_index,
-                mix: self.float()?,
-            },
-            23 => Command::SetStringSeed {
-                midi,
-                string_index,
-                seed: self.word()?,
-            },
             _ => Command::SetStringHammer {
                 midi,
                 string_index,
@@ -289,7 +275,6 @@ impl ByteReader<'_> {
             stiffness: self.float()?,
             mass: self.float()?,
             string_impedance: self.float()?,
-            felt_bandwidth: self.float()?,
         })
     }
 }

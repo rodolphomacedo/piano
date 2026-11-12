@@ -22,8 +22,6 @@ pub struct HammerOverrides {
     pub mass: Option<f32>,
     /// See [`piano_core::hammer::HammerConfig::string_impedance`].
     pub string_impedance: Option<f32>,
-    /// See [`piano_core::hammer::HammerConfig::felt_bandwidth`].
-    pub felt_bandwidth: Option<f32>,
 }
 
 /// The parameters one cascade tier (`defaults`, a group's `overrides`, or
@@ -40,14 +38,10 @@ pub struct ParameterOverrides {
     pub inharmonicity: Option<f32>,
     /// See [`piano_core::UnisonGroup::set_string_detune`].
     pub detune_cents: Option<f32>,
-    /// See [`piano_core::string::PluckedString::set_seed`].
-    pub seed: Option<u32>,
     /// See [`piano_core::string::PluckedString::set_loop_zero_mix`].
     pub loop_zero_mix: Option<f32>,
     /// See [`piano_core::string::PluckedString::set_strike_position`].
     pub strike_position: Option<f32>,
-    /// See [`piano_core::string::PluckedString::set_excitation_noise_mix`].
-    pub excitation_noise_mix: Option<f32>,
     /// See [`HammerOverrides`].
     #[serde(default)]
     pub hammer: HammerOverrides,

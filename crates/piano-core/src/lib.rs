@@ -23,23 +23,28 @@
 extern crate alloc;
 
 pub mod action;
+pub mod body;
 pub mod bridge;
 pub mod bridge_load;
 pub mod delay;
 pub mod dispersion;
 pub mod duplex;
-pub mod excitation;
 pub mod filter;
 pub mod hammer;
 pub mod math;
 pub mod noise;
 pub mod phantom;
+pub mod radiation;
 pub mod room;
 pub mod soundboard;
 pub mod string;
+pub mod svf;
 pub mod unison;
 
 mod error;
+mod fdn;
+#[cfg(test)]
+mod test_signal;
 mod units;
 
 pub use bridge::BridgeBus;

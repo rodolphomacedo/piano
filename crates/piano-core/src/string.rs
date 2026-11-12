@@ -11,19 +11,20 @@
 //! because the string is stiff rather than ideally flexible, its partials
 //! sit progressively sharp of an exact harmonic series (the dispersion
 //! cascade, `PERF-005`, implementing Fletcher's stiff-string formula). The
-//! excitation is a nonlinear felt-hammer contact pulse (`PERF-007`) rather
-//! than a flat noise burst, so how hard the key is struck changes the
-//! *shape* of what excites the string, not just its level. That is the
-//! whole of milestone M4.
+//! string is set in motion by a felt hammer whose contact with it is solved
+//! every sample ([`crate::hammer`], `PERF-007`): nothing is written into the
+//! delay line in advance, so how hard the key is struck changes the *shape*
+//! of what excites the string, not just its level, and a string struck
+//! again is struck while still moving.
+//!
+//! What the string reports is the force it exerts on the bridge.
 
 use crate::{
     delay::DelayLine,
     dispersion::DispersionCascade,
     error::ParamError,
-    excitation::{self, ExcitationShaper},
     filter::{DcBlocker, LoopFilter},
     hammer, math,
-    noise::Xorshift32,
     units::{Hz, SampleRate},
 };
 
@@ -120,22 +121,20 @@ pub const DEFAULT_DAMPING: f32 = 0.5;
 /// Sustain [`StringConfig::new`] uses when the caller does not choose one.
 pub const DEFAULT_SUSTAIN: f32 = 0.996;
 
-/// Where along the string the hammer lands, as a fraction of the loop
-/// length, at [`StringConfig::new`].
+/// Where along the string the hammer lands, as a fraction of its length
+/// from the agraffe, at [`StringConfig::new`].
 ///
-/// ~1/8 is the canonical piano strike ratio: it puts the strike-position
-/// comb's first notch on the 8th partial, the dissonant one builders design
-/// the strike point to suppress (Fletcher & Rossing, *The Physics of Musical
+/// ~1/8 is the canonical piano strike ratio: it leaves the 8th partial, the
+/// dissonant one builders place the strike point to suppress, with a node
+/// under the hammer (Fletcher & Rossing, *The Physics of Musical
 /// Instruments*, 2nd ed., §12.3). `piano_audio::voicing` sets a per-key value
 /// that drifts across the keyboard; a caller building a [`StringConfig`]
 /// directly gets this classic single value.
 pub const DEFAULT_STRIKE_POSITION: f32 = 0.125;
 
 /// Widest [`StringConfig::strike_position`] the string honours — a strike at
-/// the loop's midpoint, which notches every even partial. Beyond it the
-/// geometry only mirrors, and [`PluckedString::new`] reserves delay-line
-/// headroom for exactly this much comb reach, so the strike-position comb
-/// (`DelayLine::apply_strike_comb`) can never wrap the ring.
+/// the midpoint, which excites no even partial. Beyond it the geometry only
+/// mirrors.
 pub const MAX_STRIKE_POSITION: f32 = 0.5;
 
 /// Loop-filter zero mix [`StringConfig::new`] uses when the caller does not
@@ -147,52 +146,6 @@ pub const MAX_STRIKE_POSITION: f32 = 0.5;
 /// `piano-render`'s tests do, deliberately bypassing that per-register
 /// voicing) keeps today's original filter character unchanged.
 pub const DEFAULT_LOOP_ZERO_MIX: f32 = 0.5;
-
-/// How much of the excitation is broadband noise rather than the hammer's
-/// own force pulse, in `[0, 1]`, at [`StringConfig::new`].
-///
-/// `0` is a purely deterministic strike — the contact force's own first
-/// difference (its `dF/dt`, the waveguide velocity-source form; see
-/// [`PluckedString::contact_force_diff_inv_peak`]) injected as the
-/// excitation signal itself, so two strikes at one velocity and seed
-/// produce spectrally identical attacks rather than the ragged,
-/// unrepeatable profile a fresh noise draw gives every strike (issue #77,
-/// `docs/TIMBRE-PLAN.md` D4). `1` is the original behaviour exactly: white
-/// noise shaped by the contact envelope.
-///
-/// The default is a roughly even split. #77's aspiration was to make the
-/// pulse the *clear* majority and keep only a trace of noise, and the two
-/// audible wins it names are already fully banked at any mix below 1: the
-/// strike is repeatable (the generator is rewound to the string's seed
-/// before every strike — the same "seeded noise for reproducible renders"
-/// the `noise` module documents, now applied per strike), and the bulk of
-/// the low/mid spectrum is the deterministic `dF/dt` pulse, not noise.
-///
-/// It does not go lower than this because the *stochastic* component still
-/// does two jobs the `dF/dt` pulse alone cannot cover across the compass.
-/// One is the velocity → brightness cue: the differentiated pulse is
-/// broadband and its slope steepens with strike force, so on a note whose
-/// period holds the whole contact that cue survives from the pulse alone,
-/// but in the treble the contact is truncated to one loop length
-/// (`PluckedString::pluck` writes no more), which flattens the pulse's
-/// velocity dependence there, and
-/// `m4_spectral::a_harder_strike_is_brighter_in_the_attack_itself` — the
-/// gate #77 names — needs the noise term shaped by
-/// `hammer::excitation_cutoff_hz` to make up the difference. The other is
-/// upper-partial energy in the bass: the pulse's spectrum rolls off well
-/// below the 8th partial of a low note, and the all-88 `engine_timbre`
-/// sweep (#87) checks that the bright partial still rings a measurable
-/// fraction as long as the fundamental rather than dying inside one
-/// analysis window. That check is the binding one, and it binds low in the
-/// bass — at `0.6` F2 (MIDI 41) failed it, its H8 decaying in ~0.17 s
-/// against a 6 s fundamental (a ratio of 35, past the sweep's 25 ceiling) —
-/// so the floor is `0.7`, the lowest even-tenth that clears every key of
-/// the sweep. The treble brightness gate is satisfied by less; the bass
-/// check wants more, and wins. Once the treble truncation is fixed the
-/// pulse can carry more of the load and this can drop toward the trace #77
-/// wanted; `voicing`'s F6 re-tune (#80) is where to move it by ear, per
-/// register rather than globally.
-pub const DEFAULT_EXCITATION_NOISE_MIX: f32 = 0.7;
 
 /// Tunable properties of a struck string.
 #[derive(Debug, Clone, Copy)]
@@ -208,8 +161,6 @@ pub struct StringConfig {
     /// `[0, dispersion::MAX_INHARMONICITY]`. Higher makes upper partials sit
     /// further above an exact harmonic series. See [`crate::dispersion`].
     pub inharmonicity: f32,
-    /// Seed for the excitation noise, so renders are reproducible.
-    pub seed: u32,
     /// This string's own felt-contact physics. See [`hammer::HammerConfig`];
     /// [`StringConfig::new`] picks the register's own hammer.
     pub hammer: hammer::HammerConfig,
@@ -219,16 +170,10 @@ pub struct StringConfig {
     /// [`crate::filter::LoopFilter`]'s docs for why this had to become a
     /// per-string value rather than a fixed constant.
     pub loop_zero_mix: f32,
-    /// Where the hammer strikes, as a fraction of the loop length, in
-    /// `[0, MAX_STRIKE_POSITION]`. `write_excitation` sums the excitation
-    /// with its inverted reflection this far back to notch the partials with
-    /// a node at the strike point — the `1/strike_position` harmonic and its
-    /// multiples. `0` disables the comb. See [`DEFAULT_STRIKE_POSITION`].
+    /// Where the hammer strikes, as a fraction of the string's length
+    /// measured from the agraffe, in `[0, MAX_STRIKE_POSITION]`. See
+    /// [`DEFAULT_STRIKE_POSITION`].
     pub strike_position: f32,
-    /// Fraction of the excitation that is broadband noise rather than the
-    /// deterministic hammer force pulse, in `[0, 1]`. See
-    /// [`DEFAULT_EXCITATION_NOISE_MIX`].
-    pub excitation_noise_mix: f32,
 }
 
 impl StringConfig {
@@ -240,103 +185,11 @@ impl StringConfig {
             damping: DEFAULT_DAMPING,
             sustain: DEFAULT_SUSTAIN,
             inharmonicity: crate::dispersion::DEFAULT_INHARMONICITY,
-            seed: 0x2545_F491,
-            // The register's own hammer: the bass one on a treble string
-            // drives it for several periods (`excitation::hammer_for_frequency`).
-            hammer: excitation::hammer_for_frequency(frequency.hertz()),
+            hammer: hammer::hammer_for_frequency(frequency.hertz()),
             loop_zero_mix: DEFAULT_LOOP_ZERO_MIX,
             strike_position: DEFAULT_STRIKE_POSITION,
-            excitation_noise_mix: DEFAULT_EXCITATION_NOISE_MIX,
         }
     }
-}
-
-/// Hard cap on how many samples, total across the burst and the
-/// [`PendingContact`] tail together, one strike's contact may run for
-/// before it is forced to end — regardless of whether
-/// [`hammer::ContactState::separated`] has physically latched yet.
-///
-/// Before #57, contact duration came from `hammer::simulate_contact`'s own
-/// bounded array: [`PluckedString::next_contact_sample`]'s predecessor
-/// could never inject past [`hammer::MAX_CONTACT_SAMPLES`] because the
-/// curve it indexed did not run any longer either. Real per-sample coupling
-/// (`hammer::couple_contact_step`) replaced that array with a `separated`
-/// flag that is only guaranteed to latch *eventually* — force stays
-/// non-negative, so `hammer_velocity` is monotonically non-increasing — not
-/// within any fixed number of samples: a `v_incoming` sequence that tracks
-/// the hammer's own velocity one tick behind keeps compression
-/// asymptotically near zero without ever quite reaching it, for tens of
-/// thousands of samples in a row (`string_tests::
-/// a_pending_contact_tail_is_forced_to_end_within_the_total_contact_sample_
-/// cap`). This restores the bound the array gave for free, so a contact
-/// still cannot run forever, whatever one particular sample's physics says.
-/// Reusing [`hammer::MAX_CONTACT_SAMPLES`] rather than picking a fresh
-/// number keeps the restored guarantee identical to the pre-#57 one, not
-/// merely similar to it.
-const MAX_TOTAL_CONTACT_SAMPLES: u16 = hammer::MAX_CONTACT_SAMPLES as u16;
-
-/// A felt hammer's contact force still being injected past the first loop
-/// length.
-///
-/// [`PluckedString::write_excitation`] can only fill one loop length's worth
-/// of delay line before [`PluckedString::pluck`] returns; a real hammer's
-/// contact can outlast that for any string whose period is shorter than the
-/// contact duration (`docs/PHYSICS.md`'s "What the hammer still gets
-/// wrong"), so this carries the rest of the contact — now a live,
-/// [`hammer::couple_contact_step`] simulation rather than an index into a
-/// precomputed curve — and the same shaping filters' state, to be advanced
-/// sample by sample as [`PluckedString::write_mixed_feedback`] runs.
-#[derive(Debug, Clone, Copy)]
-struct PendingContact {
-    /// The hammer's own live state — compression, hammer velocity, and
-    /// whether it has already separated from the string
-    /// ([`hammer::ContactState`]). Replaces a plain array index now that
-    /// each sample's force comes from [`hammer::couple_contact_step`]
-    /// rather than a precomputed, uncoupled curve.
-    contact: hammer::ContactState,
-    /// This strike's own [`hammer::HammerConfig`], carried so
-    /// [`PluckedString::next_contact_sample`] can call
-    /// [`hammer::couple_contact_step`] without re-reading
-    /// [`PluckedString::hammer`], which a live [`PluckedString::set_hammer`]
-    /// call could have changed mid-strike.
-    hammer: hammer::HammerConfig,
-    /// The reference (uncoupled) curve's peak force for *this* strike —
-    /// [`hammer::couple_contact_step`]'s raw output is divided by this, the
-    /// same scale [`PluckedString::write_excitation`] normalised the first
-    /// `burst_length` samples by, so [`PluckedString::contact_force_diff_inv_peak`]
-    /// stays meaningful across the whole strike, not just its first loop
-    /// length.
-    peak: f32,
-    /// This strike's velocity, same role as in
-    /// [`PluckedString::write_excitation`]'s own `* velocity` scaling:
-    /// without it, a strike whose contact outlasts one loop length would
-    /// stop getting louder for the tail injected by
-    /// [`PluckedString::next_contact_sample`], even though harder strikes
-    /// are still louder for the first loop length's worth.
-    velocity: f32,
-    /// The peak-normalised force the burst's *last* sample carried, so the
-    /// tail's first sample differentiates against the force that really
-    /// preceded it rather than against silence. The excitation is `dF/dt`
-    /// scaled by [`PluckedString::contact_force_diff_inv_peak`], which is
-    /// calibrated to the largest step the contact curve ever takes between
-    /// two adjacent samples; restarting `prev` at `0.0` mid-contact fakes a
-    /// step the size of the whole pulse — measured at 56× a real one for A4
-    /// at velocity 0.8 — and injects it as a single full-scale spike one
-    /// round trip into the note.
-    prev_shape: f32,
-    /// Continuation of the same shaping filter chain
-    /// [`PluckedString::write_excitation`] started, so the spectrum does not
-    /// discontinuously change where the first loop length's worth left off.
-    felt: ExcitationShaper,
-    /// Total samples of contact elapsed since this strike began (the burst
-    /// plus every tail sample since), so
-    /// [`PluckedString::next_contact_sample`] can force the tail to end at
-    /// [`MAX_TOTAL_CONTACT_SAMPLES`] even if
-    /// [`hammer::ContactState::separated`] never physically latches — see
-    /// that constant's doc comment for why this bound has to exist at all.
-    /// `u16` comfortably covers it: [`MAX_TOTAL_CONTACT_SAMPLES`] is 512,
-    /// and every increment is a saturating add, so this can never wrap.
-    samples_elapsed: u16,
 }
 
 /// A single struck string voice.
@@ -350,34 +203,20 @@ pub struct PluckedString {
     loop_filter: LoopFilter,
     dispersion: DispersionCascade,
     dc_blocker: DcBlocker,
-    rng: Xorshift32,
-    /// See [`PendingContact`]. `None` once a strike's contact has fully
-    /// injected (or for a strike whose contact fit in one loop length to
-    /// begin with — the common case for bass and mid-register keys).
-    pending_contact: Option<PendingContact>,
-    /// `1 / max|Δcontact_force|` for the current strike, set by
-    /// [`PluckedString::write_excitation`]; `0.0` for a contact too short to
-    /// have a slope. The deterministic part of the excitation is the force
-    /// pulse's first difference scaled by this, so it peaks near unit
-    /// amplitude whatever the contact's duration — a bass strike's
-    /// 400-sample pulse and a treble strike's 50-sample one differentiate to
-    /// very different raw slopes. Differentiating is also what makes the
-    /// deterministic excitation broadband (a smooth pulse's derivative
-    /// carries the high-frequency energy the velocity-dependent lowpass then
-    /// shapes) and exactly DC-free (a telescoping sum), so a unipolar pulse
-    /// never builds a standing offset in the near-lossless treble. It is the
-    /// waveguide velocity-source form: a string is driven by `dF/dt` at the
-    /// contact, not by `F` (Van Duyne & Smith, "Developments for the
-    /// Commuted Piano", ICMC 1995; Bank, "Physically Informed Sound
-    /// Synthesis of the Piano", 2000).
-    contact_force_diff_inv_peak: f32,
-    /// [`low_frequency_weight`] of this string's hammer struck at
-    /// [`excitation::REFERENCE_VELOCITY`], refreshed whenever the hammer
-    /// changes — the yardstick [`PluckedString::momentum_gain`] divides by.
-    reference_weight: f32,
-    /// Gain that makes the current strike's low-frequency excitation exactly
-    /// proportional to its velocity — see [`low_frequency_weight`].
-    momentum_gain: f32,
+    /// The hammer, at rest except during a strike.
+    junction: hammer::HammerJunction,
+    /// This string's hammer and impedance, prepared for the sample rate.
+    contact: hammer::ContactSolver,
+    /// How far behind the write head the wave returning from the agraffe
+    /// sits — where in the loop the hammer acts. See
+    /// [`PluckedString::place_strike_tap`].
+    strike_tap: usize,
+    /// How far past `strike_tap` towards the next tap the hammer sits,
+    /// `0..1`.
+    strike_blend: f32,
+    /// What the hammer added at `strike_tap` one sample ago, which now
+    /// sits under the next tap and is not part of the wave arriving there.
+    strike_carry: f32,
     /// Samples per cycle at this string's fixed frequency. `frequency`
     /// itself is only live-adjustable within [`MAX_LIVE_DETUNE_CENTS`] of the
     /// frequency `PluckedString::new` reserved delay-line headroom for (see
@@ -404,94 +243,10 @@ pub struct PluckedString {
     /// `1 − damper strength` ([`PluckedString::set_damper_strength`]).
     seated_damper_gain: f32,
     envelope: f32,
-    /// Kept only for [`hammer::simulate_contact`]'s integration step at the
-    /// next [`PluckedString::pluck`]; the audio-thread `process` loop never
-    /// reads it.
     sample_rate: f32,
-    /// This string's own felt-contact physics, set from
-    /// [`StringConfig::hammer`] and live-adjustable via
-    /// [`PluckedString::set_hammer`].
-    hammer: hammer::HammerConfig,
-    /// Where the hammer strikes, as a fraction of the loop length, clamped
-    /// into `[0, MAX_STRIKE_POSITION]`. Read by [`PluckedString::write_excitation`]
-    /// to size the strike-position comb; live-adjustable for the *next*
-    /// strike via [`PluckedString::set_strike_position`].
+    /// Where the hammer strikes, as a fraction of the string's length,
+    /// clamped into `[0, MAX_STRIKE_POSITION]`.
     strike_position: f32,
-    /// This string's excitation noise seed. Kept alongside `rng` so
-    /// [`PluckedString::write_excitation`] can rewind the generator to it on
-    /// every strike — a strike at a given velocity and seed is then
-    /// byte-identical however many times the voice has been re-plucked,
-    /// which is what makes the deterministic-pulse claim of issue #77
-    /// testable. [`PluckedString::set_seed`] moves both together.
-    seed: u32,
-    /// Fraction of the excitation that is broadband noise rather than the
-    /// deterministic hammer force pulse, clamped into `[0, 1]`. Read by
-    /// [`PluckedString::write_excitation`] and [`PluckedString::next_contact_sample`];
-    /// live-adjustable for the *next* strike via
-    /// [`PluckedString::set_excitation_noise_mix`]. See
-    /// [`DEFAULT_EXCITATION_NOISE_MIX`].
-    excitation_noise_mix: f32,
-}
-
-/// `1 / max|force[i] − force[i−1]|` over the first `active` entries of
-/// `force`, or `0.0` when `active` is `0` or the contact is flat (no
-/// slope). Used by [`PluckedString::write_excitation`] to normalise the
-/// differentiated excitation to roughly unit peak whatever the contact's
-/// duration — see [`PluckedString::contact_force_diff_inv_peak`].
-fn diff_inv_peak_of(force: &[f32; hammer::MAX_CONTACT_SAMPLES], active: usize) -> f32 {
-    let active = active.min(force.len());
-    let earlier = force.iter().take(active);
-    let later = force.iter().take(active).skip(1);
-    let peak = earlier
-        .zip(later)
-        .map(|(a, b)| math::abs(b - a))
-        .fold(0.0f32, f32::max);
-    if peak > f32::EPSILON { 1.0 / peak } else { 0.0 }
-}
-
-/// Largest [`PluckedString::momentum_gain`] allowed — far above the ~2 a
-/// *pianissimo* reaches against a *mezzo-forte*, so it only guards the
-/// division against a degenerate, near-zero contact.
-const MAX_MOMENTUM_GAIN: f32 = 8.0;
-
-/// How much low-frequency excitation one strike's peak-normalised contact
-/// curve carries, per unit of velocity: the deterministic excitation is
-/// `ΔF·diff_inv_peak`, whose spectrum near DC is `ω·ΣF·diff_inv_peak`.
-///
-/// A harder strike is shorter, so normalising its slope to unit peak left
-/// it with *less* low-frequency content than a softer one — in the treble,
-/// where the fundamental is all a note has, playing harder stopped getting
-/// louder past *mezzo-forte* (A6 measured -10.3 dB at 0.55 and -10.1 dB at
-/// 1.0). Physically a strike's low-frequency drive is its momentum, `∫F dt
-/// = 2·m·v` for a rebounding hammer, so it scales with velocity alone; the
-/// hammer's shortening only adds high-frequency content on top.
-fn low_frequency_weight(force: &[f32; hammer::MAX_CONTACT_SAMPLES], active: usize) -> f32 {
-    force.iter().take(active).sum::<f32>() * diff_inv_peak_of(force, active)
-}
-
-/// [`low_frequency_weight`] of `hammer` struck at
-/// [`excitation::REFERENCE_VELOCITY`].
-fn reference_weight_for(hammer: hammer::HammerConfig, sample_rate: f32) -> f32 {
-    let (mut curve, samples, peak) =
-        hammer::uncoupled_contact_curve(excitation::REFERENCE_VELOCITY, sample_rate, hammer);
-    hammer::normalize_by_peak(&mut curve, samples, peak);
-    low_frequency_weight(&curve, samples)
-}
-
-/// `raw_force / peak`, or `0.0` when `peak` is too small to divide by
-/// safely — the single-sample form of [`hammer::normalize_by_peak`]'s own
-/// branch, shared by [`PluckedString::write_excitation`] and
-/// [`PluckedString::next_contact_sample`] so a live coupled sample lands on
-/// exactly the scale the reference curve was normalised to (see
-/// [`PendingContact::peak`]'s doc comment for why that scale, not the
-/// coupled force's own peak, is the one both call sites divide by).
-#[inline]
-fn normalized_force(raw_force: f32, peak: f32) -> f32 {
-    if peak > f32::EPSILON {
-        raw_force / peak
-    } else {
-        0.0
-    }
 }
 
 /// How many fixed-point steps [`tuned_loop_delay`] takes. The delay line's
@@ -557,25 +312,16 @@ impl PluckedString {
             config.frequency.hertz() * math::powf(2.0, -MAX_LIVE_DETUNE_CENTS / 1200.0);
         let max_live_period = sample_rate.hertz() / lowest_live_frequency;
 
-        // Extra headroom past one loop length so the strike-position comb
-        // (`write_excitation`) can reach back up to `MAX_STRIKE_POSITION` of
-        // the loop without the `x[i - delay]` read wrapping the ring onto the
-        // burst's own far end. Sized for the lowest live frequency and the
-        // widest strike position together, so the comb delay never has to be
-        // clamped for any note or any live-set strike position.
-        let comb_headroom = max_live_period * MAX_STRIKE_POSITION;
-
         let mut string = Self {
-            delay: DelayLine::with_capacity((max_live_period + comb_headroom) as usize + 4),
+            delay: DelayLine::with_capacity(max_live_period as usize + 4),
             loop_filter,
             dispersion,
             dc_blocker: DcBlocker::default(),
-            rng: Xorshift32::new(config.seed),
-            seed: config.seed,
-            pending_contact: None,
-            contact_force_diff_inv_peak: 0.0,
-            reference_weight: reference_weight_for(config.hammer, sample_rate.hertz()),
-            momentum_gain: 1.0,
+            junction: hammer::HammerJunction::resting(),
+            contact: hammer::ContactSolver::new(config.hammer, sample_rate.hertz()),
+            strike_tap: 0,
+            strike_blend: 0.0,
+            strike_carry: 0.0,
             period,
             loop_delay: 0.0,
             sustain: math::clamp_or_low(config.sustain, 0.0, 1.0),
@@ -595,9 +341,7 @@ impl PluckedString {
             seated_damper_gain: RELEASE_LOSS_MULTIPLIER,
             envelope: 0.0,
             sample_rate: sample_rate.hertz(),
-            hammer: config.hammer,
             strike_position: math::clamp_or_low(config.strike_position, 0.0, MAX_STRIKE_POSITION),
-            excitation_noise_mix: math::clamp_or_low(config.excitation_noise_mix, 0.0, 1.0),
         };
         string.retune_loop_delay();
         Ok(string)
@@ -676,316 +420,52 @@ impl PluckedString {
         self.retune_loop_delay();
     }
 
-    /// Reseeds the excitation noise used by the *next* [`PluckedString::pluck`].
-    /// A string already ringing is unaffected, since its excitation was
-    /// already written. Stores the seed as well as reseeding, so
-    /// [`PluckedString::write_excitation`]'s per-strike rewind uses the new
-    /// value on every future strike, not just the next one.
-    pub fn set_seed(&mut self, seed: u32) {
-        self.seed = seed;
-        self.rng = Xorshift32::new(seed);
-    }
-
-    /// Changes this string's felt-contact physics, used by the *next*
-    /// [`PluckedString::pluck`]. A string already ringing is unaffected,
-    /// since its excitation burst was already shaped and written into the
-    /// delay line.
+    /// Changes the hammer this string is struck with, and the impedance it
+    /// meets. A strike already in progress finishes with the new values.
     pub fn set_hammer(&mut self, hammer: hammer::HammerConfig) {
-        self.hammer = hammer;
-        self.reference_weight = reference_weight_for(hammer, self.sample_rate);
+        self.contact = hammer::ContactSolver::new(hammer, self.sample_rate);
     }
 
-    /// Moves where the hammer strikes, as a fraction of the loop length,
-    /// used by the *next* [`PluckedString::pluck`]. `strike_position` is
-    /// clamped into `[0, MAX_STRIKE_POSITION]`, `NaN` mapping to `0` (no
-    /// comb), the same convention every other live setter here uses. A
-    /// string already ringing is unaffected, since its excitation burst —
-    /// and so its strike-position comb — was already written into the delay
-    /// line. Lower values push the comb notch onto a higher partial
-    /// (`1/strike_position`), the audible direction issue #32 asks for.
+    /// Moves where the hammer strikes, as a fraction of the string's
+    /// length. `strike_position` is clamped into `[0, MAX_STRIKE_POSITION]`,
+    /// `NaN` mapping to `0`, the same convention every other live setter
+    /// here uses. Partials with a node under the hammer — the
+    /// `1/strike_position` harmonic and its multiples — are the ones a
+    /// strike there cannot excite.
     pub fn set_strike_position(&mut self, strike_position: f32) {
         self.strike_position = math::clamp_or_low(strike_position, 0.0, MAX_STRIKE_POSITION);
+        self.place_strike_tap();
     }
 
-    /// Sets how much of the *next* strike's excitation is broadband noise
-    /// rather than the deterministic hammer force pulse. `mix` is clamped
-    /// into `[0, 1]`, `NaN` mapping to `0` (a fully deterministic strike),
-    /// the same convention every other live setter here uses. A string
-    /// already ringing is unaffected, since its excitation was already
-    /// written into the delay line. See [`DEFAULT_EXCITATION_NOISE_MIX`].
-    pub fn set_excitation_noise_mix(&mut self, mix: f32) {
-        self.excitation_noise_mix = math::clamp_or_low(mix, 0.0, 1.0);
-    }
-
-    /// Excites the string with a felt-shaped hammer force pulse at the given
-    /// velocity, blended with a broadband noise component
-    /// ([`PluckedString::excitation_noise_mix`]).
+    /// Throws the hammer at the string.
     ///
-    /// `velocity` is clamped into `[0, 1]` and, via
-    /// [`hammer::simulate_contact`], shapes the burst's envelope: a harder
-    /// strike produces a shorter, more sharply-peaked pulse with more
-    /// high-frequency content, not merely a louder one. See the `hammer`
-    /// module docs for the physical model and its simplifications. Cost is
-    /// proportional to the loop length — a few hundred writes even for the
-    /// lowest note — plus the bounded, compile-time-capped hammer contact
-    /// simulation: a bounded spike on the audio thread, not an unbounded
-    /// one.
+    /// `velocity` is clamped into `[0, 1]` and sets the hammer's speed
+    /// ([`hammer::strike_mps_for`]); everything else about the blow — how
+    /// long the felt stays on the string, how bright the note is — follows
+    /// from the contact being solved against the string sample by sample
+    /// (see [`hammer`]). The string is not cleared first: a key struck
+    /// again meets a string that is still moving, as on the instrument.
+    /// Costs nothing here; the contact is paid for a sample at a time in
+    /// [`PluckedString::write_mixed_feedback`].
     pub fn pluck(&mut self, velocity: f32) {
-        let velocity = math::clamp_or_low(velocity, 0.0, 1.0);
+        let strike_mps = hammer::strike_mps_for(velocity);
+        // A hammer strike lifts the damper off the string, same as a real
+        // key press.
+        self.set_damper_pressure(0.0);
+        self.junction.strike(strike_mps, &self.contact);
+        // Keeps the voice awake until the first wave reaches the bridge.
+        self.envelope = self.envelope.max(strike_mps * self.contact.bridge_gain());
+    }
+
+    /// Stops the string dead: no travelling wave, no hammer, filters at
+    /// rest. For "all notes off", where a release would still ring.
+    pub fn silence(&mut self) {
         self.delay.clear();
         self.loop_filter.reset();
         self.dispersion.reset();
         self.dc_blocker.reset();
-        self.envelope = velocity;
-        // A hammer strike lifts the damper off the string, same as a real
-        // piano key: any release the previous ringing of this voice had
-        // engaged no longer applies to the new note.
-        self.set_damper_pressure(0.0);
-
-        self.write_excitation(velocity);
-    }
-
-    /// Fills the delay line with one strike's worth of excitation: the
-    /// hammer contact force's first difference (`dF/dt`), shaped in *time* by
-    /// its own felt-contact envelope, blended toward an envelope-shaped
-    /// noise burst by [`PluckedString::excitation_noise_mix`] (issue #77),
-    /// shaped in *frequency* by a lowpass whose corner that same contact
-    /// duration sets, and finally in *space* by the strike-position comb —
-    /// the inverted reflection from where the hammer lands, which notches
-    /// the partials with a node at the strike point (see the comb step at
-    /// the end of this method and `DelayLine::apply_strike_comb`).
-    ///
-    /// # Why the excitation is a differentiated force pulse, not a noise burst
-    ///
-    /// A real hammer delivers a deterministic force pulse, so two strikes of
-    /// one key at one velocity are spectrally the same strike. The earlier
-    /// model instead multiplied white noise by the contact envelope, giving
-    /// every partial a random amplitude and phase on every strike — a
-    /// ragged, unrepeatable attack profile (`docs/TIMBRE-PLAN.md` D4) rather
-    /// than the fixed spectral envelope a struck string has. The rng is now
-    /// rewound to [`PluckedString::seed`] before every strike, so a given
-    /// velocity and seed is byte-identical however many times the voice has
-    /// been re-plucked, and the bulk of the excitation is the force pulse
-    /// itself rather than noise.
-    ///
-    /// It is the pulse's *derivative* that is injected, not `F` raw, for two
-    /// reasons that happen to coincide. Physically, a waveguide is a
-    /// velocity source driven by `dF/dt` at the contact point (Van Duyne &
-    /// Smith, ICMC 1995; Bank 2000). Practically, `F` raw is a smooth
-    /// unipolar bump whose spectrum rolls off by `~1/contact_duration` — a
-    /// few hundred hertz — so it leaves the upper partials unexcited *and*
-    /// its velocity → brightness behaviour is swamped by the bump's own
-    /// shape; `dF/dt` is broadband, exactly DC-free, and its high-frequency
-    /// content rises with strike velocity (harder is shorter is steeper),
-    /// which is the "brighter, not merely louder" cue
-    /// [`hammer::excitation_cutoff_hz`] then sharpens. Normalised to unit
-    /// peak by [`PluckedString::contact_force_diff_inv_peak`] so its level
-    /// does not swing three registers wide with the contact duration.
-    ///
-    /// [`PluckedString::excitation_noise_mix`] keeps a *small* broadband
-    /// stochastic component: a real felt strike has one, from the felt's
-    /// surface and the string's back-reaction during contact, and removing
-    /// it entirely sounds synthetic the other way. Mix `1` reproduces the
-    /// original noise excitation exactly; mix `0` is a purely deterministic
-    /// strike.
-    ///
-    /// The *frequency* shaping still applies on top: both components pass
-    /// the lowpass, whose corner [`hammer::excitation_cutoff_hz`] moves with
-    /// strike velocity. See that function for the measurement.
-    ///
-    /// The lowpass is `excitation::FELT_POLES` identical one-pole sections in
-    /// series, not one: a single 6 dB/octave section leaves so much of the
-    /// band above its corner intact that the strike still measures as
-    /// broadband (8.5 kHz of spectral centroid against a 4 kHz corner, at
-    /// 48 kHz — because a magnitude falling as `1/f` contributes equally to
-    /// the centroid from every octave above the corner). Cascading identical
-    /// sections is also the shape the physics suggests: the felt's finite
-    /// contact width and the force pulse's own smoothness are two separate
-    /// rolloffs, not one.
-    ///
-    /// Once `contact.separated` goes true, the coupled force has gone to
-    /// `0.0`, so the burst goes silent on its own once the hammer has left
-    /// the string; the rest of the delay line is filled with that silence,
-    /// filtered, rather than left untouched.
-    ///
-    /// Fills exactly one loop length here — the most this call alone can
-    /// write before [`PluckedString::pluck`] returns — and, when
-    /// `contact_samples` outlasts that (any string whose period is shorter
-    /// than the felt's contact, `docs/PHYSICS.md`'s "What the hammer still
-    /// gets wrong"), leaves [`PendingContact`] set up with the live, not yet
-    /// separated [`hammer::ContactState`] so
-    /// [`PluckedString::write_mixed_feedback`] can keep coupling and
-    /// injecting sample by sample as the string actually rings. A bass or
-    /// mid-register strike, whose contact fits in one loop length, leaves
-    /// `pending_contact` `None` and never sets one up at all.
-    fn write_excitation(&mut self, velocity: f32) {
-        let (mut reference_curve, contact_samples, peak) =
-            hammer::uncoupled_contact_curve(velocity, self.sample_rate, self.hammer);
-        hammer::normalize_by_peak(&mut reference_curve, contact_samples, peak);
-        let cutoff_hz = hammer::excitation_cutoff_hz(
-            contact_samples,
-            self.sample_rate,
-            self.hammer.felt_bandwidth,
-        );
-        let mut felt =
-            ExcitationShaper::new(cutoff_hz, self.sample_rate / self.period, self.sample_rate);
-        self.contact_force_diff_inv_peak = diff_inv_peak_of(&reference_curve, contact_samples);
-        let weight = low_frequency_weight(&reference_curve, contact_samples);
-        self.momentum_gain = if weight > f32::EPSILON {
-            math::clamp_or_low(self.reference_weight / weight, 0.0, MAX_MOMENTUM_GAIN)
-        } else {
-            1.0
-        };
-        // A given velocity and seed is one strike, every time it is played.
-        self.rng = Xorshift32::new(self.seed);
-        let burst_length = self.loop_delay as usize + 1;
-        let mut contact = hammer::ContactState::starting(velocity);
-        let mut prev_shape = 0.0f32;
-        for index in 0..burst_length {
-            // The earliest self-reflection of this very strike, read raw
-            // (not yet through `loop_filter`/`dispersion`, which only run
-            // once real per-sample playback starts) — see the design doc's
-            // note on why this approximation only matters for strings
-            // whose `loop_delay` is shorter than the burst. `DelayLine::read`
-            // counts back from the sample written *last*, so one loop length
-            // ago is `loop_delay - 1` entries back, not `index - loop_delay`.
-            let v_incoming = if index >= self.loop_delay as usize {
-                self.delay
-                    .read((self.loop_delay as usize).saturating_sub(1))
-            } else {
-                0.0
-            };
-            let (next_contact, raw_force) =
-                hammer::couple_contact_step(contact, self.hammer, v_incoming, self.sample_rate);
-            contact = next_contact;
-            // Same peak the reference curve above was normalised by, so
-            // `contact_force_diff_inv_peak` stays on the scale it was
-            // calibrated against — see `PendingContact::peak`'s doc comment.
-            let shape = normalized_force(raw_force, peak);
-            let excitation =
-                self.blended_excitation(shape, prev_shape) * velocity * self.momentum_gain;
-            prev_shape = shape;
-            let shaped = felt.process(excitation);
-            self.delay.write(shaped);
-        }
-        // The hammer strikes at one point, not everywhere: sum the burst with
-        // its inverted reflection from the strike position so the modes with
-        // a node there — the `1/strike_position` partial and its multiples —
-        // fall out of the geometry (`DelayLine::apply_strike_comb`). The comb
-        // delay is `strike_position` of the loop, rounded; the reservation in
-        // `PluckedString::new` guarantees `burst_length + comb_delay` stays
-        // inside the delay line, so the `.min` here is a proof of that, not a
-        // limit that ever binds for a real note. It applies to this first
-        // loop length only — the `PendingContact` continuation of a treble
-        // strike is left uncombed, which is inaudible there because the comb's
-        // first notch (`1/strike_position ≈ 8` × a treble fundamental) already
-        // sits far above Nyquist. See `docs/PHYSICS.md`, "Strike position".
-        let comb_delay = (self.strike_position * self.loop_delay + 0.5) as usize;
-        let comb_delay = comb_delay.min(self.delay.max_delay().saturating_sub(burst_length));
-        self.delay.apply_strike_comb(burst_length, comb_delay);
-        self.pending_contact =
-            (contact_samples > burst_length && !contact.separated).then_some(PendingContact {
-                contact,
-                hammer: self.hammer,
-                peak,
-                velocity,
-                prev_shape,
-                felt,
-                // `burst_length < contact_samples <= hammer::MAX_CONTACT_SAMPLES`
-                // whenever this branch runs (the `then_some` guard above), so
-                // `burst_length` is always well under `u16::MAX` here.
-                samples_elapsed: burst_length as u16,
-            });
-    }
-
-    /// One excitation sample for contact-force envelope value `shape` and
-    /// its predecessor `prev`: the pulse's first difference
-    /// `(shape − prev)·contact_force_diff_inv_peak` — its `dF/dt`, broadband
-    /// and exactly DC-free — blended toward an envelope-shaped noise sample
-    /// by [`PluckedString::excitation_noise_mix`] (issue #77).
-    ///
-    /// `d + mix·(noisy − d)` is a convex blend: at `mix == 0` it is the
-    /// differentiated pulse, at `mix == 1` it is `rng.next_bipolar() · shape`
-    /// — the original noise excitation exactly, so a default of `1` is a
-    /// bit-for-bit no-op against it. The generator is drawn unconditionally
-    /// so its state advances by the same amount whatever the mix, keeping a
-    /// live `set_excitation_noise_mix` from desynchronising a seed.
-    ///
-    /// Total, regardless of what `shape`/`prev` carry: one finite
-    /// multiply-add of finite inputs ([`Xorshift32::next_bipolar`] is
-    /// bounded, `contact_force_diff_inv_peak` is finite and non-negative by
-    /// construction, `excitation_noise_mix` is clamped into `[0, 1]` at
-    /// every entry point) — it cannot panic or return a non-finite value.
-    ///
-    /// `shape`/`prev` are *not* [`hammer::simulate_contact`]'s own strictly
-    /// `[0, 1]`-bounded output — both call sites ([`PluckedString::
-    /// write_excitation`], [`PluckedString::next_contact_sample`]) compute
-    /// them by [`normalized_force`], peak-normalising a *live coupled*
-    /// force against the *uncoupled reference curve's* peak. That
-    /// normalisation keeps `shape` nominally near `[0, 1]`, but it is not a
-    /// strict bound once real coupling is live: a sufficiently negative
-    /// `v_incoming` can push the coupled force above the reference peak it
-    /// is divided by (measured up to ~1.56× at `v_incoming = -2.0`), so
-    /// `shape` can transiently exceed `1.0`. This function's own math does
-    /// not care either way — the multiply-add above stays finite and total
-    /// for any finite `shape`/`prev`, in or out of `[0, 1]`.
-    #[inline]
-    fn blended_excitation(&mut self, shape: f32, prev: f32) -> f32 {
-        let deterministic = (shape - prev) * self.contact_force_diff_inv_peak;
-        let noisy = self.rng.next_bipolar() * shape;
-        deterministic + self.excitation_noise_mix * (noisy - deterministic)
-    }
-
-    /// Injects the next sample of an ongoing hammer contact
-    /// ([`PendingContact`]) on top of the loop's own feedback, or `0.0` once
-    /// contact has ended (or the string's last strike never needed one).
-    /// `v_incoming` is the real, current bridge-tap value
-    /// [`PluckedString::write_mixed_feedback`] just read, so the contact
-    /// this advances is genuinely coupled to the string rather than
-    /// approximated against silence.
-    ///
-    /// Differentiates against [`PendingContact::prev_shape`], not against
-    /// `0.0`: the injected value is `dF/dt`, so the tail has to pick the
-    /// force up exactly where the burst put it down or the hand-off itself
-    /// reads as a step change in force — see that field's doc comment.
-    ///
-    /// Ends the tail — dropping `pending_contact` — once either
-    /// [`hammer::ContactState::separated`] physically latches, *or*
-    /// [`PendingContact::samples_elapsed`] reaches
-    /// [`MAX_TOTAL_CONTACT_SAMPLES`], whichever comes first; see that
-    /// constant's doc comment for why the second exit has to exist at all.
-    ///
-    /// Total: every branch returns a plain `f32`,
-    /// [`hammer::couple_contact_step`] is itself total for any input, and
-    /// `ExcitationShaper::process` cannot return non-finite output for a
-    /// finite input — this can never panic or leak a `NaN` into the
-    /// feedback loop it feeds.
-    #[inline]
-    fn next_contact_sample(&mut self, v_incoming: f32) -> f32 {
-        let Some(mut contact) = self.pending_contact.take() else {
-            return 0.0;
-        };
-        let (next_state, raw_force) = hammer::couple_contact_step(
-            contact.contact,
-            contact.hammer,
-            v_incoming,
-            self.sample_rate,
-        );
-        contact.contact = next_state;
-        contact.samples_elapsed = contact.samples_elapsed.saturating_add(1);
-        // Same peak `write_excitation` normalised this strike's reference
-        // curve by (`PendingContact::peak`'s doc comment).
-        let shape = normalized_force(raw_force, contact.peak);
-        let prev = contact.prev_shape;
-        contact.prev_shape = shape;
-        let excitation =
-            self.blended_excitation(shape, prev) * contact.velocity * self.momentum_gain;
-        let shaped = contact.felt.process(excitation);
-        let contact_capped = contact.samples_elapsed >= MAX_TOTAL_CONTACT_SAMPLES;
-        if !next_state.separated && !contact_capped {
-            self.pending_contact = Some(contact);
-        }
-        shaped
+        self.junction = hammer::HammerJunction::resting();
+        self.envelope = 0.0;
     }
 
     /// Engages the damper: from this call on, every round trip loses extra
@@ -1178,16 +658,41 @@ impl PluckedString {
         let loop_gain = self.sustain * self.damper_gain;
         let bridge_admittance = 1.0 - loop_gain;
         let driven = mixed + coupling * bridge_admittance;
-        // The hammer's continued push (`PendingContact`, when a strike's
-        // contact outlasts one loop length) is an external force on top of
-        // the loop's own scattering, so it is added after `loop_gain` is
-        // applied to the recirculating signal, not folded into it.
-        let reflected = driven * loop_gain + self.next_contact_sample(tap);
-        self.delay.write(math::flush_denormal(reflected));
+        let returning = driven * loop_gain;
+        let struck = self.hammer_injection(returning);
+        self.delay.write(math::flush_denormal(returning - struck));
 
-        let output = self.dc_blocker.process(tap);
+        let output = self.dc_blocker.process(tap * self.contact.bridge_gain());
         self.track_envelope(output);
         output
+    }
+
+    /// Lets the hammer, if one is on the string, act for this sample, and
+    /// returns the velocity it adds to the wave leaving for the agraffe.
+    ///
+    /// The delay line holds one loop, bridge end at the read tap and the
+    /// wave that just left the strike point at the write head. `returning`
+    /// is the wave arriving back from the bridge; `strike_tap` samples
+    /// behind the write head is the wave arriving back from the agraffe.
+    /// Their difference is the string's velocity under the felt. The hammer
+    /// then adds `F / 2Z` to both waves leaving the point: to the one bound
+    /// for the bridge in place, and — with the sign its reflection at the
+    /// agraffe will undo — to the one written now.
+    #[inline]
+    fn hammer_injection(&mut self, returning: f32) -> f32 {
+        if !self.junction.is_striking() {
+            self.strike_carry = 0.0;
+            return 0.0;
+        }
+        let near = self.delay.read(self.strike_tap);
+        let far = self.delay.read(self.strike_tap + 1) - self.strike_carry;
+        let from_agraffe = near + self.strike_blend * (far - near);
+        let struck = self.junction.step(&self.contact, from_agraffe - returning);
+        self.strike_carry = (1.0 - self.strike_blend) * struck;
+        self.delay.add_at(self.strike_tap, self.strike_carry);
+        self.delay
+            .add_at(self.strike_tap + 1, self.strike_blend * struck);
+        struck
     }
 
     /// Renders `output.len()` samples and **adds** them into `output`.
@@ -1235,6 +740,25 @@ impl PluckedString {
         let retuned = tuned_loop_delay(self.period, &self.loop_filter, &self.dispersion);
         let max_loop_delay = self.delay.max_delay() as f32 - 1.0;
         self.loop_delay = math::clamp_or_low(retuned, MIN_LOOP_DELAY, max_loop_delay);
+        self.place_strike_tap();
+    }
+
+    /// Recomputes where in the delay line the hammer acts.
+    ///
+    /// A wave leaving the strike point towards the agraffe is back
+    /// `strike_position` of a period later, which is seldom a whole number
+    /// of samples: the hammer reads and writes between two taps, weighted
+    /// by how near each is. Rounded to one tap, the top octave's strike
+    /// point — its whole loop is a dozen samples — jumped by half its
+    /// distance from one key to the next, and the notes' levels with it.
+    /// The position is clamped so the allpass bridge read never sees a
+    /// sample the hammer has yet to touch.
+    fn place_strike_tap(&mut self) {
+        let longest = (self.loop_delay as usize).saturating_sub(2);
+        let round_trip = self.strike_position * self.period;
+        let position = math::clamp_or_low(round_trip - 1.0, 0.0, longest as f32);
+        self.strike_tap = position as usize;
+        self.strike_blend = position - self.strike_tap as f32;
     }
 
     #[inline]

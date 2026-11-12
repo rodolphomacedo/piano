@@ -28,6 +28,7 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use piano_core::dispersion::DispersionCascade;
+use piano_core::hammer::{ContactSolver, DEFAULT_HAMMER, HammerJunction};
 use piano_core::string::{PluckedString, StringConfig};
 use piano_core::unison::unison_count_for_key_index;
 use piano_core::{BridgeBus, Hz, SampleRate, Soundboard, UnisonGroup};
@@ -68,27 +69,27 @@ fn bench_dispersion_cascade(c: &mut Criterion) {
 }
 
 fn bench_hammer_contact(c: &mut Criterion) {
-    // PERF-007: a bounded spike at note-on, not a steady load — benchmarked
-    // as one call, not per-block, since that is how `PluckedString::pluck`
-    // actually uses it.
-    c.bench_function("hammer_simulate_contact_one_strike", |b| {
+    // PERF-007: the contact is solved sample by sample while the felt is on
+    // the string, so one whole strike is the unit of cost, and one step of
+    // it the per-sample price a sounding voice pays for a few milliseconds.
+    let solver = ContactSolver::new(DEFAULT_HAMMER, 48_000.0);
+    c.bench_function("hammer_contact_one_whole_strike", |b| {
         b.iter(|| {
-            black_box(piano_core::hammer::simulate_contact(
-                black_box(0.8),
-                black_box(48_000.0),
-                black_box(piano_core::hammer::DEFAULT_HAMMER),
-            ))
+            let mut junction = HammerJunction::resting();
+            junction.strike(black_box(3.0), &solver);
+            let mut injected = 0.0f32;
+            while junction.is_striking() {
+                injected += junction.step(&solver, black_box(0.0));
+            }
+            black_box(injected)
         });
     });
-    c.bench_function("hammer_couple_contact_step_one_sample", |b| {
-        let state = piano_core::hammer::ContactState::starting(0.8);
+    c.bench_function("hammer_contact_step_one_sample", |b| {
+        let mut struck = HammerJunction::resting();
+        struck.strike(3.0, &solver);
         b.iter(|| {
-            black_box(piano_core::hammer::couple_contact_step(
-                black_box(state),
-                black_box(piano_core::hammer::DEFAULT_HAMMER),
-                black_box(0.1),
-                black_box(48_000.0),
-            ))
+            let mut junction = black_box(struck);
+            black_box(junction.step(&solver, black_box(0.1)))
         });
     });
 }

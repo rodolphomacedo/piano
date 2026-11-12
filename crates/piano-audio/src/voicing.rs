@@ -53,14 +53,18 @@ const BRIGHTNESS_PARTIAL: f32 = 8.0;
 
 /// The frequency-squared string loss coefficient `b₃`, in seconds, of
 /// A. Chaigne & A. Askenfelt's damping model `σ(ω) = b₁ + b₃·ω²` (JASA 95,
-/// 1994, Table I, their C4 string). Air viscosity and the wire's internal
-/// friction both grow with absolute frequency, not with partial number, so
-/// this caps how long *any* partial may ring, whatever the key: a 12 kHz
-/// partial is gone in a quarter of a second whether it is A4's 27th or
-/// C8's 3rd. Without the cap the treble's targets, anchored by partial
-/// number, let C8's partials ring at 8-20 kHz for most of a second — measured
-/// within 3 dB of the fundamental at the attack — which is heard as glass.
-const HIGH_FREQUENCY_LOSS_SECONDS: f32 = 6.25e-9;
+/// 1994). Air viscosity and the wire's internal friction both grow with
+/// absolute frequency, not with partial number, so this caps how long *any*
+/// partial may ring, whatever the key: a 12 kHz partial is gone in under a
+/// second whether it is A4's 27th or C8's 3rd. Without the cap the treble's
+/// targets, anchored by partial number, let C8's partials ring at 8-20 kHz
+/// for most of a second, which is heard as glass.
+///
+/// Chaigne & Askenfelt's own C4 figure is `6.25e-9`. Fitting the same law to
+/// the partials of a concert grand gives `0.3e-9` to `3.7e-9` from the tenor
+/// up (`docs/CALIBRATION.md`), and at their value A4's eighth partial was
+/// already being cut short; this is the measured range's upper middle.
+const HIGH_FREQUENCY_LOSS_SECONDS: f32 = 2.0e-9;
 
 /// Hammer strike position at A0, as a fraction of the loop length. The
 /// classic ~1/8, which puts the strike-position comb's notch on the 8th
@@ -678,7 +682,7 @@ fn zero_mix_for_axis(axis: f32) -> f32 {
 #[must_use]
 pub fn config_for_key(key: PianoKey, tuning: Tuning, sample_rate: SampleRate) -> StringConfig {
     let voicing = voicing_for_key(key, tuning, sample_rate);
-    let mut config = StringConfig::new(key.frequency(tuning));
+    let mut config = StringConfig::new(tuned_frequency(key, tuning));
     config.damping = voicing.damping;
     config.sustain = voicing.sustain;
     config.inharmonicity = voicing.inharmonicity;
@@ -781,6 +785,14 @@ use inharmonicity::inharmonicity_for;
 #[path = "voicing_hammer.rs"]
 mod hammer;
 pub use hammer::{DEFAULT_HAMMER_UNEVENNESS, MAX_HAMMER_UNEVENNESS, hammer_for_key};
+
+#[path = "voicing_unison.rs"]
+mod unison;
+pub use unison::unison_spread_cents_for_key;
+
+#[path = "voicing_stretch.rs"]
+mod stretch;
+pub use stretch::{stretch_cents_for_key, tuned_frequency};
 
 #[path = "voicing_level.rs"]
 mod level;

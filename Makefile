@@ -122,7 +122,7 @@ run-studio:
 			read piano_name <&3; exec 3<&-; \
 		fi 2>/dev/null; \
 		[ -n "$$piano_name" ] || piano_name="My Piano"; \
-		printf '{\n  "name": "%s",\n  "defaults": {},\n  "registers": {},\n  "groups": [],\n  "strings": [],\n  "instrument": {\n    "soundboard_modes": [],\n    "bridge": {\n      "local_coupling_gain": 0.15,\n      "global_coupling_gain": 0.08\n    }\n  }\n}\n' "$$piano_name" > "$(PIANO)"; \
+		printf '{\n  "name": "%s",\n  "defaults": {},\n  "registers": {},\n  "groups": [],\n  "strings": []\n}\n' "$$piano_name" > "$(PIANO)"; \
 		echo "$(GREEN)Wrote $(PIANO) — shape the strings live in the browser once the studio opens.$(RESET)"; \
 	fi
 	@midi_flag=""; \

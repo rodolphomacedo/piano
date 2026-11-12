@@ -133,6 +133,22 @@ pub fn flush_denormal(x: f32) -> f32 {
     if abs(x) < DENORMAL_FLOOR { 0.0 } else { x }
 }
 
+/// Bound on a signal entering a recursion: far above anything an instrument
+/// produces, far below where sums of it could overflow.
+pub const MAX_SIGNAL: f32 = 1.0e6;
+
+/// `sample` made safe to feed a recursive filter or delay network: `NaN`
+/// becomes silence and everything else is held within [`MAX_SIGNAL`], so
+/// the recursion can be neither poisoned nor overflowed.
+#[inline]
+#[must_use]
+pub fn bounded_signal(sample: f32) -> f32 {
+    if sample.is_nan() {
+        return 0.0;
+    }
+    sample.clamp(-MAX_SIGNAL, MAX_SIGNAL)
+}
+
 /// Clamps `value` into `[low, high]`, mapping `NaN` to `low`.
 ///
 /// `f32::clamp` propagates `NaN`, which then poisons a feedback loop forever.
@@ -196,6 +212,14 @@ mod tests {
         assert_eq!(clamp_or_low(-5.0, 0.0, 1.0), 0.0);
         assert_eq!(clamp_or_low(5.0, 0.0, 1.0), 1.0);
         assert_eq!(clamp_or_low(0.25, 0.0, 1.0), 0.25);
+    }
+
+    #[test]
+    fn a_bounded_signal_is_never_infinite_and_never_nan() {
+        assert_eq!(bounded_signal(f32::NAN), 0.0);
+        assert_eq!(bounded_signal(f32::INFINITY), MAX_SIGNAL);
+        assert_eq!(bounded_signal(f32::NEG_INFINITY), -MAX_SIGNAL);
+        assert_eq!(bounded_signal(0.25), 0.25);
     }
 
     #[test]

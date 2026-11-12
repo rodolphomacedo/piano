@@ -100,14 +100,10 @@ pub enum StringParameter {
     Inharmonicity,
     /// See [`piano_core::UnisonGroup::set_string_detune`].
     DetuneCents,
-    /// See [`piano_core::string::PluckedString::set_seed`].
-    Seed,
     /// See [`piano_core::string::PluckedString::set_loop_zero_mix`].
     LoopZeroMix,
     /// See [`piano_core::string::PluckedString::set_strike_position`].
     StrikePosition,
-    /// See [`piano_core::string::PluckedString::set_excitation_noise_mix`].
-    ExcitationNoiseMix,
     /// See [`piano_core::hammer::HammerConfig::contact_exponent`].
     HammerContactExponent,
     /// See [`piano_core::hammer::HammerConfig::stiffness`].
@@ -116,33 +112,22 @@ pub enum StringParameter {
     HammerMass,
     /// See [`piano_core::hammer::HammerConfig::string_impedance`].
     HammerStringImpedance,
-    /// See [`piano_core::hammer::HammerConfig::felt_bandwidth`].
-    HammerFeltBandwidth,
 }
 
 /// Every [`StringParameter`], for callers that need to walk them all —
 /// the snapshot's range table and the tests that check none was forgotten.
-pub const STRING_PARAMETERS: [StringParameter; 13] = [
+pub const STRING_PARAMETERS: [StringParameter; 10] = [
     StringParameter::Damping,
     StringParameter::Sustain,
     StringParameter::Inharmonicity,
     StringParameter::DetuneCents,
-    StringParameter::Seed,
     StringParameter::LoopZeroMix,
     StringParameter::StrikePosition,
-    StringParameter::ExcitationNoiseMix,
     StringParameter::HammerContactExponent,
     StringParameter::HammerStiffness,
     StringParameter::HammerMass,
     StringParameter::HammerStringImpedance,
-    StringParameter::HammerFeltBandwidth,
 ];
-
-/// Highest excitation seed a slider offers. `u32::MAX` would make every
-/// pixel of the slider jump millions of seeds; a seed's only job is to
-/// pick a different noise sequence, and this many distinct ones is already
-/// far more than anyone auditions by hand.
-const MAX_SEED: f64 = 65_535.0;
 
 const CONTACT_EXPONENT_RANGE: ParameterRange = ParameterRange::new(
     hammer::MIN_CONTACT_EXPONENT as f64,
@@ -169,7 +154,6 @@ impl StringParameter {
             Self::Damping | Self::Sustain => ParameterRange::new(0.0, 1.0, 0.001),
             Self::Inharmonicity => inharmonicity_range(),
             Self::DetuneCents => detune_range(),
-            Self::Seed => ParameterRange::new(0.0, MAX_SEED, 1.0),
             Self::LoopZeroMix => {
                 ParameterRange::new(0.0, f64::from(piano_core::filter::MAX_ZERO_MIX), 0.001)
             }
@@ -178,16 +162,10 @@ impl StringParameter {
                 f64::from(piano_core::string::MAX_STRIKE_POSITION),
                 0.001,
             ),
-            Self::ExcitationNoiseMix => ParameterRange::new(0.0, 1.0, 0.01),
             Self::HammerContactExponent => CONTACT_EXPONENT_RANGE,
             Self::HammerStiffness => STIFFNESS_RANGE,
             Self::HammerMass => MASS_RANGE,
             Self::HammerStringImpedance => STRING_IMPEDANCE_RANGE,
-            Self::HammerFeltBandwidth => ParameterRange::new(
-                f64::from(hammer::MIN_FELT_BANDWIDTH),
-                f64::from(hammer::MAX_FELT_BANDWIDTH),
-                0.1,
-            ),
         }
     }
 }

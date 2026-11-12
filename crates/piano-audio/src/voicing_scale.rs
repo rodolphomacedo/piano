@@ -1,47 +1,58 @@
-//! The decay half of the scale design: how long each key's fundamental, mid
-//! partial and bright partial ring, as a table of anchor keys rather than a
-//! curve drawn through three points (issue #88).
+//! The decay half of the scale design: how fast each key's fundamental, mid
+//! partial and bright partial die away, as a table of anchor keys rather
+//! than a curve drawn through three points (issue #88).
 //!
 //! A piano does not change smoothly from bass to treble. Its scale has
-//! breaks where the construction itself changes, and a three-anchor curve
-//! smooths every one of them away, leaving a keyboard that sounds like one
+//! breaks where the construction itself changes, and a smooth curve blends
+//! every one of them away, leaving a keyboard that sounds like one
 //! instrument stretched across 88 notes. Each break is written here as two
 //! anchors on *adjacent* keys, so interpolation runs up to the last key on
 //! one side and starts again from the first key on the other: the step is
 //! represented as a step, not blended across an octave.
 //!
-//! # The breaks
+//! # What an anchor's rate means
 //!
-//! - **Wound to plain wire.** Below the break every string is a steel core
-//!   wrapped in copper; above it, bare steel. The winding rubs against its
-//!   core as the string bends, a friction loss that grows with frequency,
-//!   so a wound string's upper partials die sooner than a plain string's at
-//!   the same pitch: the last wound note is darker, and the first plain
-//!   note brighter, than a curve through both would make them. That is the
-//!   audible "break" tuners and technicians talk about. The split sits at
-//!   this model's bichord-to-trichord boundary (D3 | D♯3), where many grand
-//!   scales also change wire; the size of the step — 15 % on the bright
-//!   partial, 5 % on the mid one, the fundamental continuous — is this
-//!   project's own reasoned choice, not a measured figure, the way
-//!   `piano_core::unison` labels its boundaries.
-//! - **Monochord, bichord, trichord.** Not in this table: the number of
-//!   strings per key already changes abruptly
-//!   ([`super::unison_count_for_key`]), and a coupled unison's two-stage
-//!   decay follows from the strings themselves.
+//! Each rate is how fast the note's **prompt sound** falls, in decibels per
+//! second: the motion in which all of a key's strings push the bridge
+//! together (G. Weinreich, "Coupled piano strings", JASA 62(6), 1977). The
+//! slower aftersound that follows is not in this table; it comes out of the
+//! unison itself (`piano_core::unison`). The rest of the voicing works in
+//! seconds to [`piano_core::string::SILENCE_THRESHOLD`], so an anchor is
+//! stored as that: [`DECAY_SPAN_DB`] divided by its rate.
 //!
-//! # The decay law between anchors
+//! # Where the rates come from
 //!
-//! A real string does not lose every partial at the same rate: air damping
-//! and the wire's internal friction both grow with frequency, so partial `n`
-//! dies roughly `n` times faster than the fundamental (Fletcher & Rossing,
-//! *The Physics of Musical Instruments*, the piano-string damping section).
-//! The anchors follow that `1/n` law loosely, flattened across the low
-//! partials where measured pianos hold their first few closer together
-//! than `1/n` predicts: at A0, `35 / 18 / 6 s` is a `1 : 1.9 : 5.8` spread
-//! against `1/n`'s `1 : 3 : 8`. The fundamentals are the middle of
-//! `docs/PHYSICS.md`'s "Typical decay" row at each end and at A4; the
-//! partial anchors are this project's own, first solved against in
-//! `docs/TIMBRE-PLAN.md`'s D2 table.
+//! They are calibrated against a concert grand, by resolving each partial
+//! of its notes into exponentially decaying modes and reading the dominant
+//! one (`docs/CALIBRATION.md`; only the derived rates are kept here). What
+//! that shows, and what the table follows:
+//!
+//! - **Through the middle of the keyboard every partial falls about as fast
+//!   as the fundamental**, 15-25 dB/s for the first dozen. The loss is the
+//!   bridge's, and the bridge takes all partials alike. An earlier table
+//!   let the fundamental ring four times longer than this and killed the
+//!   eighth partial seven times faster than it, which is a plucked string,
+//!   not a struck one: a tone that goes dull while it is still loud.
+//! - **The bass rings long at every partial**: a few dB/s for the first
+//!   twenty, where the earlier table lost them at 40-90 dB/s. Individual
+//!   bass partials differ widely, by whether a soundboard mode sits under
+//!   them; that part is `piano_core::bridge_load`'s, on top of this table.
+//! - **The treble dies in well under a second**, 80-170 dB/s at the top.
+//!
+//! # The break
+//!
+//! **Two wound strings to three plain ones** (D3 | D♯3). Three strings
+//! load the bridge harder than two, and in the measurement the upper
+//! partials fall about a fifth faster on the three-string side of the break
+//! while the fundamental carries straight across. That is the opposite of
+//! the "wound strings are darker" step an earlier table guessed at.
+//!
+//! The monochord-to-bichord boundary ([`super::unison_count_for_key`])
+//! shows no such step in the measured rates, so the table has none there.
+//!
+//! Between anchors a key's three targets are interpolated in log frequency,
+//! and partials between and above the three are placed by
+//! `voicing::DecayTargets`.
 
 use piano_core::math;
 use piano_params::Tuning;
@@ -78,53 +89,76 @@ impl ScaleAnchor {
     }
 }
 
+/// How far [`piano_core::string::SILENCE_THRESHOLD`] is below a struck
+/// note, in decibels: what an anchor's "seconds" are seconds *to*.
+const DECAY_SPAN_DB: f32 = 80.0;
+
+/// The anchor at `midi` whose fundamental, mid partial and bright partial
+/// fall at `db_per_second`.
+const fn falling(midi: u8, db_per_second: [f32; 3]) -> ScaleAnchor {
+    ScaleAnchor {
+        midi,
+        fundamental_seconds: DECAY_SPAN_DB / db_per_second[0],
+        mid_partial_seconds: DECAY_SPAN_DB / db_per_second[1],
+        brightness_seconds: DECAY_SPAN_DB / db_per_second[2],
+    }
+}
+
 /// A0, the lowest and longest-ringing string.
-pub(super) const A0_ANCHOR: ScaleAnchor = ScaleAnchor {
-    midi: 21,
-    fundamental_seconds: 35.0,
-    mid_partial_seconds: 18.0,
-    brightness_seconds: 6.0,
-};
+pub(super) const A0_ANCHOR: ScaleAnchor = falling(21, [3.0, 3.3, 5.0]);
 
-/// D3, the last wound string: its upper partials a step darker than the
-/// curve from A0 to A4 would give it — see the module docs.
-pub(super) const LAST_WOUND_ANCHOR: ScaleAnchor = ScaleAnchor {
-    midi: 50,
-    fundamental_seconds: 20.5,
-    mid_partial_seconds: 9.6,
-    brightness_seconds: 2.8,
-};
+/// A1.
+pub(super) const A1_ANCHOR: ScaleAnchor = falling(33, [3.5, 3.8, 5.5]);
 
-/// D♯3, the first plain string: a step brighter than the same curve.
-pub(super) const FIRST_PLAIN_ANCHOR: ScaleAnchor = ScaleAnchor {
-    midi: 51,
-    fundamental_seconds: 20.0,
-    mid_partial_seconds: 10.4,
-    brightness_seconds: 3.7,
-};
+/// E2, where the fundamental has climbed into the soundboard's own modes
+/// and `piano_core::bridge_load` starts taking its share on top of this.
+pub(super) const E2_ANCHOR: ScaleAnchor = falling(40, [6.0, 6.3, 7.5]);
+
+/// A2.
+pub(super) const A2_ANCHOR: ScaleAnchor = falling(45, [7.5, 7.8, 9.0]);
+
+/// D3, the last wound, two-string key.
+pub(super) const LAST_WOUND_ANCHOR: ScaleAnchor = falling(50, [11.0, 11.4, 12.8]);
+
+/// D♯3, the first of the three-string keys: its upper partials a step
+/// shorter-lived than its two-string neighbour's.
+pub(super) const FIRST_PLAIN_ANCHOR: ScaleAnchor = falling(51, [11.0, 11.6, 15.5]);
+
+/// A3.
+pub(super) const A3_ANCHOR: ScaleAnchor = falling(57, [13.5, 14.5, 19.0]);
 
 /// A4.
-pub(super) const A4_ANCHOR: ScaleAnchor = ScaleAnchor {
-    midi: 69,
-    fundamental_seconds: 11.0,
-    mid_partial_seconds: 5.0,
-    brightness_seconds: 1.5,
-};
+pub(super) const A4_ANCHOR: ScaleAnchor = falling(69, [17.0, 18.0, 21.0]);
+
+/// E5.
+pub(super) const E5_ANCHOR: ScaleAnchor = falling(76, [26.0, 28.0, 40.0]);
+
+/// C6.
+pub(super) const C6_ANCHOR: ScaleAnchor = falling(84, [40.0, 42.0, 64.0]);
+
+/// G6.
+pub(super) const G6_ANCHOR: ScaleAnchor = falling(91, [42.0, 50.0, 100.0]);
+
+/// C7.
+pub(super) const C7_ANCHOR: ScaleAnchor = falling(96, [80.0, 100.0, 200.0]);
 
 /// C8, the shortest string.
-pub(super) const C8_ANCHOR: ScaleAnchor = ScaleAnchor {
-    midi: 108,
-    fundamental_seconds: 1.5,
-    mid_partial_seconds: 0.8,
-    brightness_seconds: 0.3,
-};
+pub(super) const C8_ANCHOR: ScaleAnchor = falling(108, [130.0, 180.0, 400.0]);
 
 /// The scale, bass to treble. Two anchors on adjacent keys are a break.
-pub(super) const SCALE_ANCHORS: [ScaleAnchor; 5] = [
+pub(super) const SCALE_ANCHORS: [ScaleAnchor; 13] = [
     A0_ANCHOR,
+    A1_ANCHOR,
+    E2_ANCHOR,
+    A2_ANCHOR,
     LAST_WOUND_ANCHOR,
     FIRST_PLAIN_ANCHOR,
+    A3_ANCHOR,
     A4_ANCHOR,
+    E5_ANCHOR,
+    C6_ANCHOR,
+    G6_ANCHOR,
+    C7_ANCHOR,
     C8_ANCHOR,
 ];
 
@@ -153,7 +187,7 @@ fn segment_around(frequency: f32, tuning: Tuning) -> (ScaleAnchor, ScaleAnchor) 
         .iter()
         .zip(SCALE_ANCHORS.iter().skip(1))
         .find(|(_, high)| frequency <= anchor_hz(high.midi, tuning))
-        .map_or((A4_ANCHOR, C8_ANCHOR), |(low, high)| (*low, *high))
+        .map_or((C7_ANCHOR, C8_ANCHOR), |(low, high)| (*low, *high))
 }
 
 /// The fundamental's target at `frequency`: the scale table, times a
@@ -231,16 +265,16 @@ mod tests {
     }
 
     #[test]
-    fn the_wound_to_plain_break_is_a_step_not_a_slope() {
+    fn the_two_to_three_string_break_is_a_step_not_a_slope() {
         let step = |midi: u8| {
             seconds_at(midi + 1, DecayCurve::Brightness) / seconds_at(midi, DecayCurve::Brightness)
         };
         let across_break = step(LAST_WOUND_ANCHOR.midi);
-        assert!(across_break > 1.25, "{across_break}");
+        assert!(across_break < 0.85, "{across_break}");
         for midi in [40, 48, 55, 60] {
             assert!(
-                step(midi) < 1.0,
-                "MIDI {midi} brightens going up: {}",
+                (0.9..1.0).contains(&step(midi)),
+                "MIDI {midi} steps by {}",
                 step(midi)
             );
         }
@@ -254,10 +288,10 @@ mod tests {
     }
 
     #[test]
-    fn every_anchor_rings_its_partials_out_in_order() {
+    fn no_anchor_lets_an_upper_partial_outlast_a_lower_one() {
         for anchor in SCALE_ANCHORS {
             assert!(
-                anchor.fundamental_seconds > anchor.mid_partial_seconds,
+                anchor.fundamental_seconds >= anchor.mid_partial_seconds,
                 "{anchor:?}"
             );
             assert!(
@@ -265,6 +299,13 @@ mod tests {
                 "{anchor:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_table_runs_from_the_lowest_key_to_the_highest_in_order() {
+        assert_eq!(SCALE_ANCHORS.first().map(|anchor| anchor.midi), Some(21));
+        assert_eq!(SCALE_ANCHORS.last().map(|anchor| anchor.midi), Some(108));
+        assert!(SCALE_ANCHORS.is_sorted_by(|low, high| low.midi < high.midi));
     }
 
     proptest! {

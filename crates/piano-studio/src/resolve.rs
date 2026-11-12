@@ -4,7 +4,7 @@
 
 use piano_audio::voicing::{
     DUPLEX_GAIN, PHANTOM_GAIN_IN_BASS, RegisterAnchorOverride, RegisterOverrides,
-    unison_count_for_key, voicing_for_key_with_registers,
+    unison_count_for_key, unison_spread_cents_for_key, voicing_for_key_with_registers,
 };
 use piano_core::SampleRate;
 use piano_core::action::DEFAULT_THUMP_GAIN;
@@ -16,15 +16,12 @@ use piano_core::room::{
 };
 use piano_core::soundboard::{DEFAULT_MODE_BRIDGE_COUPLING, SoundboardMode};
 use piano_core::string::{
-    DEFAULT_DAMPER_STRENGTH, DEFAULT_DAMPING, DEFAULT_EXCITATION_NOISE_MIX, DEFAULT_LOOP_ZERO_MIX,
-    DEFAULT_STRIKE_POSITION, DEFAULT_SUSTAIN,
+    DEFAULT_DAMPER_STRENGTH, DEFAULT_DAMPING, DEFAULT_LOOP_ZERO_MIX, DEFAULT_STRIKE_POSITION,
+    DEFAULT_SUSTAIN,
 };
 use piano_params::{HIGHEST_PIANO_KEY, LOWEST_PIANO_KEY, PianoKey, Tuning};
 
 use crate::format::{HammerOverrides, ParameterOverrides, PianoFile, RegisterAnchor, Registers};
-
-/// Default excitation seed a string resolves to when nothing overrides it.
-const DEFAULT_SEED: u32 = 0;
 
 // Imported, not mirrored: a duplicated copy kept `0.15` here after the
 // core default moved to `0.75` with a new meaning (issue #96), which would
@@ -52,14 +49,10 @@ pub struct ResolvedString {
     pub inharmonicity: f32,
     /// See [`piano_core::UnisonGroup::set_string_detune`].
     pub detune_cents: f32,
-    /// See [`piano_core::string::PluckedString::set_seed`].
-    pub seed: u32,
     /// See [`piano_core::string::PluckedString::set_loop_zero_mix`].
     pub loop_zero_mix: f32,
     /// See [`piano_core::string::PluckedString::set_strike_position`].
     pub strike_position: f32,
-    /// See [`piano_core::string::PluckedString::set_excitation_noise_mix`].
-    pub excitation_noise_mix: f32,
     /// See [`piano_core::string::PluckedString::set_hammer`].
     pub hammer: HammerConfig,
 }
@@ -113,7 +106,7 @@ pub struct ResolvedPiano {
 }
 
 /// A cascade tier's contribution, applied over whatever came before it —
-/// `f32`/`u32`/[`HammerConfig`] rather than [`ParameterOverrides`]'s
+/// `f32`/[`HammerConfig`] rather than [`ParameterOverrides`]'s
 /// `Option`s, since by the time this exists every field already has a
 /// concrete value from a less specific tier.
 #[derive(Debug, Clone, Copy)]
@@ -122,10 +115,8 @@ struct Resolved {
     sustain: f32,
     inharmonicity: f32,
     detune_cents: f32,
-    seed: u32,
     loop_zero_mix: f32,
     strike_position: f32,
-    excitation_noise_mix: f32,
     hammer: HammerConfig,
 }
 
@@ -274,15 +265,14 @@ fn resolve_string(
         // retunes absolutely, so starting from zero would push a perfectly
         // in-tune unison over it at load and silence its beating.
         detune_cents: file.defaults.detune_cents.unwrap_or_else(|| {
-            piano_core::unison::detune_cents(unison_count_for_key(key), usize::from(string_index))
+            piano_core::unison::detune_cents(
+                unison_count_for_key(key),
+                usize::from(string_index),
+                unison_spread_cents_for_key(key, tuning),
+            )
         }),
-        seed: file.defaults.seed.unwrap_or(DEFAULT_SEED),
         loop_zero_mix: DEFAULT_LOOP_ZERO_MIX,
         strike_position: DEFAULT_STRIKE_POSITION,
-        excitation_noise_mix: file
-            .defaults
-            .excitation_noise_mix
-            .unwrap_or(DEFAULT_EXCITATION_NOISE_MIX),
         hammer: DEFAULT_HAMMER,
     };
 
@@ -333,10 +323,8 @@ fn resolve_string(
         sustain: resolved.sustain,
         inharmonicity: resolved.inharmonicity,
         detune_cents: resolved.detune_cents,
-        seed: resolved.seed,
         loop_zero_mix: resolved.loop_zero_mix,
         strike_position: resolved.strike_position,
-        excitation_noise_mix: resolved.excitation_noise_mix,
         hammer: resolved.hammer,
     }
 }
@@ -356,23 +344,17 @@ fn apply_overrides(resolved: &mut Resolved, overrides: &ParameterOverrides) {
     if let Some(detune_cents) = overrides.detune_cents {
         resolved.detune_cents = detune_cents;
     }
-    if let Some(seed) = overrides.seed {
-        resolved.seed = seed;
-    }
     apply_excitation_overrides(resolved, overrides);
     resolved.hammer = resolve_hammer(resolved.hammer, &overrides.hammer);
 }
 
-/// The loss-zero and excitation half of [`apply_overrides`].
+/// The loss-zero and strike-point half of [`apply_overrides`].
 fn apply_excitation_overrides(resolved: &mut Resolved, overrides: &ParameterOverrides) {
     if let Some(zero_mix) = overrides.loop_zero_mix {
         resolved.loop_zero_mix = zero_mix;
     }
     if let Some(position) = overrides.strike_position {
         resolved.strike_position = position;
-    }
-    if let Some(mix) = overrides.excitation_noise_mix {
-        resolved.excitation_noise_mix = mix;
     }
 }
 
@@ -383,7 +365,6 @@ fn resolve_hammer(base: HammerConfig, overrides: &HammerOverrides) -> HammerConf
         stiffness: overrides.stiffness.unwrap_or(base.stiffness),
         mass: overrides.mass.unwrap_or(base.mass),
         string_impedance: overrides.string_impedance.unwrap_or(base.string_impedance),
-        felt_bandwidth: overrides.felt_bandwidth.unwrap_or(base.felt_bandwidth),
     }
 }
 
@@ -573,8 +554,10 @@ mod tests {
         let spread: Vec<f32> = (0..3)
             .map(|index| find(&piano, a4, index).detune_cents)
             .collect();
+        let key = PianoKey::from_midi(a4).expect("A4 is a real key");
+        let cents = unison_spread_cents_for_key(key, Tuning::default());
         let expected: Vec<f32> = (0..3)
-            .map(|index| piano_core::unison::detune_cents(3, index))
+            .map(|index| piano_core::unison::detune_cents(3, index, cents))
             .collect();
         assert_eq!(spread, expected);
         assert!(spread.iter().any(|cents| *cents != 0.0), "{spread:?}");
@@ -614,16 +597,15 @@ mod tests {
     }
 
     #[test]
-    fn string_impedance_defaults_to_the_uncoupled_ceiling_when_absent() {
+    fn string_impedance_is_the_keys_own_when_the_file_sets_none() {
         let file = PianoFile::default();
         let resolved = resolve(&file, Tuning::default(), sample_rate());
-        let string = resolved
+        let lowest = resolved
             .strings
             .first()
             .expect("piano has at least one string");
-        assert_eq!(
-            string.hammer.string_impedance,
-            piano_core::hammer::DEFAULT_HAMMER.string_impedance
-        );
+        let own = piano_core::hammer::hammer_for_frequency(27.5).string_impedance;
+        assert_eq!(lowest.hammer.string_impedance, own);
+        assert!(own > 2.0 * piano_core::hammer::DEFAULT_HAMMER.string_impedance);
     }
 }

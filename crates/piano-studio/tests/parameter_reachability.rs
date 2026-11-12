@@ -35,22 +35,18 @@ fn string_config_reach() -> Vec<Reach> {
         damping: _,
         sustain: _,
         inharmonicity: _,
-        seed: _,
         hammer: _,
         loop_zero_mix: _,
         strike_position: _,
-        excitation_noise_mix: _,
     } = StringConfig::new(Hz::new(440.0).expect("440 Hz is valid"));
     vec![
         Reach::Derived("frequency: the key and the tuning set it; detune_cents moves it"),
         Reach::String(StringParameter::Damping),
         Reach::String(StringParameter::Sustain),
         Reach::String(StringParameter::Inharmonicity),
-        Reach::String(StringParameter::Seed),
         Reach::Derived("hammer: reached field by field, see hammer_reach"),
         Reach::String(StringParameter::LoopZeroMix),
         Reach::String(StringParameter::StrikePosition),
-        Reach::String(StringParameter::ExcitationNoiseMix),
     ]
 }
 
@@ -60,14 +56,12 @@ fn hammer_reach() -> Vec<Reach> {
         stiffness: _,
         mass: _,
         string_impedance: _,
-        felt_bandwidth: _,
     } = DEFAULT_HAMMER;
     vec![
         Reach::String(StringParameter::HammerContactExponent),
         Reach::String(StringParameter::HammerStiffness),
         Reach::String(StringParameter::HammerMass),
         Reach::String(StringParameter::HammerStringImpedance),
-        Reach::String(StringParameter::HammerFeltBandwidth),
     ]
 }
 

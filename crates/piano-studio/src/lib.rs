@@ -102,6 +102,13 @@ mod tests {
         piano_core::SampleRate::new(48_000.0).expect("48 kHz is valid")
     }
 
+    /// Where the engine itself leaves string `string_index` of A4's unison.
+    fn a4_string_detune_cents(string_index: usize) -> f32 {
+        let a4 = piano_params::PianoKey::from_midi(69).expect("A4 is a real key");
+        let spread = piano_audio::voicing::unison_spread_cents_for_key(a4, Tuning::default());
+        piano_core::unison::detune_cents(3, string_index, spread)
+    }
+
     fn find(piano: &ResolvedPiano, midi: u8, string_index: u8) -> &ResolvedString {
         piano
             .strings
@@ -127,10 +134,7 @@ mod tests {
         );
         assert_eq!(a4_string0.damping, expected.damping);
         assert_eq!(a4_string0.hammer, expected.hammer);
-        assert_eq!(
-            a4_string0.detune_cents,
-            piano_core::unison::detune_cents(3, 0)
-        );
+        assert_eq!(a4_string0.detune_cents, a4_string_detune_cents(0));
     }
 
     #[test]
@@ -141,7 +145,7 @@ mod tests {
             string_index: 1,
             overrides: ParameterOverrides {
                 detune_cents: Some(3.0),
-                seed: Some(12_345),
+                strike_position: Some(0.2),
                 ..ParameterOverrides::default()
             },
         });
@@ -149,13 +153,13 @@ mod tests {
         let piano = resolve(&file, Tuning::default(), sample_rate());
         let overridden = find(&piano, 69, 1);
         assert_eq!(overridden.detune_cents, 3.0);
-        assert_eq!(overridden.seed, 12_345);
+        assert_eq!(overridden.strike_position, 0.2);
 
         // A sibling string on the same key, not named in `strings`, still
         // falls through to the register baseline untouched.
         let sibling = find(&piano, 69, 0);
-        assert_eq!(sibling.detune_cents, piano_core::unison::detune_cents(3, 0));
-        assert_eq!(sibling.seed, 0);
+        assert_eq!(sibling.detune_cents, a4_string_detune_cents(0));
+        assert_ne!(sibling.strike_position, 0.2);
     }
 
     #[test]
@@ -222,7 +226,7 @@ mod tests {
     fn defaults_only_take_effect_for_fields_the_register_tier_does_not_provide() {
         let mut file = PianoFile::default();
         file.defaults.damping = Some(0.99); // overridden by the register tier
-        file.defaults.seed = Some(999); // not touched by the register tier
+        file.defaults.strike_position = Some(0.2); // not touched by the register tier
 
         let piano = resolve(&file, Tuning::default(), sample_rate());
         let string = find(&piano, 69, 0);
@@ -231,7 +235,7 @@ mod tests {
             "register tier should win over defaults"
         );
         assert_eq!(
-            string.seed, 999,
+            string.strike_position, 0.2,
             "defaults should apply where nothing else does"
         );
     }
@@ -315,7 +319,7 @@ mod tests {
                 }
             ],
             "strings": [
-                { "midi": 69, "string_index": 1, "detune_cents": 3.0, "seed": 12345 }
+                { "midi": 69, "string_index": 1, "detune_cents": 3.0 }
             ],
             "instrument": {
                 "soundboard_modes": [

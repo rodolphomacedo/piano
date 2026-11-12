@@ -3,12 +3,5 @@
   "defaults": {},
   "registers": {},
   "groups": [],
-  "strings": [],
-  "instrument": {
-    "soundboard_modes": [],
-    "bridge": {
-      "local_coupling_gain": 0.75,
-      "global_coupling_gain": 0.08
-    }
-  }
+  "strings": []
 }

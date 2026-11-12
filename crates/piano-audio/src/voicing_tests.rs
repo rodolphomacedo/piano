@@ -55,26 +55,28 @@ fn every_key_gets_a_finite_in_range_voicing() {
     }
 }
 
-/// The regression test for the defect this module's three-target solve
-/// closes, and the check that would have caught it originally: with the
-/// loop filter tuned against the fundamental alone, A0's 8th partial
-/// decayed only `1.18x` faster than its fundamental — partials dying
-/// together, which is what an organ or a struck bar sounds like, and the
-/// reported "metallic". The bands are wide on purpose: they guard against
-/// the ratio collapsing back toward 1 (or running away past the `1/n`
-/// law), rather than restating the anchors, which `docs/PHYSICS.md`
-/// records and `docs/TIMBRE-PLAN.md` explains.
+/// The loop filter must realise the spread the scale table asks for
+/// between a key's fundamental and its bright partial, in both directions.
+///
+/// With the filter tuned against the fundamental alone, the spread was an
+/// accident of the filter's shape. A first table then forced the bright
+/// partial to die five to seven times faster than the fundamental, on the
+/// reasoning that a string loses partial `n` about `n` times faster. The
+/// measured concert grand does not (`voicing::scale`, `docs/CALIBRATION.md`):
+/// through the bass and middle its first dozen partials fall within a
+/// factor of two of the fundamental's rate, because the bridge takes them
+/// all alike, and only the top octaves spread wide. The bands hold the
+/// solve to that: never an upper partial outlasting the fundamental, never
+/// the plucked-string spread back.
 ///
 /// C8's 8th partial sits at 33 kHz, so [`solved_partials`] fits its 5.2nd
-/// instead and the ratio is measured against that one. At 21.6 kHz it is
-/// [`HIGH_FREQUENCY_LOSS_SECONDS`]' ceiling, not the anchors, that sets its
-/// target (about 0.08 s), so C8's band sits higher than the others.
+/// instead and the ratio is measured against that one.
 #[test]
-fn upper_partials_decay_several_times_faster_than_the_fundamental() {
+fn the_bright_partial_decays_as_much_faster_as_the_scale_asks() {
     for (name, midi, brightness_partial, band) in [
-        ("A0", LOWEST_PIANO_KEY, BRIGHTNESS_PARTIAL, 4.0..9.0),
-        ("A4", CONCERT_A_KEY, BRIGHTNESS_PARTIAL, 4.0..9.0),
-        ("C8", HIGHEST_PIANO_KEY, 5.16, 6.0..25.0),
+        ("A0", LOWEST_PIANO_KEY, BRIGHTNESS_PARTIAL, 1.2..2.5),
+        ("A4", CONCERT_A_KEY, BRIGHTNESS_PARTIAL, 1.05..2.0),
+        ("C8", HIGHEST_PIANO_KEY, 5.16, 1.5..6.0),
     ] {
         let fundamental = achieved_decay_seconds(midi, 1.0);
         let bright = achieved_decay_seconds(midi, brightness_partial);
@@ -390,8 +392,9 @@ fn overriding_an_inharmonicity_anchor_lands_there_and_leaves_the_others_alone() 
 
 /// With no overrides the curve is the two-asymptote default: highest at
 /// the top, a minimum in the low tenor below both ends' neighbours, and A4
-/// within the physical range — not the forty-times-too-stiff straight line
-/// issue #96 replaced.
+/// and C8 where the reference instrument's were measured (`6.6e-4` and
+/// `2.2e-2`, `docs/CALIBRATION.md`) — not the forty-times-too-stiff
+/// straight line issue #96 replaced.
 #[test]
 fn the_default_inharmonicity_curve_has_a_tenor_minimum_and_a_physical_a4() {
     let tuning = Tuning::default();
@@ -402,7 +405,7 @@ fn the_default_inharmonicity_curve_has_a_tenor_minimum_and_a_physical_a4() {
         "no tenor minimum"
     );
     assert!((3e-4..=8e-4).contains(&b(69)), "A4 B = {}", b(69));
-    assert!((1e-2..=2e-2).contains(&b(108)), "C8 B = {}", b(108));
+    assert!((1.5e-2..=3e-2).contains(&b(108)), "C8 B = {}", b(108));
 }
 
 /// The regression test for [`RegisterAnchorOverride::damping`]'s scope
@@ -560,23 +563,23 @@ fn report_the_solved_voicing_at_each_anchor() {
     }
 }
 
-/// The scale's wound-to-plain break must survive the loop-filter solve: the
-/// first plain string's bright partial rings longer than the last wound
-/// string's, while every neighbouring pair on either side shortens going up
-/// (issue #88).
+/// The scale's two-to-three-string break must survive the loop-filter
+/// solve: the first three-string key's bright partial dies sooner than the
+/// last two-string key's, by more than any neighbouring pair of keys on
+/// either side shortens going up (issue #88, `voicing::scale`).
 #[test]
-fn the_solved_strings_keep_the_wound_to_plain_break() {
+fn the_solved_strings_keep_the_two_to_three_string_break() {
     let bright = |midi: u8| achieved_decay_seconds(midi, BRIGHTNESS_PARTIAL);
     let last_wound = scale::LAST_WOUND_ANCHOR.midi;
     let across = bright(last_wound + 1) / bright(last_wound);
     assert!(
-        across > 1.1,
+        across < 0.9,
         "the break only moved the bright partial by {across}"
     );
     for midi in [last_wound - 2, last_wound + 2] {
         let step = bright(midi + 1) / bright(midi);
         assert!(
-            step < across,
+            step > across,
             "MIDI {midi} steps by {step}, the break by {across}"
         );
     }

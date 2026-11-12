@@ -42,9 +42,9 @@ const HARD_THUMP_SECONDS: f32 = 0.0015;
 /// present as a knock, never competing with the tone (see `piano-audio`'s
 /// `action_noise` test). The board's modes pass only a little of a pulse
 /// this short, which is why the force itself is large.
-pub const DEFAULT_THUMP_GAIN: f32 = 0.8;
+pub const DEFAULT_THUMP_GAIN: f32 = 0.23;
 
-/// Largest thump level [`ActionNoise::set_gain`] accepts — about 20 dB over
+/// Largest thump level [`ActionNoise::set_gain`] accepts — about 30 dB over
 /// the default, for a deliberately clattery action.
 pub const MAX_THUMP_GAIN: f32 = 8.0;
 

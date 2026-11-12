@@ -41,8 +41,10 @@ fn the_keybed_knocks_under_the_tone_and_harder_with_velocity() {
         hard_knock > soft_knock + 10.0,
         "{soft_knock:.1} -> {hard_knock:.1} dB"
     );
+    // Within 7 dB of the 25 dB `DEFAULT_THUMP_GAIN` is set for: a knock
+    // 14 dB under the note passed a looser gate and was heard as a thud.
     assert!(
-        (hard_note - 35.0..hard_note - 12.0).contains(&hard_knock),
+        (hard_note - 32.0..hard_note - 18.0).contains(&hard_knock),
         "knock {hard_knock:.1} dB against note {hard_note:.1} dB"
     );
 }

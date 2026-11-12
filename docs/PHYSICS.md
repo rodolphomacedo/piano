@@ -68,97 +68,60 @@ the next section is about: the calibration described here scaled them down
 together against a single constraint at the fundamental, and that was the
 wrong constraint.
 
-**What this alone did not fix, and what closed the rest of it.** A real,
-hammer-plucked note still fell well short of the full target even after
-this correction — a *different*, pre-existing limitation, not a flaw in
-this calibration: `PluckedString::pluck` only ever wrote one loop length of
-the hammer's contact force, truncating the rest for any string whose period
-is shorter than the felt's contact duration (see "What the current model
-still does not do", below, for the numbers). `PluckedString`'s
-`PendingContact` closes most of that: it keeps injecting the already-computed
-remainder of the contact force sample by sample, on top of the loop's own
-feedback, for as many extra round trips as the physical contact actually
-lasts. C8 (dozens of extra round trips available, its period being so much
-shorter than the contact duration) now measures close to its 1-2 s target;
-A4 (only one or two extra round trips available) improves but still falls
-short, for the residual reason described below.
+The hammer this was first measured with has since been replaced (see "Why
+the hammer is solved against the string", below); the correction to the
+filter stands on its own.
 
 ### Why the loop is solved against three decay times, not one
 
-Everything above tunes the loop filter so that the **fundamental** rings for
-the right length of time. That is one equation. The filter has two free
-coefficients, and a third quantity — `sustain`, the frequency-independent
-per-round-trip gain — also feeds the same loop. Two unknowns spent on one
-equation means the filter's *slope* is whatever falls out, and the slope is
-what sets every upper partial's decay. Nobody had specified how fast the 8th
-partial should die, so nothing did.
+Tuning the loop so that the **fundamental** rings for the right time is one
+equation. The filter has two free coefficients, and a third quantity —
+`sustain`, the frequency-independent gain per round trip — feeds the same
+loop. Two unknowns spent on one equation leave the filter's *slope* to
+chance, and the slope is what sets every upper partial's decay.
 
-Measured, seconds for each partial to fall 20 dB from its own peak
-(`cargo test -p piano-analysis --test timbre_diagnostic -- --nocapture`):
+`piano_audio::voicing::solve_loop_losses` gives each key three decay
+targets — its fundamental's, a middle partial's and a bright partial's —
+and solves `pole`, `zero_mix` and `sustain` against them. `sustain` has to
+be in the solve: the loop filter's gain at DC is exactly `1` by
+construction, so it cannot attenuate a fundamental, and a solve without
+`sustain` either drags the corner down far enough to take the harmonics
+with it or leaves every fundamental ten times too long.
 
-| key | H1 | H8 | H1:H8 |
-|---|---|---|---|
-| A0, single constraint | 8.87 | 7.51 | **1.18** |
-| A0, three constraints | 8.53 | 1.54 | **5.54** |
-| A4, single constraint | 2.39 | 0.17 | 14.1 |
-| A4, three constraints | 2.56 | 0.34 | 7.5 |
+The fit is a weighted least squares, not an exact solve: near DC a pole and
+a zero both attenuate as `f²`, so the two coefficients are nearly collinear
+there. The fundamental carries double weight. At 48 kHz, from
+`report_the_solved_voicing_at_each_anchor` (seconds to fall 80 dB, achieved
+against target):
 
-A0's row is the whole point. Partials that decay together are the spectral
-signature of an organ pipe or a struck bar, not a string; a real bass
-string's 8th partial dies roughly six times sooner than its fundamental.
-Fletcher & Rossing (already cited above for inharmonicity) give the shape:
-air damping and internal friction both grow with frequency, so partial `n`
-decays roughly `n` times faster than the fundamental.
+| key | pole | zero_mix | sustain | fundamental | middle | bright |
+|---|---|---|---|---|---|---|
+| A0 | 0.80153 | 0.47529 | 0.987581 | 26.5 / 26.7 s | 24.7 / 24.4 s | 16.0 / 16.0 s |
+| A2 | 0.00001 | 0.38397 | 0.992169 | 10.6 / 10.7 s | 10.4 / 10.3 s | 8.9 / 8.9 s |
+| A4 | 0.00214 | 0.00787 | 0.995541 | 4.67 / 4.71 s | 4.55 / 4.46 s | 3.80 / 3.81 s |
+| A6 | 0.00243 | 0.00196 | 0.996759 | 1.56 / 1.54 s | 1.26 / 1.29 s | 0.59 / 0.59 s |
+| C8 | 0.00259 | 0.00012 | 0.996913 | 0.63 / 0.62 s | 0.45 / 0.48 s | 0.26 / 0.25 s |
 
-`piano_audio::voicing::solve_loop_losses` is the fix. Each key now carries
-three decay targets — its fundamental's, its 3rd partial's and its 8th's,
-interpolated across the same A0/A4/C8 register anchors as everything else —
-and three unknowns are solved against them: `pole`, `zero_mix` and
-`sustain`. Adding `sustain` to the solve is what makes it converge at all:
-the loop filter's DC gain is exactly `1` by construction, so it *cannot*
-attenuate a fundamental. The old calibration therefore drove `sustain`
-toward `1.0` and asked the filter to carry the entire loss, which forced its
-corner down far enough to take the harmonics with it. Solving the filter
-alone against per-partial targets has the mirror failure: every fundamental
-comes out roughly ten times too long.
+The middle partial is the 2.8th and the bright one the 8th, except at C8,
+whose 8th would sit at 33 kHz: there they are the 2.3rd and the 5.2nd, the
+highest that stays under Nyquist.
 
-The fit is a weighted least squares, not an exact solve, and honestly so:
-near DC both a pole and a zero attenuate as `f²`, so the two coefficients
-are nearly collinear there and three targets cannot all be met. The
-fundamental carries double weight. What it achieves at 48 kHz, from
-`piano_audio::voicing`'s own `report_the_solved_voicing_at_each_anchor`:
+**Where the targets come from.** They were first drawn from the rule of
+thumb that partial `n` dies about `n` times faster than the fundamental,
+and measured against a concert grand that was wrong where it matters most.
+Resolved into decaying modes, the grand's partials through the middle of
+the keyboard all fall about as fast as the fundamental, 15-25 dB/s for the
+first dozen: the loss is the bridge's, and the bridge takes every partial
+alike. The earlier table kept the fundamental four times longer than that
+and killed the eighth partial seven times faster — a tone that goes dull
+while it is still loud, which is a plucked string. The bass rings long at
+every partial, a few dB/s for the first twenty, and the top dies in well
+under a second. The rates are `voicing_scale.rs`'s anchors; only the
+derived numbers are kept (`docs/CALIBRATION.md`).
 
-| key | pole | zero_mix | sustain | H1 | H3 | H8 | targets |
-|---|---|---|---|---|---|---|---|
-| A0 | 0.91452 | 0.44818 | 0.990982 | 33.9 s | 21.6 s | 5.7 s | 35 / 18.7 / 6 s |
-| A2 | 0.57075 | 0.00232 | 0.996567 | 22.3 s | 14.0 s | 3.6 s | 23 / 11.9 / 3.8 s |
-| A4 | 0.03233 | 0.09967 | 0.998244 | 10.7 s | 6.2 s | 1.4 s | 11 / 5.2 / 1.5 s |
-| A6 | 0.00100 | 0.00392 | 0.999097 | 5.1 s | 2.7 s | 0.7 s | 5.2 / 2.5 / 0.8 s |
-| C8 | 0.00178 | 0.00000 | 0.998803 | 1.5 s | 0.9 s | 0.5 s | 1.5 / 0.9 / 0.5 s |
-
-C8's last column is its 5.2nd partial, not its 8th: at 4186 Hz the 8th
-partial would sit at 33 kHz, so `solved_partials` fits the highest one that
-stays under Nyquist and reads its target off the same continuous curve.
-
-The per-partial targets themselves (`35 / 18 / 6 s` at A0, `11 / 5 / 1.5 s`
-at A4, `1.5 / 0.8 / 0.3 s` at C8) are literature-*shaped* but not measured:
-they follow the `1/n` law loosely, flattened across the low partials where
-real pianos hold their first few closer together than `1/n` predicts. They
-are this project's own reasoned anchors, and re-tuning them by ear against a
-working excitation is deliberately left as its own step
-(`docs/TIMBRE-PLAN.md`, F6).
-
-**What this does not fix.** The solved numbers above are the loop's
-analytic behaviour, and the rendered per-partial decays match them closely
-once the two measurement scales are reconciled — the diagnostic's 20 dB drop
-is a quarter of the 80 dB the solve targets, so A0's analytic 33.9 s
-corresponds to a measured 8.5 s, and it measures 8.53 s. What the solve
-cannot do is put energy into partials the excitation never excited: A4's
-attack still shows H2 at −57 dB and H3 at −76 dB relative to its
-fundamental, because the excitation is a noise burst rather than a hammer
-striking at a point (`docs/TIMBRE-PLAN.md`, D4/F2). A note whose harmonics
-are absent from the first sample cannot be made to sound like a piano by
-deciding how fast they should decay.
+These are the rates of the **prompt sound**, the motion in which a key's
+strings push the bridge together. The slower aftersound is not in the
+table: it comes out of the unison (see "Why a note has a two-stage decay").
 
 ### Why the mix bus needed a limiter too
 
@@ -193,197 +156,133 @@ treble. It is implemented in `PluckedString::new`, and the test
 `loop_delay_is_close_to_the_period` guards it. Measured output for A4 lands within
 about 1.5 cents of 440 Hz.
 
-## Why the excitation is a shaped noise burst, not flat noise (M4)
+## Why the hammer is solved against the string, every sample
 
-Karplus–Strong fills the delay line with flat noise. Physically this is a very
-crude model of a pluck: it says "give the string a random initial
-displacement". A piano is not plucked, it is struck by a felt hammer, and the
-hammer is what makes a piano sound like a piano.
+Karplus-Strong fills the delay line with noise, which says "give the string
+a random shape". A piano string is struck by a felt hammer, and the hammer
+is most of what makes a piano sound like one. For several milestones this
+model shaped a noise burst with a computed contact force and a lowpass; it
+was heard as a knock in front of a guitar, and measured as an attack whose
+second and third partials sat 57 and 76 dB under the fundamental.
 
-`piano_core::hammer::simulate_contact` models the hammer's side of a
-Hertzian-contact nonlinear spring (Chaigne & Askenfelt 1994,
-`F = K·x^p`, `p ≈ 2–3`): harder strikes compress the felt more, which makes
-the effective spring stiffer, which makes contact both shorter *and* higher
-in peak force — exactly the two effects that make a hard-struck note brighter
-rather than merely louder. The string's own motion **is now solved
-alongside the hammer's** (#57): `hammer::couple_contact_step` resolves the
-contact force against the string's own returning velocity every sample of
-contact, via the bounded fixed-point iteration `PERF-007` describes — see
-that function's own doc comment, and `docs/superpowers/specs/
-2026-09-13-hammer-string-coupling-design.md`, for the coupling itself rather
-than repeating it here. `simulate_contact` still runs the *uncoupled* curve
-this module used before #57 — kept as the peak-normalisation reference and
-as the sole input the excitation's bandwidth calibration (below) reads — so
-this shapes the existing excitation noise rather than replacing it, which
-keeps every partial excited (still noise under the hood) while making the
-excitation's spectral balance a function of strike velocity.
+`piano_core::hammer` is two statements, both in SI units:
 
-### Why the envelope alone was not enough
+- **The felt is a nonlinear spring.** Compressed by `ξ`, it pushes back
+  with `F = K·ξ^p`, `p` between 2 and 3 (A. Chaigne & A. Askenfelt,
+  "Numerical simulations of piano strings. I", JASA 95(2), 1994).
+- **The string is a waveguide.** A force `F` at one point moves that point
+  at `F / 2Z` on top of the two waves already passing through it, `Z` being
+  the string's characteristic impedance (J. O. Smith, *Physical Audio
+  Signal Processing*).
 
-The paragraph above was, for one milestone, only half true, and the missing
-half was audible as a hard dry knock — one piece of wood hitting another —
-in front of every note. Worth recording, because the mistake is a natural one
-to make again.
+Nothing is written into the delay line in advance. Each sample the hammer's
+compression is solved against the wave arriving at the strike point, the
+force goes into the string there, and the hammer is decelerated by the same
+force. What a listener calls touch follows instead of being added: a harder
+blow compresses the felt further, the stiffer spring throws the hammer back
+sooner, and the shorter pulse carries more high partials. Reflections that
+return from the agraffe while the felt is still on the string push the
+hammer off early. A string struck again is struck while it is moving.
 
-The contact force envelope reaches the excitation by *multiplication*: the
-delay line is filled with `white_noise · velocity · force[n]`. Multiplying in
-time is convolution in frequency, and convolving a flat spectrum with
-anything at all leaves it flat. The expected power spectrum of an enveloped
-white noise burst is `σ²·Σw[n]²` — it depends on the window's total energy,
-never on its shape. So the envelope changed *how much* energy a strike
-injected and *when*, but not *where in the spectrum*, and every strike at
-every velocity injected flat energy density all the way to Nyquist. Measured
-on A4: a spectral centroid of 11.8 kHz at velocity 0.1 against 12.7 kHz at
-velocity 1.0, either side of the 12 kHz a perfectly flat spectrum gives at
-48 kHz. A 7% spread across the whole dynamic range, where the document
-claimed that spread *was* the brightness.
+One step is implicit — the force at the end of the sample depends on the
+compression at the end of the sample — and the trapezoidal rule turns it
+into `ξ + c·ξ^p = a`, whose left side is convex and increasing. Newton's
+method started above the root of such a function never overshoots, so four
+steps are enough and there is no `while !converged` (`PERF-007`,
+`docs/REALTIME-AUDIO-RULES.md`). Contact is bounded at 30 ms.
 
-The fix is to band-limit the excitation as well as envelope it. A real
-hammer's contact force is a smooth pulse of duration `τ`, and a pulse of
-duration `τ` is band-limited on the order of `1/τ`; the felt's finite contact
-width along the string adds a second rolloff (Van Duyne & Smith,
-"Developments for the Commuted Piano", ICMC 1995, use exactly such a
-hammer-width lowpass on the excitation). `hammer::excitation_cutoff_hz`
-derives a corner from the contact duration `simulate_contact` already
-computes, and `PluckedString::write_excitation` runs the burst through two
-one-pole sections at that corner. The same nonlinearity that shortens contact
-at higher velocity now raises the corner too, so *harder is brighter* is
-finally a property of the output rather than of this document.
+Key velocity `v` in `[0, 1]` becomes a hammer speed of `4.7·v^1.25` m/s.
+What the string reports is the force it puts on the bridge, `2Z·v`, over a
+full scale of 50 N.
 
-The proportionality constant between `1/τ` and the corner is calibrated, not
-derived, and the reason is the simplification stated above: a real strike's
-energy well above `1/τ` comes largely from the string pushing back on the
-hammer during contact, and that back-reaction is precisely what *this
-bandwidth calibration* does not draw on — it is derived from
-`simulate_contact`'s uncoupled contact-duration curve, not from
-`couple_contact_step`'s per-sample coupled force (#57), so the calibration
-gap this paragraph describes still stands even though the force itself is no
-longer solved against a rigid wall. Taking the force pulse's own corner
-literally would put a *fortissimo* strike near 300 Hz and mute the
-instrument.
+### Why every register has its own hammer
 
-Measured on A4 at velocity 0.8, before and after, over the first 5 ms:
-spectral centroid 11.2 kHz → 5.9 kHz, peak 1.97 → 0.65. The second number
-matters as much as the first: the old attack sat 17 dB above the body of its
-own note *and* above full scale, so live playback clipped it into something
-harsher still.
+A. Askenfelt & E. Jansson ("From touch to string vibrations", JASA 1990-91)
+measure contact falling from about 4 ms in the bass to under 1 ms at the
+top: treble hammers are lighter and their felt is harder.
+`hammer::hammer_for_frequency` gives each key one string's share of such a
+hammer:
+
+- **Mass** falls from 10.5 g at A0 to 7.2 g at F♯4, the usual trend of a
+  concert grand's set, then faster to 1.9 g at C8.
+- **Felt stiffness** rises from `1.6e8` to `8e13` N/m^p and the exponent
+  from 2.2 to 3.2, fitted so that the spectrum changes between soft, medium
+  and loud notes the way the reference instrument's does. Up to F♯4 the fit
+  lands within a factor of two of Chaigne & Askenfelt's own values.
+- **String impedance** is `2·L·f·μ` for a generic concert-grand scale: 13.7
+  kg/s at A0, about 2.2 through the middle, 1.6 at C8.
+
+The treble departs from the bass trend for one reason. A hammer that stays
+on its string for about a period and a half delivers a pulse with a
+spectral null at the fundamental, and the note all but vanishes. With the
+bass trend carried to the top, that null crossed the keyboard between A6
+and F♯7 as the touch went from soft to loud: holes 30 dB deep and one key
+wide, at a different key for each dynamic. A lighter hammer on stiffer felt
+leaves sooner.
+
+`voicing::hammer_for_key` then moves each key's felt stiffness by a fixed
+pseudo-random amount (`hammer_unevenness`, 0.25 by default), because no set
+of hammers is voiced perfectly evenly.
 
 ### What the hammer still gets wrong
 
-`PluckedString::pluck` writes exactly one loop length of excitation, so a
-note whose period is shorter than the felt's contact has its contact envelope
-truncated. E2's period is 12.1 ms and holds the whole 3.5-6.5 ms contact;
-A4's is 2.27 ms and holds about a third of it; C6's is 1 ms and holds a
-seventh. Two consequences: velocity's effect on the attack is weakest exactly
-where the truncation is worst, and the top octave is markedly quieter than
-the rest of the keyboard. A real hammer stays in contact while the wave makes
-several round trips, adding force to a string that is already moving.
-`couple_contact_step` (#57) now supplies exactly that during the
-pending-contact tail — `PluckedString::next_contact_sample` feeds it the
-string's real, current returning velocity, not silence — so what remains
-open here is the truncation above, not the back-reaction: the burst `pluck`
-writes up front, and the total duration the tail continues toward, are still
-bounded by `simulate_contact`'s uncoupled curve rather than shaped by what
-the string is actually doing.
-
-### Why every register has its own hammer, and why the treble is darker
-
-Until this change every key was struck by the same hammer: the bass one,
-with about 4 ms of contact at *mezzo-forte*. A. Askenfelt & E. Jansson ("From
-touch to string vibrations", JASA 1990-91) measure contact falling from
-about 4 ms in the bass to well under 1 ms at the top, because treble hammers
-are lighter (H. A. Conklin, JASA 99(6), 1996: roughly 4-5 g against 10-11 g)
-and their felt is harder. A 4 ms contact on a C8 string drives it for
-seventeen of its periods: measured, the top octaves opened with a 4 ms click
-13-20 dB louder than the note it started, and their upper partials came out
-as strong as the fundamental — heard as shrill, glassy treble.
-
-`excitation::hammer_for_frequency` now gives each register its own hammer:
-mass falling geometrically to 0.4x at C8, and stiffness solved from
-`τ ∝ (m/K)^(1/(p+1))` so that the contact lasts `excitation::contact_seconds`
-— 4 ms at A0 to 0.6 ms at C8 — at the reference velocity. Three more
-consequences of the same physics follow:
-
-- **Mass loading.** Above about C6 even the short treble contact outlasts
-  the string's period, and the hammer's mass sitting on the string reflects
-  high frequencies while passing low ones. `excitation::ExcitationShaper`
-  reproduces the spectral consequence with a three-pole lowpass whose corner,
-  in partials, falls as the contact-to-period ratio cubed; it is normalised
-  to unit gain at the fundamental and transparent below about A3.
-- **Frequency-dependent string loss.** The loop is solved against decay
-  targets anchored by partial *number*, but air and internal friction
-  depend on absolute frequency. Each target is now capped by Chaigne &
-  Askenfelt's `b₃·ω²` loss (JASA 95, 1994, `b₃ = 6.25·10⁻⁹ s`), so a 12 kHz
-  partial dies in a quarter of a second whichever key it belongs to.
-- **Loudness follows momentum.** The excitation's slope used to be
-  normalised to unit peak, which gave a harder, shorter strike *less*
-  low-frequency drive: A6 stopped getting louder past *mezzo-forte*. It is
-  now scaled so its low-frequency content is proportional to velocity, as a
-  rebounding hammer's momentum `∫F dt = 2mv` is; the shorter contact adds
-  brightness on top. The response is 30-36 dB from velocity 0.1 to 1.0 with
-  every step louder, so the engine's velocity curve is now the identity.
-
-Measured (full engine, velocity 0.6): E6's second partial went from +6 dB
-to −13 dB relative to its fundamental, A7's from about −3 dB to −10 dB, and
-C8's 12-16 kHz band from −14 dB to −33 dB of the note's energy.
+- **Below a key velocity of 0.25 the top two octaves can still lose their
+  fundamental.** A power-law felt has no stiffness left at so small a
+  compression, so the hammer lingers. Real felt is stiffer at rest than
+  `K·ξ^p` says.
+- **The felt has no hysteresis.** Real felt pushes back less on the way out
+  than on the way in (A. Stulov, JASA 97(4), 1995). A fit with it as a free
+  parameter matched the reference only slightly better than one without,
+  so it is left out.
+- **The hammer is a point.** Its width along the string, which rounds off
+  the highest partials, is not modelled.
 
 ### Why each key has a regulation gain
 
-Nothing in the string model makes neighbouring keys equally loud: the unison
-count steps from one string to two at A1 and to three at C#3, each step
-adding 4-6 dB, and the per-register hammer moves the top octaves by several
-more. A-weighted at *mezzo-forte* the raw keyboard spanned 26 dB with 5 dB
-cliffs at both breaks. A technician evens a real piano out after the
-physics, by needling and hardening individual hammers; `voicing::
-level_for_key` does the same with a measured per-key gain
-(`voicing_level.rs`), regulated to a curve that is flat from C3 to C6, lower
-on the meter in the bass (A-weighting discounts 50-200 Hz 10-15 dB more than
-the ear does at playing level, ISO 226) and falling 8 dB from C6 to C8. The
-treble taper started at C7 at first and the top two octaves were heard as
-shrill: at 70 phon the ear is about 3 dB more sensitive at 2-4 kHz than at
-1 kHz, where A-weighting credits only about 1 dB, so a treble that is flat on
-an A-weighted meter sounds too loud — and a real piano's radiated level
-falls away there anyway. The
-`keyboard_loudness` test fails if any key drifts more than 2 dB off the
-curve, and regenerates the table.
+Nothing in the string model makes neighbouring keys equally loud: the
+unison count steps from one string to two and then to three, each step
+adding several decibels, and the per-register hammer moves the top octaves
+by several more. A technician evens a real piano out after the physics, by
+needling and hardening hammers; `voicing::level_for_key` does the same with
+a measured gain per key (`voicing_level.rs`), regulated to a curve that is
+flat from C3 to C6, lower on the meter in the bass (A-weighting discounts
+50-200 Hz 10-15 dB more than the ear does at playing level, ISO 226) and
+8 dB down from C6 to C8.
 
-## Why the strike position notches out a partial (F2, #32)
+What is regulated is the **trend along each unison register**, not each key
+on its own. The board's diffuse field (below) answers a single partial
+several decibels louder or softer depending on where it falls among the
+field's resonances, as a real board does, and that pattern moves with the
+sample rate and the tuning. A table that cancelled it key by key would be
+right at one sample rate and twice as uneven at any other. So each key's
+deviation is averaged with five neighbours either side, never across a
+change of unison count; `tests/keyboard_loudness.rs` holds the trend within
+2 dB and any single key within 8, and regenerates the table.
 
-A hammer does not strike the whole string; it lands at one point, roughly
-1/7 to 1/9 of the way along (Fletcher & Rossing, *The Physics of Musical
-Instruments*, 2nd ed., §12.3). A string cannot be given any energy in a mode
-whose displacement is zero at the point it is struck, so striking at a
-fraction `β` of the length leaves the `n = 1/β, 2/β, …` partials silent — a
-comb of notches, the first and deepest at `1/β`. Piano builders choose `β ≈
-1/8` deliberately, to put that first notch on the 8th partial, whose interval
-above the fundamental (three octaves and a tone) is the most dissonant of the
-low harmonics; killing it is most of what keeps a piano from sounding harsh.
+The gain is applied after the phantom partials and the duplex ring, which
+grow with the string's own motion and must not be rescaled by it.
 
-In a bidirectional string this notch is pure geometry: the wave launched
-toward the near end returns inverted, and the launched pulse plus its
-inverted reflection cancel exactly at those partials. This model runs a
-single delay-line loop, not a bidirectional pair, so it reproduces the same
-geometry directly on the excitation. `PluckedString::write_excitation` fills
-the loop with the shaped burst as before, then
-`DelayLine::apply_strike_comb` sums it with its own inverted copy from `β · L`
-samples back (`L` the loop length): `y[i] = x[i] − x[i − round(β·L)]`. The
-mode-`n` amplitude comes out weighted by `2·|sin(π · n · β)|` — zero exactly
-at `n = 1/β` and its multiples — which *is* the physical strike-position
-weighting, not a filter fitted to imitate it. `β` is
-`StringConfig::strike_position`, set per key by `piano_audio::voicing`
-(1/8 in the bass, drifting to 1/10 in the top treble, where a note has too
-few partials to spend one on a notch) and clamped so the comb reach can never
-outrun the delay line the string reserved for it.
+## Why the strike position notches out a partial
 
-The comb is applied to the first loop length only. A treble strike whose
-contact outlasts one loop (`PendingContact`, above) leaves its continuation
-uncombed — inaudible there, because that note's `1/β ≈ 8`th partial already
-sits far above Nyquist, so there is no notch left to impose. It changes the
-attack's *spectral shape*, never the loop length, so it does not move the
-tuning: the fundamental frequency is untouched, only its amplitude relative
-to its neighbours. The companion half of F2 — replacing the noise burst
-itself with the deterministic force pulse (#77) — is still open; it needs
-this geometry in place first, which is why the two were always one plan step.
+A hammer lands at one point, roughly 1/7 to 1/9 of the way along the string
+(Fletcher & Rossing, *The Physics of Musical Instruments*, 2nd ed., §12.3).
+A string takes no energy in a mode with a node where it is struck, so
+striking at a fraction `β` leaves partials `1/β, 2/β, …` silent. Builders
+choose `β ≈ 1/8` to put the first notch on the 8th partial, the most
+dissonant of the low harmonics.
+
+In this model the notch is geometry, not a filter. The hammer's force
+enters the delay line at a tap `β` of the way round the loop
+(`PluckedString::place_strike_tap`), and the wave it launches towards the
+agraffe comes back inverted and cancels the outgoing one at exactly those
+partials. `β · L` is seldom a whole number of samples — at C8 the whole
+loop is 11 samples — so the force is shared between the two neighbouring
+taps. Without that, the notch jumped from key to key and the top octave
+was audibly uneven.
+
+`β` is `StringConfig::strike_position`, set per key by
+`piano_audio::voicing`: 1/8 in the bass, drifting to 1/10 at the top, where
+a note has too few partials to spend one on a notch.
 
 ## Why upper partials sit sharp (M4)
 
@@ -430,11 +329,18 @@ number of strings the engine ever processes simultaneously from 88 to
 240` estimate for "up to three strings on all 88 keys."
 
 `piano_core::unison::UnisonGroup` reuses [`piano_core::PluckedString`]
-rather than forking it: a unison group is 1-3 independent strings, each
-detuned by a small fixed offset (a few cents — see the module for the
-honesty note on the exact figures) and struck together by
-`UnisonGroup::pluck`, exactly like a single hammer really does strike every
-string of one note at once.
+rather than forking it: a unison group is 1-3 strings struck together by
+`UnisonGroup::pluck`, the way one hammer strikes every string of a note.
+
+How far apart the strings are tuned is not a fixed number of cents
+(`voicing_unison.rs`). Weinreich (below) shows that what matters is the
+mistuning *measured against how fast the note decays*: far apart on that
+scale each string rings alone and the note beats; close together they act
+as one. Each key's strings sit 0.07 of the fundamental's own prompt decay
+rate apart — about 0.17 cents at A4, a unison a good tuner would call dead
+on — which keeps the first half-dozen partials on the "one string" side, as
+the reference's are: each of its partials resolves into one fast mode with
+slower companions 10-30 dB under it, not two equals beating.
 
 ## Why a note has a two-stage decay (M6)
 
@@ -455,9 +361,14 @@ with two coupling tiers:
 - **Local** (`piano_core::unison`): every round trip, the part of each
   string equal to its group's mean loses the string's full `sustain` loss,
   and the part that differs from the mean is spared
-  `DEFAULT_LOCAL_COUPLING_GAIN` (0.75) of it — a symmetric scattering with
-  eigenvalues `sustain` and `sustain + 0.75·(1 − sustain)`, passive for any
-  `sustain`. A single string is its own mean and decays exactly as voiced.
+  `DEFAULT_LOCAL_COUPLING_GAIN` (0.87) of it — a symmetric scattering with
+  eigenvalues `sustain` and `sustain + 0.87·(1 − sustain)`, passive for any
+  `sustain`. At 0.87 the slow modes lose about an eighth of what the prompt
+  mode does, the ratio measured on the reference from the tenor to the top
+  octave. The strings also load the bridge unequally (`BRIDGE_LOAD_*`):
+  with equal loads a hammer that strikes them alike excites only the prompt
+  mode, and the aftersound is reached through a dead notch between the two
+  stages. A single string is its own mean and decays exactly as voiced.
   The earlier convex blend `(1−w)·own + w·mean(others)` did the reverse —
   it damped the differential modes — and treble trichords collapsed
   (issue #96).
@@ -479,10 +390,8 @@ development, not by inspection: an earlier *additive* coupling term
 diverged to infinity for near-lossless (high-`sustain`) strings once
 enough voices became simultaneously receptive (fixed by the convex-blend
 redesign above and by `BridgeBus` averaging rather than summing
-contributions), and every unison string sharing one excitation noise seed
-suppressed the very beating the model exists to produce (fixed by
-`piano_core::unison::reseed_for_string`). Both are documented in full in
-the modules that fixed them.
+contributions), and every unison string sharing one excitation suppressed
+the very beating the model exists to produce.
 
 ## Why the sustain pedal makes the rest of the instrument ring (M6, `PERF-008`)
 
@@ -515,9 +424,11 @@ instrument *less* resonant (#62). The bridge physically moves with the
 *sum* of the strings' forces, so the drive is now `g · Σ`, capped at
 `0.9 / N` per key only when `N` receptive keys would otherwise break
 passivity (`unison::bridge_drive_for`). At the default gain (0.2) a C5 held
-silently rings 38 dB under a struck C4, a fifth 43 dB under and a semitone
-69 dB under, so the harmonic selectivity comes out of the strings
-themselves. The pedal's bloom on a held C4 sits 17 dB under the note, and a
+silently rings 37 dB under a struck C4, a fifth 44 dB under and a semitone
+62 dB under, so the harmonic selectivity comes out of the strings
+themselves. The pedal's bloom on a held C4 sits 9 dB under what is left of
+the note one to three seconds after the strike — nearer the note than it
+was, because the note itself now decays as fast as a piano's does — and a
 full keyboard struck *fortissimo* with the pedal down still decays
 (`piano-audio/tests/sympathetic.rs`).
 
@@ -538,13 +449,13 @@ the sympathetic lift with the pedal down, half-pedalling and the sostenuto.
 - **Sostenuto** (CC66). Pressing it catches exactly the keys held at that
   instant.
 - **Una corda** (CC67). The shifted action misses one string of every bichord
-  and trichord; the missed string's damper still lifts, so the struck pair
-  drives it through the coupling and it rings against them. Measured at A4:
-  the note is 4 dB quieter at the attack and loses 7.9 dB over its first
-  second instead of 11.2 — less prompt sound, more aftersound, which is the
-  veiled colour the pedal is played for (Weinreich 1977, §V). Single-string
-  bass keys are struck as usual; the softer felt region a real shifted
-  hammer presents is not modelled.
+  and trichord; the missed string's damper still lifts, so the struck ones
+  drive it through the coupling and it rings against them: less prompt
+  sound, more aftersound, which is the veiled colour the pedal is played for
+  (Weinreich 1977, §V). The string missed is the one that loads the bridge
+  hardest, so what is struck leans towards the slow modes. Single-string
+  bass keys are struck as usual; the softer felt a real shifted hammer
+  presents is not modelled.
 
 ## Why a note starts with a knock that never touches a string (#64)
 
@@ -557,8 +468,8 @@ dull knock under the tone — plainly in the treble, where the tone is thin.
 `piano_core::action::ActionNoise` synthesises it as a half-sine force pulse
 (4 ms at *pianissimo*, 1.5 ms at *fortissimo*, amplitude ∝ velocity^1.5)
 fed into the soundboard only, so the board's modes give it the body's
-colour. Measured over a note's first 50 ms: about 27 dB under a
-*fortissimo* A4, 11 dB quieter at velocity 0.3, and 2 dB more prominent at
+colour. Measured over a note's first 50 ms: 25 dB under a
+*fortissimo* A4, 10 dB quieter at velocity 0.3, and 8 dB more prominent at
 C7 than at C4. `AudioSession::set_action_noise_gain` sets it, `0` removes it.
 
 The action makes one more sound, at the other end of the note: when a key
@@ -568,7 +479,7 @@ soft pulse — 6 ms long, a twentieth of a full-velocity knock, and the same
 however the key was played, because the felt falls under its own spring and
 weight. It sounds only when a damper lands on a string that is still
 sounding, never under the pedal; measured on a released *mezzo-forte* C4,
-it sits about 23 dB under the note as it is cut off.
+it sits about 28 dB under the note as it is cut off.
 
 ## Why every note is coloured by a soundboard (M6, `PERF-009`)
 
@@ -618,6 +529,68 @@ note's spectral centroid only a few percent (a spectral centroid is a
 poor detector of a fast-decaying body under a broadband note), but changes
 its radiated energy by 3–10% in the low and mid register.
 
+## Why a piano's attack is not a plucked string's (the body)
+
+The modal bank above stops being a good description at a few hundred
+hertz. Above that a soundboard's modes overlap: bending waves leave the
+bridge, reflect off the rim and the ribs, and within a few milliseconds the
+plate is full of them. A force at the bridge is not heard as the
+sharp-edged wave the string delivered but smeared over tens of
+milliseconds. Measured on the reference, the band around 1 kHz takes about
+12 ms to rise to full level; the bridge force alone takes under 2. That
+smear is the difference between a piano's attack and a plucked string's,
+and without it this model was reported, correctly, as a guitar.
+
+`piano_core::body::BoardBody` is the feedback delay network B. Bank
+proposed for the job (Helsinki University of Technology, Report 54, 2000;
+Bank et al., EURASIP JASP 2003:10): the network of `piano_core::fdn`, with
+lines a few milliseconds long — the time a bending wave takes to cross the
+board and return — where a room's are tens. Two of its numbers are physical:
+its lines add up to 43.7 ms, a mode every 23 Hz, the density modal analyses
+of soundboards count below 1 kHz (Ege, Boutillon & Rébillat, JSV 332,
+2013); and its absorption follows a loss factor of one to two per cent,
+spruce's — about 100 ms at 1 kHz, 26 ms at 8 kHz.
+
+The engine sums three things (`engine_render.rs`): the bridge force itself
+at 0.3, heard at once, as the board next to the bridge radiates before the
+waves have spread; the diffuse field; and the modal bank at
+`soundboard_mix_gain`.
+
+`piano_core::radiation::Radiation` then makes sound of that motion, which a
+board does unevenly: almost nothing below its lowest resonances, where the
+air flows round the edge of the plate instead of being compressed (the
+fundamental of a grand's lowest notes is 20-35 dB under its partials three
+to six); two strong resonances near 85 and 128 Hz; and a treble radiated
+about 10 dB more efficiently than the middle, as the bending waves approach
+the speed of sound in air (N. Suzuki, JASA 80, 1986; N. Giordano, JASA 104,
+1998). The papers give the shape; the corners and gains are fitted to the
+reference's spectral envelope. Two of them are not the instrument's alone
+and say so in the code: the slope below the first resonance, part of which
+may be the reference's recording chain, and a 3.5 dB cut at 560 Hz that
+takes back a hump of the delay network's own.
+
+No impulse response is measured, stored or convolved: the field is
+synthesised, like everything else here.
+
+## Why the piano is not tuned to equal temperament (stretch)
+
+A piano with every fundamental on its equal-tempered frequency would sound
+out of tune with itself. Its partials run sharp of whole multiples, so an
+octave whose fundamentals are exactly 2:1 apart has the upper note beating
+against the lower note's second partial. A tuner removes that beat, and in
+doing so tunes the treble progressively sharp and the bass flat — the curve
+O. L. Railsback measured (JASA 9(3), 1938).
+
+The stretch is therefore not a table but a consequence of the scale's own
+`B`, and `voicing_stretch.rs` computes it that way: a middle octave is left
+in equal temperament and every other key is tuned in octaves from it, each
+made beatless between partial `2ρ` of its lower note and partial `ρ` of its
+upper. `ρ` is the octave type of Rigaud, David & Daudet's tuning model
+(JASA 133(5), 2013): the 2:1 octave tuners use in the treble, 4:2 in the
+middle, 6:3 in the bass. Where the types change is fitted to the reference,
+whose offsets the rule reproduces to about 2 cents: 15 cents flat at A0,
+10 sharp at C7, 30 at C8. Concert A stays where the tuning puts it.
+
 ## Why the bass has partials no string harmonic explains (#54)
 
 Transverse vibration stretches a string, and the tension change goes with
@@ -634,8 +607,8 @@ at a per-key gain (`voicing::phantom_gain_for_key`): full up to A2, tapering
 to nothing by E5. Being quadratic, the phantoms grow 2 dB for every 1 dB the
 note grows, so they are near-absent at *piano* and plainly there at
 *fortissimo*. Measured (`piano-audio/tests/phantom_partials.rs`): at *ff*
-they sit about 23-27 dB under the note across A0-A2 and rise more than
-10 dB relative to it from *p* to *ff*. The string's free longitudinal
+they sit 24-28 dB under the note across A0-A2 and rise 14 dB relative to it
+from *p* to *ff*. The string's free longitudinal
 resonances are not modelled: their frequencies are scale-design data with
 no published source this project can use yet (#65).
 
@@ -654,7 +627,7 @@ the golden angle so neighbouring modes land on unrelated sides. Every
 weight is `1 ± x`, so the mean of the two channels is *exactly* the mono
 instrument: every level, decay and tuning measurement in this repository
 still holds on the mono mean (`tests/stereo.rs` checks that, and that A0
-sits 8 dB left and C8 9 dB right).
+sits 7 dB left and C8 15 dB right).
 
 ## Why the instrument is heard in a room
 
@@ -697,7 +670,9 @@ it, the residual of a by-ear setting, heard as a slow beat. It is one
 two-pole resonator per key from C4 up (the double octave below C6, the
 octave from C6, where the fourth partial is too weak to drive it), driven by
 the key's own bridge signal. Measured (`piano-audio/tests/duplex.rs`) it
-rings 27-38 dB under the note across C4-C7; the bass has none. Tuning to the
+rings 25-56 dB under the note from C4 up, 35 dB in the median — it depends
+on how strong the partial it is tuned to happens to be on each key — and
+the bass has none. Tuning to the
 exact multiple instead put it 45-95 dB under — inaudible.
 
 ## What the current model still does not do
@@ -707,9 +682,11 @@ Stated plainly, because these are the gaps a later milestone would close:
 | Missing | Consequence | Milestone |
 |---|---|---|
 | **Free longitudinal modes** | The phantom partials' nonlinear mixing is modelled (above); the string's own longitudinal resonances, at frequencies set by scale design, are not (#65). | Backlog |
-| **Simultaneous hammer/string coupling** | The hammer model (above) does not yet feed the string's own motion back into the contact force during the strike. | Backlog |
 | **Per-string bridge admittance** | Every voice couples to the shared bridge bus at the same fixed gain; a real bridge's admittance varies with frequency and string position. | Backlog |
-| **The hammer excitation's noise burst still does not concentrate perfectly on the resonant fundamental** | `PluckedString::pluck` seeds the loop with broadband noise, shaped only in envelope and overall cutoff (see "Why the excitation is a shaped noise burst", above) — most of that energy is off-resonance and the delay line's own comb selectivity cancels it out over the first several hundred round trips, *regardless* of how gentle the loop filter is. `PendingContact` (see "Why the zero had to become a second, per-string parameter", above) closes most of the resulting shortfall by continuing to inject the hammer's own contact force for as many round trips as it actually lasts, rather than truncating it to one loop length — measured on a real, calibrated C8: about 1.4 s now reached, close to the 1-2 s target. What is left is genuinely the excitation's spectral concentration, not truncation, and it shows up in two places. First, the *envelope* reaches silence sooner than the fundamental does, because most of what the envelope is tracking is off-resonance noise: measured to `SILENCE_THRESHOLD`, A0 lands at about 9.6 s and A4 at about 6.8 s against analytic loop targets of 33.9 s and 10.7 s (the fundamental itself does reach those — see "Why the loop is solved against three decay times, not one"). Second, and worse, the upper partials are barely excited at all: A4's attack has H2 at −57 dB and H3 at −76 dB relative to its fundamental, so there is almost nothing for the loop filter's now-correct slope to act on. Both close with a deterministic hammer pulse injected at a strike position rather than a noise burst (`docs/TIMBRE-PLAN.md`, F2). | Backlog |
+| **Soft notes at the top** | Below a key velocity of 0.25 the top two octaves can lose their fundamental (see "What the hammer still gets wrong"). | Backlog |
+| **The board rings on after a release** | Near 132 Hz the modal bank keeps sounding for a fraction of a second after the dampers land. | Backlog |
+| **Evenness key to key** | A single key can sit several decibels off its neighbours, and the duplex ring varies by tens of decibels, as the diffuse field and the stiff partials fall where they fall. | Backlog |
+| **The 4-8 kHz partials die slowly** | Partials in that band outlast the reference's. | Backlog |
 
 ## Numbers worth having
 
@@ -720,9 +697,8 @@ At 48 kHz on an 88-key piano:
 | Period, samples | 1745 | 109 | 11.5 |
 | Delay buffer (pow-2) | 2048 | 128 | 16 |
 | Memory per string | 8 KB | 512 B | 64 B |
-| Typical decay | 30–40 s | 8–15 s | 1–2 s |
-| Modelled decay, fundamental | 33.9 s | 10.7 s | 1.5 s |
-| Modelled decay, 8th partial | 5.7 s | 1.4 s | 0.5 s (5.2nd) |
+| Prompt sound, fundamental (80 dB) | 26.5 s | 4.7 s | 0.63 s |
+| Prompt sound, 8th partial (80 dB) | 16.0 s | 3.8 s | 0.26 s (5.2nd) |
 | Dispersion sections needed | ~8 | ~2 | ~0–1 |
 
 The last row is why `PERF-005` insists that dispersion order be scaled per

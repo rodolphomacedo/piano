@@ -52,7 +52,7 @@ optionally save the result as a named `.piano.json` file that
 
 `docs/ARCHITECTURE.md` already states the intended shape of exactly this
 feature, written before it existed: *"Every voice parameter — damping,
-sustain, the excitation seed — has a live setter reachable through the same
+sustain, the hammer — has a live setter reachable through the same
 command queue, so a controller, a CLI flag or (later) a Bayesian parameter
 estimator all reach the engine through one path, not three."* The lock-free
 SPSC command ring (`piano-audio::commands`, ADR-0005) that already carries
@@ -89,15 +89,12 @@ core field fails to compile there until it is exposed or explained (#84).
 | `sustain` | `PluckedString::set_sustain` |
 | `inharmonicity` | `PluckedString::set_inharmonicity` |
 | `detune_cents` | `UnisonGroup::set_string_detune`; resolves by default to the engine's own unison spread (`piano_core::unison::detune_cents`), not `0`, since #82 |
-| `seed` | `PluckedString::set_seed` (next strike) |
 | `loop_zero_mix` | `PluckedString::set_loop_zero_mix`: the loss filter's zero, solved per key with damping and sustain |
 | `strike_position` | `PluckedString::set_strike_position` (next strike) |
-| `excitation_noise_mix` | `PluckedString::set_excitation_noise_mix` (next strike) |
 | `hammer.contact_exponent` | `PluckedString::set_hammer` (next strike) |
-| `hammer.stiffness` | same |
-| `hammer.mass` | same |
-| `hammer.string_impedance` | same; floor `1e3` since #95 |
-| `hammer.felt_bandwidth` | same; the felt's brightness, `3`–`60`, default `15` (was `EXCITATION_BANDWIDTH_FACTOR`), since #82 |
+| `hammer.stiffness` | same; the felt's `K` in N/m^p |
+| `hammer.mass` | same; kilograms, one string's share of the hammer |
+| `hammer.string_impedance` | same; the string's `Z = √(T·μ)` in kg/s, `0.1`–`1000`, each key's own by default (13.7 at A0, 1.6 at C8) |
 
 **Per-instrument** (a single value shared by the whole piano, not per
 string — because the physical thing they model is a single wooden board or
@@ -140,7 +137,7 @@ strings[]  (explicit, one entry per string)
     "damping": 0.5,
     "sustain": 0.996,
     "inharmonicity": 0.0004,
-    "hammer": { "contact_exponent": 2.5, "stiffness": 1.7e9, "mass": 1.0, "string_impedance": 1.0e13, "felt_bandwidth": 15.0 }
+    "hammer": { "contact_exponent": 2.5, "stiffness": 1.5e9, "mass": 0.99e-3, "string_impedance": 2.2 }
   },
   "registers": {
     "bass":   { "anchor_midi": 21,  "decay_seconds": 35.0, "damping": 0.6, "inharmonicity": 0.0003 },
@@ -156,7 +153,7 @@ strings[]  (explicit, one entry per string)
     }
   ],
   "strings": [
-    { "midi": 69, "string_index": 1, "detune_cents": 3.0, "seed": 12345 }
+    { "midi": 69, "string_index": 1, "detune_cents": 3.0 }
   ],
   "instrument": {
     "soundboard_modes": [
@@ -184,12 +181,12 @@ today — the difference is the table is now data-driven, and
 instead of hardcoded.
 
 `registers.hammer_unevenness` (default `0.25`, range `0`–`0.5`, #58) gives
-each key's hammer its own felt: stiffness and felt brightness move together
+each key's hammer its own felt: its stiffness moves
 by a fixed per-key amount, up to that fraction either side of the register's
 smooth curve (`piano_audio::voicing::hammer_for_key`). `0` is one smooth
 curve. It is read when the file loads, like the rest of the register tier;
 an individual hammer is then tuned live through the per-string
-`hammer.stiffness` and `hammer.felt_bandwidth` sliders.
+`hammer.stiffness` slider.
 
 ### Persistence
 
@@ -212,7 +209,6 @@ SetStringDamping { midi: u8, string_index: u8, damping: f32 },
 SetStringSustain { midi: u8, string_index: u8, sustain: f32 },
 SetStringInharmonicity { midi: u8, string_index: u8, inharmonicity: f32 },
 SetStringDetune { midi: u8, string_index: u8, cents: f32 },
-SetStringSeed { midi: u8, string_index: u8, seed: u32 },
 SetStringHammer { midi: u8, string_index: u8, contact_exponent: f32, stiffness: f32, mass: f32 },
 SetSoundboardMode { index: u8, frequency_hz: f32, decay_seconds: f32, gain: f32 },
 SetBridgeCoupling { local_gain: f32, global_gain: f32 },
@@ -273,7 +269,7 @@ not a browser sandbox):
 - An 88-key strip, coloured by register, each key expandable to its 1-3
   strings.
 - Per-string panel: sliders for damping, sustain, inharmonicity, detune,
-  the three hammer parameters, plus the seed as a number field.
+  the four hammer parameters.
 - An instrument-wide panel: the 8 soundboard modes (frequency/decay/gain
   each) and the two bridge gains.
 - A groups panel: name a group, multi-select strings on the keyboard strip

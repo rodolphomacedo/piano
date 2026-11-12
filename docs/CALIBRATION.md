@@ -3,8 +3,11 @@
 How this project intends to find its parameters by **measuring a reference
 piano** instead of tuning them by ear. Milestone **M19**, issues
 [#123](https://github.com/rodolphomacedo/piano/issues/123)–[#127](https://github.com/rodolphomacedo/piano/issues/127).
-Nothing here is implemented yet; this document runs ahead of the code, the
-way `docs/PERFORMANCE.md` does.
+The first pass is done by hand rather than by the sampler #127 plans: the
+measurements below were taken, and the hammer, the decay scale, the unison,
+the stretch and the body were refitted to them (see `CHANGELOG.md`,
+"Unreleased"). The automated pipeline of sections 1-4 is still ahead of the
+code, the way `docs/PERFORMANCE.md` is.
 
 ## Why
 
@@ -33,9 +36,10 @@ every fix.
 | Others, later | Any instrument that can be driven by a MIDI file | Same protocol |
 
 Both references are **recordings of someone else's recordings**. That is
-why this needs an ADR before any code reads a WAV
-([#123](https://github.com/rodolphomacedo/piano/issues/123)). The proposed
-answer: they are offline measurement targets with the same role
+why this needed an ADR before any code read a WAV
+([#123](https://github.com/rodolphomacedo/piano/issues/123)), and
+[ADR 0007](adr/0007-reference-instruments-are-measured-never-stored.md) is
+it: they are offline measurement targets with the same role
 `docs/PRIOR-ART.md` gives OpenPiano. They are a benchmark and never a
 source. Their audio never enters this repository or its CI. Only derived
 numbers do, with the reference named as their source in
@@ -87,8 +91,8 @@ The sound-shaping parameters, grouped by what they plausibly move:
 | String losses | `sustain`, `damping`, `loop_zero_mix` | decay time per partial |
 | Stiffness | `inharmonicity` | partial frequencies (B) |
 | Tuning | `detune_cents` (unison) | beating, two-stage decay |
-| Hammer | `mass`, `stiffness`, `contact_exponent`, `felt_bandwidth`, `string_impedance`, `hammer_unevenness` | attack profile, velocity → brightness |
-| Excitation | `strike_position`, `excitation_noise_mix` | comb notches in the attack spectrum, noise floor |
+| Hammer | `mass`, `stiffness`, `contact_exponent`, `string_impedance`, `hammer_unevenness` | attack profile, velocity → brightness |
+| Excitation | `strike_position` | comb notches in the attack spectrum |
 | Mechanics | `action_noise_gain`, `damper_strength` | attack-to-sustain level (#121), release |
 | Body | `board_load_gain`, `soundboard_mix_gain`, soundboard modes | low-frequency decay, centroid |
 | Coupling | `local_coupling_gain`, `global_coupling_gain`, `bridge_coupling` | aftersound, sympathetic ring |
@@ -101,7 +105,7 @@ feature sensitivity table, and lists the parameter pairs whose effects
 cannot be told apart. A parameter the data cannot see has a posterior equal
 to its prior, and fitting it only costs sampler time. The first set worth
 estimating is probably small: string losses, stiffness, the hammer's
-`stiffness` and `felt_bandwidth`, and `action_noise_gain`.
+`stiffness` and `contact_exponent`, and `action_noise_gain`.
 
 ### 4. Estimation (#127)
 

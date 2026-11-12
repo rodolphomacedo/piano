@@ -8,6 +8,66 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/), with
 one addition: every entry names the doc where the full write-up lives, since
 this project keeps its reasoning in `docs/`, not in this file.
 
+## Unreleased
+
+The instrument was measured against a concert grand and rebuilt where the
+measurement disagreed with it. Only numbers derived from that instrument are
+in the repository; see `docs/CALIBRATION.md`.
+
+**Changed**
+
+- **The hammer is solved against the string every sample**
+  (`piano_core::hammer`). A mass on a felt spring, `F = K·ξ^p`, acting on a
+  waveguide junction at the strike point, in SI units. It replaces the
+  shaped noise burst, its contact-force envelope and its lowpass: nothing is
+  written into the delay line in advance, so a harder blow changes the shape
+  of the excitation and a restruck string is struck while moving. Mass, felt
+  stiffness, exponent and string impedance vary by register.
+- **Decay rates follow the measured prompt sound**
+  (`voicing_scale.rs`). Through the middle of the keyboard every partial
+  falls about as fast as the fundamental, 15-25 dB/s; the earlier table kept
+  the fundamental four times longer and killed the eighth partial seven
+  times faster, which is a plucked string's decay.
+- **Unisons** (`piano_core::unison`, `voicing_unison.rs`). The spread is set
+  against each key's own decay rate (about 0.17 cents at A4) instead of a
+  fixed number of cents, the strings load the bridge unequally, and the slow
+  modes are spared 0.87 of the loss. Global coupling is 0.2.
+- **Stretch tuning** (`voicing_stretch.rs`). Every key is tuned in beatless
+  octaves from the scale's own inharmonicity: 15 cents flat at A0, 30 sharp
+  at C8. Concert pitch is unchanged.
+- **Regulation follows each register's trend**, not each key
+  (`voicing_level.rs`, `tests/keyboard_loudness.rs`), and is applied after
+  the phantom partials so that it no longer rescales them.
+- **Una corda** misses the string that loads the bridge hardest.
+- **The keybed knock is 11 dB lower** (`DEFAULT_THUMP_GAIN`): the radiation
+  filter had lifted it to 14 dB under a *fortissimo* A4, against the 25 dB
+  it is set for.
+
+**Added**
+
+- `piano_core::body`: the soundboard above its separate resonances, as a
+  feedback delay network with lines a few milliseconds long. It is what
+  turns a plucked string's attack into a piano's.
+- `piano_core::radiation`: how the board's motion becomes sound — almost
+  nothing below 60 Hz, two strong resonances near 85 and 128 Hz, a more
+  efficient treble.
+- `piano_core::svf`, `piano_core::fdn`: the filter sections and the delay
+  network those two are built from; `room` now shares the network.
+
+**Removed**
+
+- `piano_core::excitation`, and with it the `.piano.json` fields `seed`,
+  `excitation_noise_mix` and `hammer.felt_bandwidth`. There is no noise in
+  the strike any more, so nothing for them to set.
+
+**Known limits**
+
+- Below a key velocity of 0.25 the top two octaves can lose their
+  fundamental: a power-law felt has no stiffness left at so small a
+  compression.
+- A single key can sit several decibels off its neighbours, as the diffuse
+  field favours or misses its partials.
+
 ## v0.2.2
 
 **Added**

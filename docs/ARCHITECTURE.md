@@ -109,7 +109,7 @@ functions (`denormals::enable_flush_to_zero`, one per architecture), each with
 a safety comment, nowhere else. Its `Engine` pre-builds one `PluckedString` per
 key at construction rather than allocating on note-on; see `PERF-012` in
 `docs/PERFORMANCE.md`. Every voice parameter — damping, sustain, the
-excitation seed — has a live setter reachable through the same command queue,
+hammer — has a live setter reachable through the same command queue,
 so a controller, a CLI flag or (later) a Bayesian parameter estimator all
 reach the engine through one path, not three.
 
@@ -163,7 +163,7 @@ why. The `AudioWorkletProcessor` and the page live in
     │
     ▼
   ┌──────────────────────────────────────────────┐
-  │  noise burst ──▶ [ delay line 107.9 ] ──┬──▶ │ output
+  │  hammer ─────▶ [ delay line 107.9 ] ──┬──▶ │ output
   │                        ▲                │    │
   │                        │                ▼    │
   │                   [ × sustain ] ◀── [ lowpass ]
@@ -186,7 +186,7 @@ nobody has to reverse-engineer the intent:
 | Extension | Where it goes | Milestone |
 |---|---|---|
 | Dispersion (inharmonicity) | An allpass cascade inside the loop, after the loss filter | M4 |
-| Hammer excitation | Replaces the noise burst; couples to the loop at a strike position | M4 |
+| Hammer excitation | A felt hammer solved against the string at a strike position — landed as `piano_core::hammer` | M4 ✅ |
 | Better fractional delay | Swaps `read_interpolated` for allpass or Lagrange | M4 |
 | Multiple strings per note | A voice owns 2–3 `PluckedString`s with detuned frequencies — landed as `piano_core::unison::UnisonGroup` | M6 ✅ |
 | Sympathetic resonance | A shared bridge bus every voice reads and writes — **not** all-to-all coupling (`PERF-008`) — landed as `piano_core::bridge::BridgeBus`, owned by `Engine` | M6 ✅ |
@@ -208,5 +208,5 @@ Three layers, each catching what the others cannot:
    monotonically, eventually reaches silence, and is in tune to within a few cents
    of its target frequency.
 
-Determinism makes all of this possible — the excitation is a seeded xorshift, so
+Determinism makes all of this possible — nothing in the model is random, so
 the same note renders identically every time.

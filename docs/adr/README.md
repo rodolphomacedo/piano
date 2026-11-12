@@ -15,3 +15,4 @@ not.
 | [0004](0004-permissive-licence-and-clean-room-policy.md) | MIT OR Apache-2.0, with a clean-room policy | Accepted |
 | [0005](0005-lock-free-command-queue.md) | Lock-free SPSC command queue for control data | Accepted |
 | [0006](0006-crate-boundaries.md) | Crate boundaries follow the real-time boundary | Accepted |
+| [0007](0007-reference-instruments-are-measured-never-stored.md) | Reference instruments are measured, never stored | Accepted |
